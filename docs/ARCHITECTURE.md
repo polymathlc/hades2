@@ -181,3 +181,55 @@ Capture mode: fixed dt, no vsync dependence, RNG reseeded, all timers driven by 
 This guarantees byte-identical framing across runs so critics compare like-for-like.
 
 Shot list lives in `tools/shotlist.json` — each entry `{id, state, pose, steps, note}`.
+
+---
+
+## 5. Capture states (REQUIRED for visual QA)
+
+`tools/shotlist.json` drives the critic loop. Some shots request a named scenario via
+`window.EREBUS.capture.state(name)`, which emits `capture.state {name, args}` on the event bus.
+**Each owning system must listen for the states it is responsible for and deterministically set up
+that scenario** (using `ctx.rng`, never wall-clock time), otherwise its shot is meaningless.
+
+| State | Owner | Must produce |
+|---|---|---|
+| `combat` | AGENT-ENEMY + AGENT-COMBAT | Player mid-combo, 4–6 enemies alive and engaged, projectiles in flight |
+| `vfxburst` | AGENT-VFX | A representative burst of the game's best effects at peak |
+| `ui` | AGENT-UI | Full HUD visible and populated with plausible values |
+| `boons` | AGENT-UI + AGENT-RUN | The boon-choice screen open with three real cards |
+| `death` | AGENT-VFX + AGENT-ENEMY | An enemy death at its most spectacular frame |
+| `boss` | AGENT-ENEMY | The boss on screen mid-telegraph |
+
+Register with:
+```js
+ctx.events.on('capture.state', ({name}) => { if (name === 'combat') this.setupCaptureCombat(ctx); });
+```
+
+## 6. Concurrency etiquette
+
+Multiple agents work in this checkout simultaneously.
+- Build and capture with `bash tools/run-shots.sh shots/<yourname> "" <YOUR_PORT>` — never reuse
+  another agent's port, and never `pkill` node/vite (you will kill a peer's build).
+- Never run `git commit`, `git checkout`, `git stash`, `git reset`, or `git clean`.
+- Code defensively against stubs: any system you did not write may be a no-op stub. Never assume
+  another system's optional method exists — guard with `?.` or a presence check.
+
+## 7. Objective frame metrics
+
+`node tools/analyze.mjs shots/<dir>` prints hard numbers per frame and a list of automatic
+warnings. Use it alongside your eyes — it catches what eyes rationalise away.
+
+Healthy targets for a shipped EREBUS frame:
+| Metric | Target | Why |
+|---|---|---|
+| `bands.shadow` | 0.20 – 0.55 | a real ink-shadow band exists |
+| `bands.highlight` | 0.04 – 0.20 | the frame reaches genuinely bright values |
+| `deepShadowPresent` | > 0.02 | true blacks are present |
+| `rmsContrast` | > 0.20 | not milky |
+| `meanSaturation` | 0.28 – 0.60 | jewel tones, not mud, not neon |
+| `shadowTint.sat` | > 0.15 | shadows are coloured, not neutral grey |
+| `shadowTint.hue` | 240 – 320 | shadows sit in the violet/plum range |
+| `detailDensity` | > 0.010 | surfaces carry real texture |
+| `tiling.strength` | < 0.45 | no visible repeat |
+| `crushedPct` | < 18 | shadows still hold detail |
+| `blownPct` | < 3 | highlights are not clipped |
