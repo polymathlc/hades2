@@ -1,0 +1,23 @@
+{
+  "poses": {
+    "gameplay":  { "pos": [16, 20, 16], "target": [0, 1.2, 0], "fov": 36 },
+    "wide":      { "pos": [24, 28, 24], "target": [0, 1.0, 0], "fov": 34 },
+    "close":     { "pos": [7.5, 8.5, 7.5], "target": [0, 1.2, 0], "fov": 38 },
+    "hero":      { "pos": [9, 6.2, 9], "target": [0, 1.35, 0], "fov": 40 },
+    "detail":    { "pos": [4.2, 3.0, 4.2], "target": [0, 1.1, 0], "fov": 42 },
+    "arch":      { "pos": [0.1, 6.0, 20], "target": [0, 3.5, -6], "fov": 40 },
+    "floor":     { "pos": [3.0, 4.0, 3.0], "target": [0, 0.0, 0], "fov": 45 }
+  },
+  "shots": [
+    { "id":"01_arena_wide",   "pose":"wide",     "steps":2.0, "note":"Overall composition, value structure, void framing" },
+    { "id":"02_gameplay",     "pose":"gameplay", "steps":2.0, "note":"The actual play framing — the money shot" },
+    { "id":"03_hero_char",    "pose":"hero",     "steps":2.0, "note":"Character rendering, rim light, silhouette" },
+    { "id":"04_material",     "pose":"detail",   "steps":2.0, "note":"Texture quality at close range — painterly test" },
+    { "id":"05_floor",        "pose":"floor",    "steps":2.0, "note":"Floor tiling / repetition test" },
+    { "id":"06_architecture", "pose":"arch",     "steps":2.0, "note":"Ornate architecture, filigree, depth bands" },
+    { "id":"07_combat",       "pose":"gameplay", "steps":2.0, "state":"combat",  "note":"Combat readability + VFX" },
+    { "id":"08_vfx_burst",    "pose":"close",    "steps":0.35,"state":"vfxburst","note":"VFX shape language and glow" },
+    { "id":"09_ui",           "pose":"gameplay", "steps":2.0, "state":"ui",      "note":"HUD ornament and typography" },
+    { "id":"10_boons",        "pose":"gameplay", "steps":2.0, "state":"boons",   "note":"Boon card presentation" }
+  ]
+}

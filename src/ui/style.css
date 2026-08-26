@@ -1,0 +1,7 @@
+/* OWNER: AGENT-UI */
+:root{ --ink:#07060f; --gold:#f2c14e; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--ink);overflow:hidden;color:#e8e0d0;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+canvas{display:block;width:100vw;height:100vh;position:fixed;inset:0}
+#ui{position:fixed;inset:0;pointer-events:none;z-index:10}
