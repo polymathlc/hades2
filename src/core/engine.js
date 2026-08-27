@@ -25,8 +25,15 @@ export class Engine {
   }
   add(system, name){ this.systems.push(system); if(name) this.ctx[name]=system; return system; }
   async initAll(){ for(const s of this.systems){ if(s.init) await s.init(this.ctx); } }
-  hitstop(ms){ this._hitstop = Math.max(this._hitstop, ms/1000); }
-  slowmo(scale, dur){ this._slowmo = { t:0, dur, scale }; }
+  hitstop(ms){
+    // Hit-stop sets time.scale to 0, which is correct in play but wrong under the headless capture
+    // harness: capture.step(seconds) advances the simulation by a fixed number of steps, so a
+    // fight that lands hits silently delivers less simulated time than asked for and any
+    // absolutely-scheduled capture scenario misses its shutter. Reported by AGENT-COMBAT.
+    if (this.ctx.CAPTURE) return;
+    this._hitstop = Math.max(this._hitstop, ms/1000);
+  }
+  slowmo(scale, dur){ if (this.ctx.CAPTURE) return; this._slowmo = { t:0, dur, scale }; }
   start(){ if(this.running) return; this.running=true; this._last = performance.now()/1000;
     const loop = ()=>{ this._raf = requestAnimationFrame(loop); this.frame(); };
     this._raf = requestAnimationFrame(loop); }
