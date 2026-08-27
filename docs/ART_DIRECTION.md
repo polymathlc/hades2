@@ -271,3 +271,37 @@ raised its score. Any work that raised `voidSky` or lifted the haze to satisfy i
    against it.
 4. The ordering `far < near < mid` with a total spread >= 0.18 is now checked automatically by
    `tools/analyze.mjs` whenever a `.depth.png` companion exists.
+
+
+---
+
+## 12. Correction to §11, and what is actually left
+
+§11 was written from the tercile-bucketed metric, which split depth samples by pixel count. In a
+close pose that puts all three cuts inside the floor, so its "far" band was the focal architecture,
+not the void. **§11's claim that the background was four times brighter than the foreground was an
+artifact of that bucketing** and cannot be verified retroactively — the frames it described have no
+depth companions. Treat §11's *direction* as correct (background dark, mid-ground lit) and its
+*numbers* as void.
+
+Measured properly, by world radius from the arena centre:
+
+| Shot | near (play) | mid (architecture) | far (void) | ordering |
+|---|---|---|---|---|
+| arena_wide | 0.075 | **0.151** | 0.024 | correct |
+| gameplay | 0.055 | **0.176** | 0.075 | correct |
+| architecture | 0.077 | **0.206** | 0.173 | correct |
+
+**The ordering law now passes.** The mid-ground carries the light and the void is darkest. What is
+still short is the SPREAD: 0.12–0.13 against a 0.18 floor. Closing it means pushing the lit
+mid-ground band harder — the ornament, statuary and focal bays, not the floor — rather than
+touching the near or far bands, which are already where they belong.
+
+### A framing problem the metric exposed
+
+`pixelShare` on the gameplay pose is `[0.82, 0.17, 0.01]`: 82% of the frame is play-area floor and
+**1% is void**. The pose shows an unbroken wall of architecture edge to edge, so §1.8's "island of
+light in a dark void" cannot be judged from it at all — and no amount of lighting work will make
+that frame read the way a Hades combat frame reads. The gameplay pose in `tools/shotlist.json`
+needs real void in frame: pull back, raise the camera, or frame across a rim so the abyss is
+visible behind the play space.
