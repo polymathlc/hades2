@@ -257,6 +257,12 @@ export class UI {
   }
 
   renderOverlay(ctx) {
+    // The analyzer measures the floor by reconstructing world position from the depth pass, then
+    // reading luma from the colour frame. This overlay is composited into that same colour frame,
+    // so HUD pixels sitting over floor pixels were being counted as blazing floor — an agent
+    // rendered the mask and found the metric was largely measuring the HUD. `suppressForMetrics`
+    // lets the capture harness take a clean colour frame for measurement only.
+    if (this.suppressForMetrics) return;
     if (!this.enabled) return;
     if (this.root && this.root.style.display === 'none') return;   // capture.hud(false)
     const r = ctx.renderer; if (!r) return;

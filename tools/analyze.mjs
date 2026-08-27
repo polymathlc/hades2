@@ -13,7 +13,12 @@ function rgb2hsl(r,g,b){
 }
 
 export function analyze(file){
-  const img = decodePNG(file);
+  // Measure the CLEAN frame (no HUD overlay) when the harness wrote one. The HUD is composited
+  // into the WebGL frame, so screen-space UI sitting over floor pixels was being measured as
+  // blazing floor. Critics still look at the real frame; only the numbers use the clean one.
+  const cleanFile = file.replace(/\.png$/, '.clean.png');
+  const measured = fs.existsSync(cleanFile) ? cleanFile : file;
+  const img = decodePNG(measured);
   const { width:w, height:h, channels:ch, data } = img;
   const N = w*h;
   const hist = new Array(64).fill(0);
@@ -172,6 +177,7 @@ export function analyze(file){
 
   return {
     file: path.basename(file), w, h,
+    measuredFrame: path.basename(measured),
     groundLuma: +groundLuma.toFixed(3),
     groundP90: +groundP90.toFixed(3),
     groundSource,
@@ -238,7 +244,7 @@ function verdict(m){
 
 const target = process.argv[2] || 'shots/latest';
 const files = fs.statSync(target).isDirectory()
-  ? fs.readdirSync(target).filter(f=>f.endsWith('.png') && !f.endsWith('.depth.png')).sort().map(f=>path.join(target,f))
+  ? fs.readdirSync(target).filter(f=>f.endsWith('.png') && !f.endsWith('.depth.png') && !f.endsWith('.clean.png')).sort().map(f=>path.join(target,f))
   : [target];
 const out = files.map(f=>{ try{ const m=analyze(f); return {...m, shotKind: MODAL.test(path.basename(f))?'modal':(INSPECTION.test(path.basename(f))?'inspection':'composition'), warnings:verdict(m)}; }
   catch(e){ return { file:path.basename(f), error:String(e.message) }; } });

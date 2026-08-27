@@ -47,6 +47,8 @@ for(const s of list.shots){
       const dUrl = await pg.evaluate(()=> window.EREBUS.capture.depth());
       fs.writeFileSync(path.join(OUT, s.id+'.depth.png'), Buffer.from(dUrl.split(',')[1],'base64'));
       // restore the colour frame so a later screenshot of the canvas is not the depth pass
+      const cleanUrl = await pg.evaluate(()=> window.EREBUS.capture.clean());
+      fs.writeFileSync(path.join(OUT, s.id+'.clean.png'), Buffer.from(cleanUrl.split(',')[1],'base64'));
       const meta = await pg.evaluate(()=> window.EREBUS.capture.sceneMeta());
       fs.writeFileSync(path.join(OUT, s.id+'.meta.json'), JSON.stringify(meta));
       await pg.evaluate(()=> window.EREBUS.capture.render());

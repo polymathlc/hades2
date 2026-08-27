@@ -172,6 +172,19 @@ function setupCapture(engine, ctx, setBiome){
     // depth pass, and therefore bucket value bands by distance from the arena centre (play area /
     // perimeter architecture / background void) rather than by pixel-count quantiles, which
     // collapse in a close pose where most of the frame is floor.
+    // A colour frame WITHOUT the HUD overlay, for measurement only. Critics look at the real
+    // frame; the analyzer measures this one, so screen-space UI is never counted as scene content.
+    clean(){
+      const ui = ctx.ui;
+      const had = ui && ui.suppressForMetrics;
+      if (ui) ui.suppressForMetrics = true;
+      if (ctx.renderSystem && ctx.renderSystem.render) ctx.renderSystem.render(ctx);
+      else if (ctx.post && ctx.post.render) ctx.post.render(ctx);
+      else ctx.renderer.render(ctx.scene, ctx.camera);
+      const url = document.querySelector('canvas').toDataURL('image/png');
+      if (ui) ui.suppressForMetrics = had;
+      return url;
+    },
     sceneMeta(){
       const cam = ctx.camera;
       cam.updateMatrixWorld();
