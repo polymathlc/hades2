@@ -194,16 +194,33 @@ export const GRADES = {
     // law needs it, and it flattened the far half of the wide shot into the
     // near half. The atmospheric band now comes from the distance HAZE (which
     // is depth-gated and desaturating) rather than from a thick medium.
-    // THE BACKGROUND HAS TO BE A BAND. §9.4 wants three separated value bands
-    // and the measured spread was 0.11-0.15 against a 0.18 floor, because the
-    // top third of every 3/4 frame is far architecture DISSOLVING INTO A HOLE:
-    // the void behind the arena measured darker than the arena itself, so the
-    // frame's tonal range ran mid-to-ink with nothing above it. A hazed
-    // background is not a bright one — it is a LOW-CHROMA one held at a value
-    // the foreground can be read against (§1.1). The haze colour carries more
-    // value and the void band is pushed, so the arena is now an island of light
-    // seen against a luminous mist rather than a die-cut against black.
-    fog:      { color: H('#1c0b22'), far: H('#170e22'), density: 0.009, height: 0.14, haze: H('#414d8e'), hazeStart: 34, hazeEnd: 56, hazeDesat: 0.88, voidSky: 2.30 },
+    // §11 REVERSED. The paragraph above was written against the SCREEN-THIRDS
+    // metric, which called the top of the frame "background" and therefore paid
+    // out for brightening the sky. Measured by true depth the same build read
+    //   near 0.038 / mid 0.081 / far 0.142
+    // — the void four times the value of the play area, the frame's strongest
+    // contrast at its own edge, and the image flat. haze #2f3a72 -> #414d8e and
+    // voidSky 1.74 -> 2.30 were made to satisfy that metric and are undone here.
+    //
+    // What replaces them is a haze that can only ever SUBTRACT (see the
+    // absorption ramp in shaders/passes.js): the colour is now a value the far
+    // band is pulled DOWN to, not lifted up to, so it belongs on the ink ramp
+    // between §2's deep shadow (#120b1e) and shadow plum (#241238) with just
+    // enough blue left in it to keep distance cool against a fire-lit room.
+    // hazeStart/End are pushed out past the chamber so the camera-distance ramp
+    // only ever catches the abyss plate; hazeRadial does the chamber-anchored
+    // work, biting just outside the rim (1.12R) and complete by 2.3R, which is
+    // the whole void and nothing that stands on the island.
+    // MEASURED, NOT ASSUMED: pulling the start inside the rim (0.82R / 1.7R) was
+    // tried, on the theory that the close poses need the chamber's own wings to
+    // recede. It does drop the far band (02 0.156->0.152, 06 0.187->0.172) but it
+    // takes MORE off the mid band than it gives (01 mid 0.161->0.152), because
+    // the mid band is largely the perimeter statuary and colonnade, which stand
+    // at 0.8-1.0R. Net spread was worse on all four shots, so it is reverted.
+    // Anything that hazes inside the rim hazes the subject.
+    fog:      { color: H('#1c0b22'), far: H('#170e22'), density: 0.009, height: 0.14, haze: H('#151228'),
+                hazeStart: 46, hazeEnd: 96, hazeDesat: 0.92,
+                hazeR0: 1.12, hazeR1: 2.3, hazeRadial: 1.0, voidSky: 0.80 },
     dof:      { range: 52.0, nearRange: 16.0, maxBlur: 0.36, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 
@@ -240,7 +257,7 @@ export const GRADES = {
     bloom:    { threshold: 1.10, knee: 0.5, intensity: 0.76, tint: H('#ffa03c'), radius: 0.60, clamp: 3.2 },
     ao:       { intensity: 0.95, radius: 1.65, power: 2.0, bias: 0.04, ink: H('#161a3a') },
     godrays:  { intensity: 0.34, color: H('#ff8c1a'), decay: 0.962, density: 0.80, weight: 0.55 },
-    fog:      { color: H('#3a1408'), far: H('#0d0b18'), density: 0.026, height: 0.18, haze: H('#150f26'), hazeStart: 32, hazeEnd: 124, hazeDesat: 0.54 },
+    fog:      { color: H('#3a1408'), far: H('#0d0b18'), density: 0.026, height: 0.18, haze: H('#150f26'), hazeStart: 32, hazeEnd: 124, hazeDesat: 0.54, hazeR0: 1.12, hazeR1: 2.3, hazeRadial: 1.0 },
     dof:      { range: 50.0, nearRange: 16.0, maxBlur: 0.38, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 
@@ -277,7 +294,7 @@ export const GRADES = {
     bloom:    { threshold: 1.05, knee: 0.45, intensity: 0.62, tint: H('#ffe6a3'), radius: 0.58, clamp: 3.2 },
     ao:       { intensity: 0.88, radius: 1.85, power: 1.9, bias: 0.04, ink: H('#3d3560') },
     godrays:  { intensity: 0.28, color: H('#ffe6a3'), decay: 0.958, density: 0.76, weight: 0.52 },
-    fog:      { color: H('#3c3a56'), far: H('#191a2e'), density: 0.020, height: 0.13, haze: H('#3a3654'), hazeStart: 38, hazeEnd: 145, hazeDesat: 0.60 },
+    fog:      { color: H('#3c3a56'), far: H('#191a2e'), density: 0.020, height: 0.13, haze: H('#3a3654'), hazeStart: 38, hazeEnd: 145, hazeDesat: 0.60, hazeR0: 1.12, hazeR1: 2.3, hazeRadial: 1.0 },
     dof:      { range: 56.0, nearRange: 17.0, maxBlur: 0.34, nearMax: 0.13, tilt: 0.08, tiltCenter: 0.60, focusRange: 15.0 },
   },
 };

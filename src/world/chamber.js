@@ -379,11 +379,11 @@ export class World {
       // FRAME around the subject, not the subject. Its diffuse comes down hard
       // and its specular stays up, so the arrises, fillets and mouldings keep
       // carrying the highlight band (§9.5) while the broad faces recede.
-      column: { litGain: 0.50, ambGain: 0.84, specGain: 1.55, rimDir: ENV_RIM_DIR, rimStrength: 1.25,
+      column: { litGain: 0.60, ambGain: 0.76, specGain: 1.80, rimDir: ENV_RIM_DIR, rimStrength: 1.25,
                 rimPower: 2.7, triScale: 0.155, circScale: 1.6 },
       wall:   { litGain: 0.46, ambGain: 0.62, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
       bay:    { litGain: 0.44, ambGain: 0.58, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
-      arch:   { litGain: 0.52, ambGain: 0.62, specGain: 1.20, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+      arch:   { litGain: 0.60, ambGain: 0.58, specGain: 1.40, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
       metal:  { specGain: 1.25, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
       // GOLD LIVES OR DIES ON SATURATION. §2 puts the gold core at #f2c14e
       // (hue 43); measured highlightTint across ten frames was hue 20-26 at
@@ -522,7 +522,11 @@ export class World {
       const k = Math.exp(-Math.max(0, d - R * 0.7) / (R * 1.7));
       const n = vnoise(x * 0.035, z * 0.035) * 0.5 + vnoise(x * 0.09, z * 0.09) * 0.28
         + vnoise(x * 0.22, z * 0.22) * 0.16;
-      const v = (lava ? 0.13 : 0.042) + k * (lava ? 0.62 : 0.055);
+      // §11.1: the abyss is the far band and it must be the DARKEST thing in
+      // the frame — but the quarter of it that survives the haze is the only
+      // gradient the void has, so the falloff under the island is authored
+      // steeper rather than flatter. Dark, and still painted.
+      const v = (lava ? 0.13 : 0.052) + k * (lava ? 0.62 : 0.090);
       const m = (0.70 + 0.60 * n);
       const hk = clamp01(k * 1.4);
       return [
@@ -1255,8 +1259,21 @@ export class World {
     // specular share small enough that the ashlar faces stop flaring. What
     // survives is the ORNAMENT on it — the meander, the cornice, the sigils —
     // which is where §9.5 wants the light anyway.
-    const wallMat = this._M(B.mats.wall, { variation: 0.20, litGain: 0.36, ambGain: 0.62, specGain: 0.70, tint: '#8d7192' });
-    const bayMat = this._M(B.mats.bay, { variation: 0.26, litGain: 0.30, ambGain: 0.54, specGain: 0.60, tint: '#7c6288' });
+    // §11.2 LIGHT THE MID-GROUND. The wall was authored as one recessive mass,
+    // which was right when the whole frame ran backwards and wrong now: the
+    // focal architecture is supposed to be the BRIGHTEST band, and the ashlar
+    // around the gates is that architecture. The two materials now do opposite
+    // jobs instead of the same job at two strengths —
+    //   wallMat  the FOCAL bays, within 34deg of a doorway: nearly double the
+    //            key, a real specular share so the chamfered arrises catch it,
+    //            and less hemisphere so the light that lands is DIRECTIONAL and
+    //            the courses model. This is the lit stage behind the player.
+    //   bayMat   every other bay: dropped a further third into the plum. These
+    //            are the dark wings the eye is supposed to fall past. Uniform
+    //            perimeter lighting is what made the top of every frame one
+    //            continuous salmon band with no depth in it.
+    const wallMat = this._M(B.mats.wall, { variation: 0.20, litGain: 0.62, ambGain: 0.54, specGain: 1.15, tint: '#9d8098' });
+    const bayMat = this._M(B.mats.bay, { variation: 0.26, litGain: 0.19, ambGain: 0.40, specGain: 0.42, tint: '#5b4869' });
     // ── ORNAMENT MUST READ AS RELIEF, NOT AS PRINT (§9.5, relief pass) ────
     // At 0.06 emissive and full gains against a wall running litGain 0.36, the
     // gold and the masonry were separated by ALBEDO ALONE — measured as flat
@@ -1341,7 +1358,7 @@ export class World {
       }
       if (cur < a1 + 2 * DEG) runsW.push([cur, a1 + 2 * DEG]);
     }
-    const backMat = this._M(B.mats.wall, { side: THREE.DoubleSide, variation: 0.18, litGain: 0.28, ambGain: 0.52, specGain: 0.50, tint: '#7a6284' });
+    const backMat = this._M(B.mats.wall, { side: THREE.DoubleSide, variation: 0.18, litGain: 0.20, ambGain: 0.38, specGain: 0.38, tint: '#5d4c6a' });
     for (const [s0, s1] of runsW) {
       if (s1 - s0 < 2 * DEG) continue;
       const back = new THREE.Mesh(this._keep(sweep(this.profile, [
@@ -1479,7 +1496,13 @@ export class World {
       // low chroma-through-haze, so the band keeps its complement hue, gets
       // MORE saturated (a dark saturated blue is distance; a pale blue-white is
       // a light source) and drops nearly two stops.
-      const coolStone = { tint: '#7e93d8', litGain: 0.26, ambGain: 2.60, specGain: 0.32, variation: 0.18, rimStrength: 1.0 };
+      // §11.1 again. This band is the top edge of every play frame and it was
+      // taking 2.6x the hemisphere on a pale periwinkle albedo, i.e. it was a
+      // large soft LIGHT SOURCE sitting at the farthest point in the room. The
+      // cool/warm split is the right idea and stays; the value is halved and the
+      // hue is pushed deeper so distance reads as a dark saturated blue rather
+      // than as a lit wall.
+      const coolStone = { tint: '#5d6ba8', litGain: 0.20, ambGain: 1.30, specGain: 0.26, variation: 0.18, rimStrength: 1.0 };
       const archT = kit.arch({ span: arcSpan, thickness: 0.52, depth: 0.75, voussoirs: 11, springY: 2.3, ornate: false });
       const archStone = this._M(B.mats.arch), archCool = this._M(B.mats.arch, coolStone);
       archT.traverse((o) => { if (o.isMesh && o.material === archStone) o.material = archCool; });
@@ -1671,8 +1694,8 @@ export class World {
     // #3a1d52 is §2's mid shadow violet; multiplied into the albedo it is a
     // recession toward the ink ramp rather than a grey knock-down.
     const FAR = {
-      column: { litGain: 0.26, ambGain: 0.46, specGain: 0.85, tint: '#57406a' },
-      leaf:   { litGain: 0.30, ambGain: 0.34, specGain: 1.05, tint: '#7a6a86' },
+      column: { litGain: 0.20, ambGain: 0.34, specGain: 0.70, tint: '#43315a' },
+      leaf:   { litGain: 0.24, ambGain: 0.26, specGain: 0.90, tint: '#5f5470' },
     };
     const plain = kit.column({ h: per.h, r: per.h * 0.075, order: per.order, ornate: true });
     const ornate = kit.column({ h: per.h * 1.05, r: per.h * 0.079, order: per.order, ornate: true });
@@ -1901,8 +1924,13 @@ export class World {
     // projects triplanar by design, it carves instead of spotting, and tinted
     // to §2's marble shadow (#8a7f9c) it stays inside the Tartarus ink ramp
     // rather than importing Elysium's white.
-    const statueMat = { mat: 'marble.elysium', matOpts: { tint: '#8f8496', litGain: 0.44, ambGain: 0.40,
-      specGain: 1.60, variation: 0.14, variationTint: '#5a2331', triScale: 0.42 } };
+    // §11.2: "the statuary behind the play space" is named in the correction as
+    // part of the band that must carry the light. The key share goes up and the
+    // gold trim's specular goes up with it, so the figures model harder instead
+    // of just getting paler — the tint is deliberately NOT raised, because a
+    // pale mass is what §9.2 was protecting the hero from.
+    const statueMat = { mat: 'marble.elysium', matOpts: { tint: '#8f8496', litGain: 0.56, ambGain: 0.38,
+      specGain: 1.95, variation: 0.14, variationTint: '#5a2331', triScale: 0.42 } };
 
     // Statues stand on the wall arc between the doors, facing the arena.
     const kinds = B.props.statues;
@@ -2058,8 +2086,28 @@ export class World {
       // the cool washes go up on to the wall / capitals of THIS room
       const cool = rig._practicals.filter((l) => !(l.color && l.color.r >= l.color.b * 1.15));
       const [wa0, wa1] = G.wallArc || [130 * DEG, 320 * DEG];
-      cool.forEach((l, i) => {
-        const a = wa0 + (wa1 - wa0) * ((i + 0.5) / Math.max(1, cool.length));
+      // ── A WASH IS NOT LIGHTING (§11.2, §1.5 "ornament is concentrated on
+      // focal architecture — never uniformly spammed") ─────────────────────
+      // These were spread at even fractions of the wall arc regardless of their
+      // authored intensity, so however the rig weighted them the room came out
+      // lit like a corridor: one continuous band of equal value across the top
+      // of every play frame, brightest wherever the arc happened to start. That
+      // even band is precisely what the true-depth pass measured as inverted
+      // aerial perspective — the strongest value in the frame sitting at its
+      // edge instead of on the subject.
+      // The lights are now sorted BRIGHTEST FIRST and placed by distance from
+      // the focal gate, alternating either side of it. The room gets one lit
+      // bay group behind the play space and falls away into dark wings toward
+      // the camera, which is the composition §11 asks for and the reason the
+      // focal ashlar (see _buildBackWall) is authored to catch the light.
+      const seq = [0, -26 * DEG, 26 * DEG, -74 * DEG, 74 * DEG, -118 * DEG, 118 * DEG];
+      const fa = this.focalAngle;
+      const lo = wa0 + 7 * DEG, hi = wa1 - 7 * DEG;
+      [...cool].sort((a, b) => b.intensity - a.intensity).forEach((l, i) => {
+        let a = fa + (seq[i] ?? ((i % 2 ? 1 : -1) * 150 * DEG));
+        while (a < lo - Math.PI) a += TAU;
+        while (a > lo + Math.PI) a -= TAU;
+        a = Math.min(Math.max(a, lo), Math.max(lo, hi));
         // STAND-OFF. The rig authors these at intensity 215-290 / distance 17,
         // numbers chosen when the plan was r=17. On a r=12.6 plan a 1.5m
         // stand-off puts a 265cd source a metre and a half off the masonry and

@@ -169,9 +169,17 @@ const AIR = {
     // "hazed background" and drags the frame median below the floor so the
     // floor can never win the value law. These sit ~1.5 stops up: painted,
     // low-chroma, and still unmistakably the bottom of the frame.
-    zenith: '#171332', horizon: '#241634', nadir: '#0e0916',
-    glow: '#2a0c10', glowY: -0.24, glowSharp: 3.8, cloud: 0.64,
-    ember: '#e8a24a', emberAmt: 0.30,
+    // §11 (true-depth pass): measured by real scene depth the void was the
+    // BRIGHTEST band in the frame at 0.142 against a 0.038 play area. The dome
+    // is the painted half of that and it comes down a stop and loses most of
+    // its chroma: a value ramp that still reads as a ramp, still drifts, still
+    // carries embers, but sits UNDER everything that stands on the island. The
+    // glow band and the ember amount are held — a dark backdrop is required, a
+    // dead one is not (§9.4: a dead band is not a band), and the embers are the
+    // only motion in the negative space.
+    zenith: '#0b0919', horizon: '#150d1e', nadir: '#06050c',
+    glow: '#280a10', glowY: -0.24, glowSharp: 4.2, cloud: 0.70,
+    ember: '#e8a24a', emberAmt: 0.34,
     motes: [
       // Recoloured off the GOLD ramp (§2 gold core -> bronze shadow) so the
       // ambient particulate reinforces the gold spine instead of adding a

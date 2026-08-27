@@ -131,6 +131,7 @@ uniform float uScatter;
 // haze
 uniform vec3  uHaze;
 uniform float uHazeStart, uHazeEnd, uHazeDesat, uHazeAmount;
+uniform float uHazeR0, uHazeR1, uHazeRadial;
 uniform float uVoidSky;
 varying vec2 vUv;
 
@@ -170,11 +171,46 @@ void main(){
     }
 
     // ── distance haze: push the far band low-value / low-chroma ───────────
-    float h = smoothstep(uHazeStart, uHazeEnd, dist) * uHazeAmount;
+    // §11 AERIAL PERSPECTIVE IS INVERTED. The old ramp did
+    //     col = mix(col, uHaze, h * 0.72)
+    // which is AIRLIGHT: it replaces a far surface with the haze colour, so if
+    // the haze carries any value at all the background is LIFTED toward it and
+    // the farther a thing is the brighter it gets. Measured by true depth that
+    // is exactly what was happening — the void read 0.142 against a 0.038 play
+    // area, four times the foreground, with the frame's strongest value contrast
+    // sitting at its own edge.
+    //
+    // There is no sky over Tartarus. Nothing back-illuminates this air, so the
+    // ramp is written as Beer-Lambert instead: transmittance falls with the
+    // ramp and the medium contributes only its OWN dim ink. The airlight term
+    // survives (a die-cut silhouette against #000 is the other failure mode)
+    // but it is now ~1/13th of what it was, so it lands the far band on the ink
+    // ramp rather than lifting it above the stage. Two properties come out of
+    // writing it this way rather than as a mix toward the haze colour:
+    //   * ORDER IS PRESERVED. A bright thing at distance stays brighter than a
+    //     dark thing at the same distance — the drifting embers over the void
+    //     still read, they are just dimmer, where a mix flattened them onto the
+    //     haze colour and the backdrop went inert.
+    //   * IT CANNOT INVERT. Transmittance is < 1 and the inscatter is a floor
+    //     of ~0.035 display, so no amount of distance can put a far surface
+    //     above the play area the way #414d8e at 0.72 could.
+    //
+    // TWO RAMPS, MAX-COMBINED. Camera distance alone is pose-dependent: a wide
+    // establishing lens sits 36u out and would fog its own subject on the same
+    // numbers that barely touch a 13u play camera. The radial term is anchored
+    // to the CHAMBER (uArenaR), so the play space is never hazed and everything
+    // past the rim recedes identically from every lens the game uses. The
+    // distance term is kept far out and only ever catches the abyss plate.
+    float radial = length(wp.xz);
+    float h = max(smoothstep(uHazeStart, uHazeEnd, dist),
+                  smoothstep(uArenaR * uHazeR0, uArenaR * uHazeR1, radial) * uHazeRadial) * uHazeAmount;
     if(h > 0.001){
       float l = luma(col);
-      col = mix(col, vec3(l), uHazeDesat * h);
-      col = mix(col, uHaze, h * 0.72);
+      col = mix(col, vec3(l), uHazeDesat * h);          // chroma dies first
+      // 0.74, not 1.0: a quarter of the far surface's own paint always survives,
+      // which is what keeps the backdrop a PAINTED gradient with embers drifting
+      // in it (§11.1 "do not flatten it to black") rather than a hole.
+      col = col * (1.0 - 0.74 * h) + uHaze * (h * 0.65); // then value, toward ink
     }
   } else {
     // ── the VOID is not #000 ────────────────────────────────────────────────
@@ -207,6 +243,12 @@ void main(){
     // lower half of frame (the architecture pose), which reads as daylight and
     // measures as "the ground is blazing" — §9.1's p90 check counts everything
     // in the bottom of frame, void included.
+    // §11: this term is ADDITIVE over the painted backdrop dome, so it is the
+    // one place in the chain where "background" and "brighter" are the same
+    // knob. It stays — a die-cut silhouette against #000 is still wrong — but it
+    // is now a whisper on top of the dome's own gradient rather than the thing
+    // that paints the void. The dome (render/atmosphere.js AIR) carries the
+    // ramp, the strata and the embers; this only softens the join.
     vec3 sky = uHaze * (0.05 + 1.08 * smoothstep(0.08, 0.40, up)
                              - 0.55 * smoothstep(0.38, 0.55, up)) * (0.90 + 0.24 * horizon);
     col += sky * uVoidSky;

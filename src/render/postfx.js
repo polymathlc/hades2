@@ -208,6 +208,12 @@ export class PostFX {
       uScatter: { value: 0.55 },
       uHaze: { value: C('#241238') },
       uHazeStart: { value: 26 }, uHazeEnd: { value: 120 }, uHazeDesat: { value: 0.62 }, uVoidSky: { value: 0.30 }, uHazeAmount: { value: 1 },
+      // §11: the recession is anchored to the CHAMBER as well as to the lens.
+      // hazeR0/hazeR1 are multiples of the arena radius, so the play space is
+      // never hazed and everything past the rim recedes identically from every
+      // pose. hazeRadial 0 disables the radial ramp for a biome that does not
+      // want it.
+      uHazeR0: { value: 1.15 }, uHazeR1: { value: 2.4 }, uHazeRadial: { value: 0 },
     });
 
     this.mDofCoc = this._mat(DOF_COC_FRAG, {
@@ -550,6 +556,9 @@ export class PostFX {
       u.uHazeStart.value = p.fog.hazeStart ?? 26;
       u.uHazeEnd.value = p.fog.hazeEnd ?? 120;
       u.uHazeDesat.value = p.fog.hazeDesat ?? 0.62;
+      u.uHazeR0.value = p.fog.hazeR0 ?? 1.15;
+      u.uHazeR1.value = p.fog.hazeR1 ?? 2.4;
+      u.uHazeRadial.value = fogOn ? (p.fog.hazeRadial ?? 0) : 0;
       u.uHazeAmount.value = p.fog.hazeAmount ?? 1;
       u.uVoidSky.value = fogOn ? (p.fog.voidSky ?? 0.30) : 0;
       this._blit(this.mAtmos, this.rtA);

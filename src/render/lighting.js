@@ -147,11 +147,19 @@ const RIGS = {
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
       // these do both jobs at once, and they are aimed at surfaces the floor
       // barely sees (floor.tartarus litGain keeps what does reach it negligible).
-      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 290, distance: 17, speed: 0.44, flicker: 0.14 },
-      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 265, distance: 17, speed: 0.61, flicker: 0.12 },
-      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 215, distance: 19, speed: 0.31, flicker: 0.09 },
-      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 215, distance: 19, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 240, distance: 17, speed: 0.52, flicker: 0.14 },
+      // §11.2 LIGHT THE MID-GROUND, and light it UNEVENLY. The chamber points at
+      // focalAngle (225deg, i.e. -X-Z, which the fixed 45deg play yaw puts dead
+      // centre at the top of frame). The two washes that flank that gate are the
+      // brightest lights in the room after the key — they are what makes the
+      // focal bays the top value band and what the ashlar's new chamfers catch.
+      // The three that fall on plain perimeter come DOWN: an evenly washed
+      // perimeter is what turned the top of every play frame into one continuous
+      // salmon band with no depth in it (§1.1, §11.1).
+      { pos: [ -4.6, 5.4, -12.6], color: '#7ad8ff', intensity: 430, distance: 20, speed: 0.31, flicker: 0.09 },
+      { pos: [-12.6, 5.0,  -4.6], color: '#5fd0ff', intensity: 400, distance: 20, speed: 0.61, flicker: 0.12 },
+      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 180, distance: 15, speed: 0.44, flicker: 0.14 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 120, distance: 16, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 130, distance: 15, speed: 0.52, flicker: 0.14 },
     ],
   },
   asphodel: {
