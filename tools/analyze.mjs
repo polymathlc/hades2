@@ -177,7 +177,13 @@ function verdict(m){
   }
   if(m.bands.highlight < 0.04) bad.push('VALUE LAW: no highlight band (<4%) — frame never reaches bright');
   if(m.depthBands){
-    if(m.depthBands.spread < 0.18) bad.push(`VALUE LAW: true-depth luma spread only ${m.depthBands.spread} (near ${m.depthBands.near} / mid ${m.depthBands.mid} / far ${m.depthBands.far}) — no separated value bands (need >=0.18)`);
+    const b = m.depthBands;
+    if(b.spread < 0.18) bad.push(`VALUE LAW: true-depth luma spread only ${b.spread} (near ${b.near} / mid ${b.mid} / far ${b.far}) — no separated value bands (need >=0.18)`);
+    // ART_DIRECTION §1.1: background is LOW value and hazed; the mid-ground focal architecture
+    // carries the light. A background brighter than the mid-ground is inverted aerial perspective
+    // and pulls the eye out of the play space.
+    if(b.far > b.mid) bad.push(`VALUE LAW: INVERTED AERIAL PERSPECTIVE — background (${b.far}) is brighter than the mid-ground (${b.mid}). The background must be the darkest, least saturated band; the mid-ground focal architecture must carry the light.`);
+    if(b.mid < b.near) bad.push(`VALUE LAW: the mid-ground (${b.mid}) is darker than the near play area (${b.near}) — the focal architecture should be the lit band.`);
   } // no depth companion captured -> the screen-thirds proxy is NOT used as a gate, it lies too often
   if(m.secondaryHueFrac < 0.08) bad.push(`MONOCHROME: only ${(m.secondaryHueFrac*100).toFixed(0)}% of saturated pixels sit outside the dominant hue — needs an opposing accent hue`);
   return bad;

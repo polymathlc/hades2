@@ -239,3 +239,35 @@ Rules that follow from this:
 4. If you find yourself reasoning about how to satisfy a measurement, stop and look at the image
    instead. If the measurement and your eye disagree, **your eye wins and the metric is the bug** —
    report it so the tooling gets fixed.
+
+
+---
+
+## 11. Aerial perspective is inverted (found by the true-depth metric)
+
+Measuring luma by real scene depth rather than screen position revealed the frame's remaining
+structural error:
+
+| Band | Measured | Required |
+|---|---|---|
+| near — the play area | 0.038 | mid-dark, the stage |
+| mid — focal architecture | 0.081 | **the brightest band** |
+| far — background | **0.142** | **the darkest, least saturated band** |
+
+The background is roughly four times brighter than the foreground. That is inverted: it pulls the
+eye out of the play space and flattens the image, because the strongest value contrast sits at the
+edge of the frame instead of on the subject.
+
+Worse, the previous screen-thirds metric actively rewarded making this worse — brightening the void
+raised its score. Any work that raised `voidSky` or lifted the haze to satisfy it should be undone.
+
+**Required correction:**
+1. **Crush the far band.** The void/backdrop and everything beyond the arena drops to a low value
+   and low chroma. Distance haze desaturates toward the ink ramp — it must never *lift* value.
+2. **Light the mid-ground.** The focal architecture — the back wall, the bays, the statuary behind
+   the play space — is the brightest band in the frame. Light it from its own practicals and let
+   the ornament's chamfers catch it.
+3. **Keep the near band dark.** The play floor stays the dark stage (§9), with the character reading
+   against it.
+4. The ordering `far < near < mid` with a total spread >= 0.18 is now checked automatically by
+   `tools/analyze.mjs` whenever a `.depth.png` companion exists.
