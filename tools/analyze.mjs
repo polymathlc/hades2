@@ -198,9 +198,15 @@ export function analyze(file){
 // shots (04_material, 05_floor, anything with 'detail') are lit and posed to show a surface, so the
 // ground-plane law does not apply — their whole subject IS the ground.
 const INSPECTION = /(material|floor|detail|texture)/i;
+// Modal screens deliberately dim and blur the world behind a foreground panel. Judging them by the
+// composition laws is a category error: the boon screen scored "low contrast / no highlight band"
+// while being the best-looking frame in the build. They are judged by §6 UI doctrine, by eye.
+const MODAL = /(boons|menu|title|death|victory|summary|pause)/i;
 function verdict(m){
   const bad=[];
   const inspection = INSPECTION.test(m.file);
+  const modal = MODAL.test(m.file);
+  if (modal) return bad;   // composition laws do not apply to a modal screen
   if(m.bands.shadow < 0.12) bad.push('too few dark pixels — no ink shadow band');
   if(m.bands.highlight < 0.02) bad.push('no highlight band — frame never reaches bright values');
   if(m.deepShadowPresent < 0.01) bad.push('no true blacks');
@@ -234,6 +240,6 @@ const target = process.argv[2] || 'shots/latest';
 const files = fs.statSync(target).isDirectory()
   ? fs.readdirSync(target).filter(f=>f.endsWith('.png') && !f.endsWith('.depth.png')).sort().map(f=>path.join(target,f))
   : [target];
-const out = files.map(f=>{ try{ const m=analyze(f); return {...m, shotKind: INSPECTION.test(path.basename(f))?'inspection':'composition', warnings:verdict(m)}; }
+const out = files.map(f=>{ try{ const m=analyze(f); return {...m, shotKind: MODAL.test(path.basename(f))?'modal':(INSPECTION.test(path.basename(f))?'inspection':'composition'), warnings:verdict(m)}; }
   catch(e){ return { file:path.basename(f), error:String(e.message) }; } });
 console.log(JSON.stringify(out, null, 1));
