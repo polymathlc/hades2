@@ -60,8 +60,34 @@ export function analyze(file){
       if(c>bestCorr){ bestCorr=c; bestLag=lag; }
     }
   }
+  // ground plane proxy: bottom 40% of frame, central 70% horizontally (where the floor sits in our poses)
+  let gsum=0, gn2=0; const gy0=(h*0.60)|0, gx0=(w*0.15)|0, gx1=(w*0.85)|0;
+  const gvals=[];
+  for(let y=gy0;y<h;y+=2) for(let x=gx0;x<gx1;x+=2){ const L=Math.pow(lum[y*w+x],1/2.2); gsum+=L; gn2++; gvals.push(L); }
+  gvals.sort((a,b)=>a-b);
+  const groundLuma = gvals.length? gvals[(gvals.length/2)|0] : 0;
+  const allSorted = Array.from(lum).map(v=>Math.pow(v,1/2.2)).sort((a,b)=>a-b);
+  const frameMedian = allSorted[(allSorted.length/2)|0];
+  // depth bands: median luma of top / middle / bottom thirds
+  const bandMed = (y0,y1)=>{ const v=[]; for(let y=y0;y<y1;y+=3) for(let x=0;x<w;x+=3) v.push(Math.pow(lum[y*w+x],1/2.2));
+    v.sort((a,b)=>a-b); return v[(v.length/2)|0]; };
+  const dTop=bandMed(0,(h/3)|0), dMid=bandMed((h/3)|0,(2*h/3)|0), dBot=bandMed((2*h/3)|0,h);
+  const depthSpread = Math.max(dTop,dMid,dBot)-Math.min(dTop,dMid,dBot);
+  // hue diversity: fraction of saturated pixels outside the dominant 60-degree hue bin
+  const hueBins=new Array(12).fill(0); let satPix=0;
+  for(let i=0,px=0;px<N;px++,i+=ch){ const [hh,ss,ll]=rgb2hsl(data[i],data[i+1],data[i+2]);
+    if(ss>0.22 && ll>0.08){ hueBins[Math.min(11,(hh/30)|0)]++; satPix++; } }
+  let domBin=0; for(let i=1;i<12;i++) if(hueBins[i]>hueBins[domBin]) domBin=i;
+  const near = (hueBins[domBin]+hueBins[(domBin+11)%12]+hueBins[(domBin+1)%12]);
+  const secondaryHueFrac = satPix? (satPix-near)/satPix : 0;
+
   return {
     file: path.basename(file), w, h,
+    groundLuma: +groundLuma.toFixed(3),
+    frameMedian: +frameMedian.toFixed(3),
+    groundVsFrame: +(groundLuma/(frameMedian||1e-6)).toFixed(2),
+    depthBands: { top:+dTop.toFixed(3), mid:+dMid.toFixed(3), bottom:+dBot.toFixed(3), spread:+depthSpread.toFixed(3) },
+    secondaryHueFrac: +secondaryHueFrac.toFixed(3),
     bands: { shadow: +band(0,16).toFixed(3), mid: +band(16,44).toFixed(3), highlight: +band(44,64).toFixed(3) },
     deepShadowPresent: +band(0,6).toFixed(4),
     brightPresent: +band(58,64).toFixed(4),
@@ -88,6 +114,11 @@ function verdict(m){
   if(m.blownPct > 4) bad.push('highlights blown out');
   if(m.detailDensity < 0.004) bad.push('almost no surface detail — flat/untextured');
   if(m.tiling.strength > 0.55) bad.push(`strong tiling repetition at ~${m.tiling.periodPx}px`);
+  if(m.groundVsFrame > 1.0) bad.push(`VALUE LAW BROKEN: ground plane (${m.groundLuma}) is BRIGHTER than the frame median (${m.frameMedian}) — the floor must be the dark stage`);
+  if(m.groundLuma > 0.18) bad.push(`VALUE LAW: ground luma ${m.groundLuma} exceeds 0.18 — darken the floor`);
+  if(m.bands.highlight < 0.04) bad.push('VALUE LAW: no highlight band (<4%) — frame never reaches bright');
+  if(m.depthBands.spread < 0.18) bad.push(`VALUE LAW: depth luma spread only ${m.depthBands.spread} — no separated value bands (need >=0.18)`);
+  if(m.secondaryHueFrac < 0.08) bad.push(`MONOCHROME: only ${(m.secondaryHueFrac*100).toFixed(0)}% of saturated pixels sit outside the dominant hue — needs an opposing accent hue`);
   return bad;
 }
 

@@ -189,3 +189,33 @@ Characters must NOT be lit like environment. They get a dedicated shader:
 - Follows player with critically-damped spring; leads slightly toward aim.
 - Pulls back on combat intensity; pushes in on dialogue/reward moments.
 - Never rotates during combat. Stability is part of the readability.
+
+---
+
+## 9. THE VALUE LAW (added after review round 1 — this overrides taste)
+
+Review found the single most damaging error a Hades-like frame can make: **the ground plane was the
+brightest large surface in the frame.** Hades never does this. The floor is a DARK STAGE; the
+character, the ornament and the effects are the LIT SUBJECTS on it.
+
+These are measurable, non-negotiable:
+
+1. **The floor is the darkest large surface.** Median luma of the ground plane must be
+   **below 0.18** (display luma, 0–1) and must be **below the frame median**.
+   `node tools/analyze.mjs` reports `groundLuma` and `groundVsFrame` — `groundVsFrame` must be < 1.0.
+2. **The character out-values the floor by 2.5× or more.** The hero is the brightest large-ish
+   shape in the play area. If you cannot find the character instantly in a squinted thumbnail,
+   the frame has failed.
+3. **The frame must reach bright.** `bands.highlight` must be **≥ 0.04**. A frame with no highlight
+   band is a flat frame no matter how pretty the hue. Highlights come from: emissives (flame, lava,
+   glyphs), gold specular hits, rim light, and VFX — *never* from a broadly lit floor.
+4. **Three separated value bands, measurably.** Median display luma of foreground, mid-ground and
+   background must span **≥ 0.18** total. Everything sitting inside a 0.02 luma spread is the
+   failure mode review called "a lighting test", and it is an automatic P0.
+5. **Ornament carries the light.** Gold filigree, capitals, brazier rims and trim are where the
+   highlights live. Light the *edges* of architecture, not its faces.
+6. **Two hues, not one.** A frame that is entirely one hue family (e.g. everything salmon/orange
+   with purple shadows) is monochrome mud. The biome key hue must be opposed by its rim/accent hue
+   from §2, and the accent must be genuinely visible — at least 8% of pixels.
+7. **Cast shadows must read as shadows, not stains.** Tight, directional, with a defined edge.
+   Huge soft purple blobs across the floor are a failure.
