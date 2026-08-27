@@ -233,3 +233,19 @@ Healthy targets for a shipped EREBUS frame:
 | `tiling.strength` | < 0.45 | no visible repeat |
 | `crushedPct` | < 18 | shadows still hold detail |
 | `blownPct` | < 3 | highlights are not clipped |
+
+## 8. Blind A/B comparison
+
+`node tools/ab.mjs <A> <B> <outDir> [seed]` composites two frames (or two whole shot
+directories, paired by filename) side by side, **randomising which source lands on the left**, and
+writes a sealed `KEY.json` answer sheet next to the output.
+
+The critic agent is shown only the composite and asked which panel is better and why. It cannot
+know which build it is praising. The orchestrator decodes `KEY.json` afterwards.
+
+Two uses:
+1. **Regression / progress proof** — `tools/ab.mjs shots/prev shots/latest shots/ab` proves a change
+   actually improved the frame rather than just changing it.
+2. **Against real reference** — drop reference stills into `refs/` (filenames matching the shot ids)
+   and run `tools/ab.mjs refs shots/latest shots/ab-vs-ref`. The critic then performs a genuine
+   two-image blind comparison. `refs/` is gitignored; reference images are never committed.

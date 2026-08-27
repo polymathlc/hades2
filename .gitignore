@@ -5,3 +5,5 @@ shots/
 *.log
 
 .dist-*/
+
+refs/
