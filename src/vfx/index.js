@@ -197,12 +197,16 @@ export class VFX {
       size0: 0.30, size1: 0.55, life: [0.16, 0.30], speed: [5, 11],
       emit: 'cone', spread: 0.35, drag: 5.5, core: 1.2,
     });
+    // The GLOW layer of §5, and therefore the single particle most able to
+    // break §9: it is by definition wide, soft and low-frequency, so every
+    // one of them that sits near the stage adds a broad lift to the floor.
+    // Wide is right; the alpha is what has to stay small.
     P.define('mote', {
       shape: SHAPE.glow,
       ramp: [S(0, '#ffffff'), S(0.3, GOLD.highlight), S(0.75, '#ff8a3c'), S(1, '#2a0a12')],
-      alpha: [[0, 0], [0.14, 0.55], [0.6, 0.35], [1, 0]],
+      alpha: [[0, 0], [0.14, 0.30], [0.6, 0.17], [1, 0]],
       size: [[0, 0.4], [0.3, 1.1], [1, 0.5]],
-      size0: 0.55, size1: 1.0, life: [0.35, 0.7], speed: [0.4, 1.8],
+      size0: 0.50, size1: 0.92, life: [0.35, 0.7], speed: [0.4, 1.8],
       emit: 'sphere', spread: 0.5, drag: 3.2, core: 0.45,
     });
     P.define('rune', {
@@ -248,7 +252,7 @@ export class VFX {
     P.emit('spark', n1, { x, y, z, dx: ux, dy: 0.42, dz: uz, spread: 1.02, speed: 1.0 * (0.75 + 0.3 * s), color: C.body });
     P.emit('sparkFine', Math.round(7 + 8 * s), { x, y, z, dx: ux, dy: 0.55, dz: uz, spread: 1.35, speed: 0.9, color: C.core });
     P.emit('chev', 3, { x, y, z, dx: ux, dy: 0.18, dz: uz, spread: 0.30, speed: 1.0, color: C.body });
-    P.emit('mote', 1, { x, y, z, size: 0.85 * s, color: C.glow });
+    P.emit('mote', 1, { x, y, z, size: 0.70 * s, color: C.glow });
     if (s > 0.9) P.emit('shard', 4, { x, y, z, dx: ux, dy: 0.6, dz: uz, spread: 0.9, speed: 0.85, color: C.body });
     P.emit('smoke', 2, { x, y: y - 0.15, z, dx: ux, dy: 0.5, dz: uz, spread: 0.8, speed: 0.5, size: 0.8 * s });
 
@@ -419,7 +423,7 @@ export class VFX {
     });
     this.particles.emit('dust', 16, { x: pos.x, y: 0.10, z: pos.z, spread: R * 0.22, speed: 0.9, size: 1.1 });
     this.particles.emit('sparkFine', 12, { x: pos.x, y: 0.16, z: pos.z, dy: 0.28, spread: 1.45, speed: 1.1, color });
-    this.particles.emit('mote', 1, { x: pos.x, y: 0.35, z: pos.z, size: 1.1, color });
+    this.particles.emit('mote', 1, { x: pos.x, y: 0.42, z: pos.z, size: 0.8, color });
     return this;
   }
 

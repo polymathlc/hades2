@@ -5,11 +5,18 @@
 // 384 simultaneous bolts in TWO draw calls:
 //   * CORE  — an elongated bipyramid, additive, stretched along velocity. This
 //             is the near-white §5 "core": small, hot, unmistakable.
-//   * GLOW  — camera-facing additive quads carrying a procedurally drawn
-//             radial sprite. Each bolt also lays down GHOSTS of that quad at
-//             its last N positions, which is the trail: no ribbon geometry, no
-//             per-bolt draw call, and it reads as a streak at 1/8 resolution
-//             exactly as §5 demands.
+//   * STREAK — a CONTINUOUS TAPERED RIBBON. The bolt's last N world positions
+//             are stitched into a quad strip: one instanced quad per segment,
+//             each quad's two ends carrying the width and the intensity of the
+//             history points it spans, so the strip is a single unbroken
+//             tapered streak with no seams and no steps. Camera-facing per
+//             segment, built from the segment tangent and the view vector.
+//             (This replaces the old GHOST quads. Four discrete sprites spaced
+//             a bolt-length apart do not read as motion — they read as a
+//             dotted line of separate circles, i.e. as a rendering bug.)
+//   * GLOW  — ONE camera-facing additive quad at the head. Small and tight:
+//             §5 wants the core hot and the glow low-alpha, and §9 will not
+//             tolerate a bolt pooling light across the floor it flies over.
 //
 // The vfx ribbon trail (ctx.vfx.trail) is reserved for HERO projectiles — the
 // thrown spear, the full-charge arrow — because that pool is small and those
@@ -27,8 +34,13 @@ import * as THREE from 'three';
 import { TEAM } from './hitbox.js';
 
 const MAX = 384;
-const GHOSTS = 4;               // trail samples carried per bolt
-const GLOW_CAP = MAX * (GHOSTS + 1);
+// TRAIL history points per bolt. Sampled once per fixed step, so this is also
+// the tail length in frames: 8 @ 60 Hz = 0.133 s of streak, which at a typical
+// 18 m/s bolt is a little over two body-lengths — a streak, not a comet tail.
+const TRAIL = 8;
+const SEGS = TRAIL;             // segments = points, counting the live head
+const RIB_CAP = MAX * SEGS;
+const GLOW_CAP = MAX;
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -39,16 +51,72 @@ const _s = new THREE.Vector3();
 const _c = new THREE.Color();
 const _up = new THREE.Vector3(0, 1, 0);
 
+// ── the streak shader ──────────────────────────────────────────────────────
+// One instanced quad per ribbon segment. Each instance carries the segment's
+// two world endpoints plus the ribbon width and value at EACH end, and the
+// quad is expanded across the segment IN THE VERTEX SHADER against the live
+// camera. Two things follow, and both matter:
+//   * consecutive segments share an edge EXACTLY (same endpoint, same width,
+//     same value), so eight quads read as one continuous tapered ribbon
+//     rather than as eight tiles with seams;
+//   * the billboard is resolved at DRAW time, not in lateUpdate. The capture
+//     harness poses the camera after lateUpdate has already run, so a
+//     CPU-billboarded ribbon would be twisted in every shipped screenshot -
+//     the same trap trails.js documents.
+const RIB_VERT = /* glsl */`
+attribute vec3 aA;         // world position of the OLDER end of this segment
+attribute vec3 aB;         // world position of the NEWER end
+attribute vec3 aCol;
+attribute vec2 aFade;      // x = value at the tail end, y = at the head end
+attribute vec2 aW;         // x = width at the tail end, y = at the head end
+varying vec3 vCol;
+varying float vK;
+varying float vV;
+void main() {
+  float u = uv.x;                        // 0 = tail end of this segment, 1 = head
+  vec3 P = mix(aA, aB, u);
+  vec3 T = aB - aA;
+  vec3 V = normalize(P - cameraPosition);
+  vec3 S = cross(normalize(T), V);
+  float l = length(S);
+  S = l > 1e-4 ? S / l : vec3(0.0, 1.0, 0.0);
+  P += S * (uv.y - 0.5) * mix(aW.x, aW.y, u);
+  vCol = aCol;
+  vK = mix(aFade.x, aFade.y, u);
+  vV = uv.y * 2.0 - 1.0;
+  gl_Position = projectionMatrix * viewMatrix * vec4(P, 1.0);
+}`;
+
+// A hairline centre and a narrow saturated body. NO white core and no wide
+// halo: the head sprite owns the hot spot, and a wide additive skirt on a bolt
+// that crosses the whole arena is exactly the floor wash 9 outlaws.
+const RIB_FRAG = /* glsl */`
+precision highp float;
+varying vec3 vCol;
+varying float vK;
+varying float vV;
+void main() {
+  float v = abs(vV);
+  float edge = max(0.0, 1.0 - v);
+  float body = edge * edge;
+  float core = pow(max(0.0, 1.0 - v / 0.36), 2.4);
+  vec3 c = vCol * (body * 0.46 + core * 0.80);
+  gl_FragColor = vec4(c * vK, 1.0);
+}`;
+
 /** Draw the glow sprite once, in code. Hot small centre, wide soft halo. */
 function makeGlowTexture() {
   const N = 64, cv = document.createElement('canvas');
   cv.width = cv.height = N;
   const g = cv.getContext('2d');
   const grd = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
+  // §5 / §9: the halo is the part that lands on the floor, so it is the part
+  // that has to be cheap. The old ramp still carried 0.09 alpha out at 62% of
+  // the radius; with a 0.8 m quad and several bolts in frame that is a wash.
   grd.addColorStop(0.00, 'rgba(255,255,255,1.00)');
-  grd.addColorStop(0.14, 'rgba(255,255,255,0.86)');
-  grd.addColorStop(0.32, 'rgba(255,255,255,0.34)');
-  grd.addColorStop(0.62, 'rgba(255,255,255,0.09)');
+  grd.addColorStop(0.09, 'rgba(255,255,255,0.82)');
+  grd.addColorStop(0.22, 'rgba(255,255,255,0.26)');
+  grd.addColorStop(0.44, 'rgba(255,255,255,0.055)');
   grd.addColorStop(1.00, 'rgba(255,255,255,0.00)');
   g.fillStyle = grd; g.fillRect(0, 0, N, N);
   const t = new THREE.CanvasTexture(cv);
@@ -108,6 +176,31 @@ export class ProjectileSystem {
     this.glowMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(GLOW_CAP * 3), 3);
     this.glowMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
 
+    // ── STREAK: the tapered ribbon, one instanced quad per history segment ──
+    const strip = new THREE.PlaneGeometry(1, 1);
+    this._ribA = new THREE.InstancedBufferAttribute(new Float32Array(RIB_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this._ribB = new THREE.InstancedBufferAttribute(new Float32Array(RIB_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this._ribCol = new THREE.InstancedBufferAttribute(new Float32Array(RIB_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this._ribFade = new THREE.InstancedBufferAttribute(new Float32Array(RIB_CAP * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    this._ribW = new THREE.InstancedBufferAttribute(new Float32Array(RIB_CAP * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    strip.setAttribute('aA', this._ribA);
+    strip.setAttribute('aB', this._ribB);
+    strip.setAttribute('aCol', this._ribCol);
+    strip.setAttribute('aFade', this._ribFade);
+    strip.setAttribute('aW', this._ribW);
+    const ribMat = new THREE.ShaderMaterial({
+      vertexShader: RIB_VERT, fragmentShader: RIB_FRAG,
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.AdditiveBlending, side: THREE.DoubleSide, toneMapped: true,
+    });
+    this.ribMesh = new THREE.InstancedMesh(strip, ribMat, RIB_CAP);
+    this.ribMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.ribMesh.frustumCulled = false;
+    this.ribMesh.name = 'projectiles.streak';
+    this.ribMesh.renderOrder = 11;
+    this.ribMesh.count = 0;
+    this.root.add(this.ribMesh);
+
     ctx.events.on('room.built', () => this.clear());
     return this;
   }
@@ -127,7 +220,7 @@ export class ProjectileSystem {
       homing: 0, target: null,
       orbX: 0, orbZ: 0, orbR: 3, orbW: 2.2, orbA: 0,
       cr: 1, cg: 0.7, cb: 0.3, size: 1, coreSize: 1,
-      hx: new Float32Array(GHOSTS), hy: new Float32Array(GHOSTS), hz: new Float32Array(GHOSTS),
+      hx: new Float32Array(TRAIL), hy: new Float32Array(TRAIL), hz: new Float32Array(TRAIL),
       hn: 0, hAcc: 0,
       onHitFx: 'impact', onExpireFx: 'burst',
       carrier: null, trailHandle: null,
@@ -195,7 +288,7 @@ export class ProjectileSystem {
     p.onHitFx = d.onHit || 'impact';
     p.onExpireFx = d.onExpire || 'burst';
     p.hn = 0; p.hAcc = 0; p._lastHit = null;
-    for (let i = 0; i < GHOSTS; i++) { p.hx[i] = p.x; p.hy[i] = p.y; p.hz[i] = p.z; }
+    for (let i = 0; i < TRAIL; i++) { p.hx[i] = p.x; p.hy[i] = p.y; p.hz[i] = p.z; }
 
     // hero bolts get a real ribbon trail from the VFX pool
     if (d.hero && this.ctx.vfx && this.ctx.vfx.trail) {
@@ -296,9 +389,9 @@ export class ProjectileSystem {
       p.hAcc += dt;
       if (p.hAcc >= 0.0083) {
         p.hAcc = 0;
-        for (let g = GHOSTS - 1; g > 0; g--) { p.hx[g] = p.hx[g - 1]; p.hy[g] = p.hy[g - 1]; p.hz[g] = p.hz[g - 1]; }
+        for (let g = TRAIL - 1; g > 0; g--) { p.hx[g] = p.hx[g - 1]; p.hy[g] = p.hy[g - 1]; p.hz[g] = p.hz[g - 1]; }
         p.hx[0] = p.x; p.hy[0] = p.y; p.hz[0] = p.z;
-        if (p.hn < GHOSTS) p.hn++;
+        if (p.hn < TRAIL) p.hn++;
       }
       if (p.carrier) { p.carrier.position.set(p.x, p.y, p.z); p.carrier.updateMatrixWorld(true); }
 
@@ -379,9 +472,11 @@ export class ProjectileSystem {
   lateUpdate(alpha, ctx) {
     const cam = ctx.camera;
     if (cam) _qc.copy(cam.quaternion);
-    let ci = 0, gi = 0;
+    let ci = 0, gi = 0, ri = 0;
     const cCol = this.coreMesh.instanceColor.array;
     const gCol = this.glowMesh.instanceColor.array;
+    const rA = this._ribA.array, rB = this._ribB.array;
+    const rCol = this._ribCol.array, rFade = this._ribFade.array, rW = this._ribW.array;
 
     for (let i = 0; i < this.live.length; i++) {
       const p = this.pool[this.live[i]];
@@ -401,37 +496,65 @@ export class ProjectileSystem {
       _s.set(cs, cs, cs);
       _m.scale(_s);
       this.coreMesh.setMatrixAt(ci, _m);
-      cCol[ci * 3] = Math.min(1.05, p.cr * 0.88 + 0.11) * k;
-      cCol[ci * 3 + 1] = Math.min(1.05, p.cg * 0.88 + 0.09) * k;
-      cCol[ci * 3 + 2] = Math.min(1.05, p.cb * 0.88 + 0.07) * k;
+      cCol[ci * 3] = Math.min(1.05, p.cr * 0.90 + 0.09) * k;
+      cCol[ci * 3 + 1] = Math.min(1.05, p.cg * 0.90 + 0.075) * k;
+      cCol[ci * 3 + 2] = Math.min(1.05, p.cb * 0.90 + 0.06) * k;
       ci++;
 
-      // GLOW head + ghosts
-      if (cam) {
-        const headS = p.radius * 2.70 * p.size * k;
-        _m.compose(_v.set(p.x, p.y, p.z), _qc, _s.set(headS, headS, headS));
-        this.glowMesh.setMatrixAt(gi, _m);
-        gCol[gi * 3] = p.cr * 0.38 * k; gCol[gi * 3 + 1] = p.cg * 0.38 * k; gCol[gi * 3 + 2] = p.cb * 0.38 * k;
-        gi++;
-        for (let g = 0; g < p.hn && gi < GLOW_CAP; g++) {
-          const f = (1 - (g + 1) / (GHOSTS + 1)) * k;
-          const s2 = headS * (0.86 - 0.16 * g);
-          _m.compose(_v.set(p.hx[g], p.hy[g], p.hz[g]), _qc, _s.set(s2, s2, s2));
-          this.glowMesh.setMatrixAt(gi, _m);
-          gCol[gi * 3] = p.cr * f * 0.17; gCol[gi * 3 + 1] = p.cg * f * 0.17; gCol[gi * 3 + 2] = p.cb * f * 0.17;
-          gi++;
+      if (!cam) continue;
+
+      // GLOW — one tight head sprite. Small and low: §9 will not have a bolt
+      // laying a 0.8 m disc of light on the floor it is flying over.
+      const headS = p.radius * 1.90 * p.size * k;
+      _m.compose(_v.set(p.x, p.y, p.z), _qc, _s.set(headS, headS, headS));
+      this.glowMesh.setMatrixAt(gi, _m);
+      gCol[gi * 3] = p.cr * 0.21 * k; gCol[gi * 3 + 1] = p.cg * 0.21 * k; gCol[gi * 3 + 2] = p.cb * 0.21 * k;
+      gi++;
+
+      // STREAK — stitch (head, h0 .. h(n-1)) into a continuous tapered ribbon.
+      // Point i is i steps behind the head; q is its position along the trail
+      // (1 at the head, 0 at the tail). Width tapers to a needle and value
+      // falls faster than width, so the tail bleeds out instead of stopping.
+      const n = p.hn;
+      if (n < 1) continue;
+      const wHead = p.radius * 1.06 * p.size;
+      const kk = k * 0.92;
+      let px = p.x, py = p.y, pz = p.z;         // newer end of the segment
+      let wN = wHead, fN = kk;
+      for (let g = 0; g < n && ri < RIB_CAP; g++) {
+        const ox = p.hx[g], oy = p.hy[g], oz = p.hz[g];   // older end
+        const dx = ox - px, dy = oy - py, dz = oz - pz;
+        if (dx * dx + dy * dy + dz * dz > 1e-8) {
+          const qO = Math.max(0, 1 - (g + 1) / TRAIL);
+          const wO = wHead * Math.pow(qO, 0.80);
+          const fO = kk * Math.pow(qO, 1.70);
+          const o3 = ri * 3, o2 = ri * 2;
+          rA[o3] = ox; rA[o3 + 1] = oy; rA[o3 + 2] = oz;
+          rB[o3] = px; rB[o3 + 1] = py; rB[o3 + 2] = pz;
+          rCol[o3] = p.cr; rCol[o3 + 1] = p.cg; rCol[o3 + 2] = p.cb;
+          rFade[o2] = fO; rFade[o2 + 1] = fN;
+          rW[o2] = wO; rW[o2 + 1] = wN;
+          ri++;
+          wN = wO; fN = fO;
         }
+        px = ox; py = oy; pz = oz;
       }
     }
     this.coreMesh.count = ci;
     this.glowMesh.count = gi;
+    this.ribMesh.count = ri;
     if (ci) { this.coreMesh.instanceMatrix.needsUpdate = true; this.coreMesh.instanceColor.needsUpdate = true; }
     if (gi) { this.glowMesh.instanceMatrix.needsUpdate = true; this.glowMesh.instanceColor.needsUpdate = true; }
+    if (ri) {
+      this._ribA.needsUpdate = true; this._ribB.needsUpdate = true;
+      this._ribCol.needsUpdate = true; this._ribFade.needsUpdate = true; this._ribW.needsUpdate = true;
+    }
   }
 
   dispose() {
     this.coreMesh?.geometry.dispose(); this.coreMesh?.material.dispose();
     this.glowMesh?.geometry.dispose(); this.glowMesh?.material.dispose();
+    this.ribMesh?.geometry.dispose(); this.ribMesh?.material.dispose();
     this.glowTex?.dispose();
     if (this.root?.parent) this.root.parent.remove(this.root);
   }

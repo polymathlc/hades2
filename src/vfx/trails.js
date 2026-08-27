@@ -43,7 +43,14 @@ void main(){
   float glow = pow(max(0.0, 1.0 - v), 3.6) * 0.35;
   float head = smoothstep(0.30, 1.0, u);
   float fade = pow(u, 1.25);
-  float grain = 0.84 + 0.16 * sin(u * 37.0 + uSeed);
+  // THE BEAD BUG. This was 0.84 + 0.16 * sin(u * 37.0 + uSeed) -- 37 full
+  // brightness cycles along the ribbon. On a bolt crossing the arena that is
+  // one dark pinch every ~8 screen pixels, and because the ribbon is additive
+  // and already clipping at the head, the troughs read as GAPS: the trail
+  // stops being a streak and becomes a dotted string of sausages, which is
+  // the single most artificial thing in a combat frame. A painterly ribbon
+  // wants a couple of slow undulations along its length, not a carrier wave.
+  float grain = 0.90 + 0.10 * sin(u * 3.4 + uSeed);
   // the core is a hairline, not the whole ribbon: a fat white core turns any
   // trail into a ruled white line once AgX desaturates it
   vec3 c = uColor * (body * grain * 1.55 + glow * 0.45) + uCore * core * (0.14 + 0.62 * head);

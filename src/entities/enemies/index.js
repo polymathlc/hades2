@@ -20,7 +20,7 @@
 import * as THREE from 'three';
 import { clamp, clamp01, TAU } from '../../core/math.js';
 import { TokenPool } from '../ai.js';
-import { Enemy } from './base.js';
+import { Enemy, refreshFamilyRims } from './base.js';
 import { Telegraphs } from './telegraph.js';
 import { SHADE, BRUTE, brutePreDamage } from './melee.js';
 import { HEXER, HERALD } from './casters.js';
@@ -78,6 +78,10 @@ export class EnemyManager {
     ctx.events.on('entity.died', (info) => this._onDied(info));
     ctx.events.on('capture.state', ({ name, args }) => this._captureState(name, args, ctx));
     ctx.events.on('room.built', () => { if (!ctx.CAPTURE) this.clear(); });
+    // MaterialLibrary.setBiome() republishes the palette rim over every
+    // painterly material without consulting userData.paintOverrides, so the
+    // per-family rims are trampled on the first chamber change. Re-stamp.
+    ctx.events.on('biome.changed', () => refreshFamilyRims());
     return this;
   }
 

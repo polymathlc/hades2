@@ -50,13 +50,18 @@ void main(){
   // the leading (outer) edge is hard; the trailing wash is soft — a shockwave
   // has a direction and the falloff has to show it.
   float e = (1.0 - v) / max(t, 1e-3);
-  float body = pow(smoothstep(1.0, 0.06, e), 1.9) * smoothstep(-0.02, 0.05, v);
+  // §9 VALUE LAW. A shockwave lies ON THE FLOOR, so every watt it does not
+  // spend on its leading edge is spent washing out the dark stage. The band
+  // was a 1.9-power falloff at 1.45 gain across a third of the radius — on a
+  // 3 m ring that is a square metre of lit ground. Sharpen the falloff and
+  // move the energy into the hot line, which is the part that actually reads.
+  float body = pow(smoothstep(1.0, 0.06, e), 2.7) * smoothstep(-0.02, 0.05, v);
   float core = smoothstep(0.30, 0.10, e) * smoothstep(0.01, 0.07, e);
   float glow = smoothstep(2.0, 0.0, e) * 0.16;
   // a real shockwave is not uniform: it is strongest on the side it travelled
   float sweep = 0.52 + 0.48 * pow(0.5 + 0.5 * cos((a - uPhase) * TAU_), 0.7);
   float bank = (0.88 + 0.12 * sin(a * TAU_ * 3.0 + uSeed * 2.3)) * sweep;
-  vec3 c = uColor * body * bank * 1.45 + uCore * core * uCoreAmt * bank * 2.40 + uColor * glow * bank * 0.30;
+  vec3 c = uColor * body * bank * 0.98 + uCore * core * uCoreAmt * bank * 2.55 + uColor * glow * bank * 0.14;
   gl_FragColor = vec4(c, uOpacity);
 }`.replace(/TAU_/g, '6.28318530718');
 

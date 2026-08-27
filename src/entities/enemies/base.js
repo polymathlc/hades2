@@ -26,7 +26,7 @@ import * as THREE from 'three';
 import { clamp, clamp01, lerp, damp, dampAngle, shortAngle, smoothstep, TAU } from '../../core/math.js';
 import { buildHumanoid, SLOT_PAINT, linRGB } from '../rig.js';
 import { Animator } from '../anim.js';
-import { setPaint } from '../../materials/painterly.js';
+import { setPaint, paintParams } from '../../materials/painterly.js';
 import { Perception, Steer, Brain, beginTelegraph, endTelegraph, inCone, inDisc, orbitSign } from '../ai.js';
 
 const _v = new THREE.Vector3();
@@ -84,6 +84,98 @@ export function cloneRig(t) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FAMILY RIM — §9.2 "the lit subjects out-value the stage"
+// ═══════════════════════════════════════════════════════════════════════════
+// Every character in the frame used to carry the SAME rim: rig.js's SLOT_PAINT
+// publishes one constant #5fd0ff edge to hero and roster alike, and the library
+// republishes the rig's constant over all of it. On a crimson Tartarus floor
+// that reads as "some pink shapes on a pink floor" — you cannot name the family
+// from the silhouette, which is the acceptance test the roster was written to.
+//
+// So each family now owns its rim: its IDENTITY hue, a stronger constant, and a
+// slightly deeper colour-shifted inner contour (§4). The contour matters as
+// much as the rim — it is the half of the separation that costs no light, and
+// §9 will not have us buying legibility by brightening anything.
+//
+// HUE DISCIPLINE (§9.6, §1.2): a rim in the KEY's own hue is not a rim, it is
+// camouflage. The families that would otherwise sit inside the Tartarus key are
+// pushed off it — the warden especially, whose identity #ff5a3c IS the key, so
+// the boss is rimmed COLD and is the one thing in the room edged in ice.
+// PRE-COMPENSATION. painterly.js does NOT add uRimColor as authored — it adds
+// `uRimColor * vec3(0.30, 1.22, 0.72)`, a deliberate channel weighting that
+// makes the mandated #5fd0ff read as the measured pale edge. The side effect
+// is that the rim's achievable gamut is heavily green-biased: feed it gold and
+// the enemy comes back GREEN, not gold. So these are authored in that weighted
+// space — what each one is worth on screen is the comment, not the hex.
+//
+// Strength is deliberately a SMALL lift over the slot base (~1.1x), not the
+// 1.3-1.4x this pass first tried: the shader's `clamp(rimK * 5.0, 0, 1)` tint
+// term saturates almost immediately, so past a point extra rim stops being a
+// contour and starts flooding the whole body with the complement. Verified by
+// looking: at 1.34x the roster read as green plastic.
+const FAMILY_LOOK = {
+  shade: { rim: '#5fd0ff', mul: 1.16 },   // -> teal. the basic shade
+  brute: { rim: '#ffb84d', mul: 1.10 },   // -> warm yellow-green, the shield wall
+  hexer: { rim: '#9a6bff', mul: 1.14 },   // -> blue-violet, the arcane caster
+  herald: { rim: '#ffe14d', mul: 1.12 },  // -> hot yellow, the summoner
+  hound: { rim: '#ff7a2a', mul: 1.16 },   // -> amber-olive, the swarmer
+  bloat: { rim: '#8ef06a', mul: 1.16 },   // -> green, the detonator
+  warden: { rim: '#3aa8ff', mul: 1.12 },  // -> ICE. the boss opposes its own room
+};
+const FAMILY_KINDS = Object.keys(FAMILY_LOOK);
+
+/** 'wardenblade' -> 'warden', 'hexerwood' -> 'hexer'. */
+function familyOf(tag) {
+  if (!tag) return null;
+  for (let i = 0; i < FAMILY_KINDS.length; i++) if (tag.indexOf(FAMILY_KINDS[i]) === 0) return FAMILY_KINDS[i];
+  return null;
+}
+
+// Materials we own the rim on. MaterialLibrary.setBiome() -> setBiomeLook()
+// rewrites uRimColor on EVERY registered painterly material without consulting
+// userData.paintOverrides, so a family rim set once at build time is gone the
+// first time the player changes chamber. We re-stamp on biome.changed.
+const _familyMats = [];
+
+/**
+ * Stamp one material with its family's rim. Idempotent: the multiplied values
+ * are computed once from the slot's authored base and cached, so re-applying
+ * after a biome change can never compound.
+ */
+export function familyRim(mat, kind, slot) {
+  const F = FAMILY_LOOK[kind];
+  const U = mat && paintParams(mat);
+  if (!F || !U) return mat;
+  let tgt = mat.userData.familyRim;
+  if (!tgt || tgt.kind !== kind) {
+    const isGlow = slot === 'glow';
+    tgt = mat.userData.familyRim = {
+      kind, slot,
+      rimColor: F.rim,
+      rimStrength: (U.uRimStrength.value || 10) * (isGlow ? 1 : F.mul),
+      contourStrength: isGlow ? U.uContourStrength.value
+        : Math.min(1.30, (U.uContourStrength.value || 0.9) * 1.16),
+    };
+    _familyMats.push(mat);
+  }
+  setPaint(mat, { rimColor: tgt.rimColor, rimStrength: tgt.rimStrength, contourStrength: tgt.contourStrength });
+  // declare them, so MaterialLibrary._applyRim leaves the family alone
+  mat.userData.paintOverrides = {
+    ...(mat.userData.paintOverrides || {}),
+    rimColor: tgt.rimColor, rimStrength: tgt.rimStrength, contourStrength: tgt.contourStrength,
+  };
+  return mat;
+}
+
+/** Re-stamp every family rim (after a biome swap has trampled them). */
+export function refreshFamilyRims() {
+  for (let i = 0; i < _familyMats.length; i++) {
+    const m = _familyMats[i], t = m.userData.familyRim;
+    if (t) setPaint(m, { rimColor: t.rimColor, rimStrength: t.rimStrength, contourStrength: t.contourStrength });
+  }
+}
+
 /**
  * A painterly CHARACTER material outside the rig builder — for the roster's
  * non-humanoid bodies (the hound, the bloat-sac, the boss's cage). Mirrors what
@@ -98,7 +190,13 @@ export function charMaterial(ctx, slot, tag, opts = {}) {
   // materials. Only `glow` is tagged, because the emissive hue IS the identity
   // (teal shade, amber hound, green bloat, gold herald) and that lives on the
   // material.
-  const key = 'characterrig.' + slot + (slot === 'glow' && tag ? '.' + tag : '');
+  // The tag is now part of the key for EVERY slot, not just `glow`. The
+  // budget note above is about texture synthesis, and the character branch of
+  // MaterialLibrary.get() bakes no textures at all — it patches a plain
+  // MeshStandardMaterial — so a per-family material costs one uniform block
+  // and no extra draw call (the bodies are already separate meshes). What it
+  // buys is a per-family RIM, which §9.2 makes non-optional.
+  const key = 'characterrig.' + slot + (tag ? '.' + tag : '');
   let m = ctx.mats && ctx.mats.get ? ctx.mats.get(key, {
     color: '#ffffff',
     roughness: opts.roughness ?? (slot === 'metal' ? 0.34 : 0.72),
@@ -123,6 +221,7 @@ export function charMaterial(ctx, slot, tag, opts = {}) {
     m.emissiveIntensity = opts.glow ?? 0.9;
     m.toneMapped = true;
   }
+  familyRim(m, familyOf(tag), slot);
   m.needsUpdate = true;
   return m;
 }
@@ -155,7 +254,20 @@ export function paintGeo(g, hex, o = {}) {
 const _templates = new Map();
 export function humanoidTemplate(ctx, kind, spec) {
   let t = _templates.get(kind);
-  if (!t) { t = { rig: buildHumanoid(spec, ctx), clips: null }; _templates.set(kind, t); }
+  if (!t) {
+    // matTag keys the slot materials per FAMILY inside MaterialLibrary, so the
+    // shade and the brute stop sharing the hero's single cyan rim.
+    const rig = buildHumanoid({ ...spec, matTag: kind }, ctx);
+    const mats = rig.materials || (Array.isArray(rig.mesh.material) ? rig.mesh.material : [rig.mesh.material]);
+    for (let i = 0; i < mats.length; i++) {
+      const m = mats[i];
+      const n = (m && m.name) || '';
+      const slot = n.startsWith('characterrig.') ? n.split('.')[1] : 'cloth';
+      familyRim(m, kind, slot);
+    }
+    t = { rig, clips: null };
+    _templates.set(kind, t);
+  }
   return t;
 }
 export function clearTemplates() { _templates.clear(); }
