@@ -168,6 +168,19 @@ function setupCapture(engine, ctx, setBiome){
       mat.dispose();
       return document.querySelector('canvas').toDataURL('image/png');
     },
+    // Camera + arena parameters so the analyzer can reconstruct WORLD position per pixel from the
+    // depth pass, and therefore bucket value bands by distance from the arena centre (play area /
+    // perimeter architecture / background void) rather than by pixel-count quantiles, which
+    // collapse in a close pose where most of the frame is floor.
+    sceneMeta(){
+      const cam = ctx.camera;
+      cam.updateMatrixWorld();
+      return {
+        fov: cam.fov, aspect: cam.aspect, near: cam.near, far: cam.far,
+        matrixWorld: cam.matrixWorld.elements.slice(),
+        arenaR: (ctx.world && ctx.world.bounds && ctx.world.bounds.r) || 16,
+      };
+    },
     info(){ const ms = ctx.mats && ctx.mats.stats ? ctx.mats.stats : null;
             return { fps: engine.perf.fps, calls: ctx.renderer.info.render.calls, tris: ctx.renderer.info.render.triangles,
                      progs: ctx.renderer.info.programs ? ctx.renderer.info.programs.length : 0,

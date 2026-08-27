@@ -92,43 +92,66 @@ export function analyze(file){
   const dTop=bandMed(0,(h/3)|0), dMid=bandMed((h/3)|0,(2*h/3)|0), dBot=bandMed((2*h/3)|0,h);
   const screenSpread = Math.max(dTop,dMid,dBot)-Math.min(dTop,dMid,dBot);
 
-  // TRUE depth bands, when a linear-depth companion exists next to the frame. Screen thirds are
-  // not depth — in a wide pose the top third is mostly void, so a band metric built on screen
-  // position rewards brightening the sky. Bucket by actual scene depth instead.
+  // TRUE value bands, bucketed by WORLD-SPACE RADIUS from the arena centre.
+  //
+  // An earlier version split the depth samples into pixel-count terciles. That collapses in a close
+  // pose: when ~78% of a frame is floor between 10 and 20 units, all three terciles land on floor
+  // and the "far" band ends up being the focal architecture rather than the background void — so
+  // the metric asked for the focal architecture to be darkened, the opposite of the art direction.
+  // An agent caught this and produced the depth-mask evidence for it.
+  //
+  // We now reconstruct each pixel's world position from the linear depth pass plus the camera
+  // parameters written beside it, then classify by radius against the arena:
+  //     play area  r <  0.75R      perimeter architecture  0.75R <= r < 1.35R      void  r >= 1.35R
+  // This is pose-independent and matches what ART_DIRECTION actually legislates.
   let trueBands = null;
   const depthFile = file.replace(/\.png$/, '.depth.png');
-  if (fs.existsSync(depthFile)) {
+  const metaFile  = file.replace(/\.png$/, '.meta.json');
+  if (fs.existsSync(depthFile) && fs.existsSync(metaFile)) {
     try {
       const dimg = decodePNG(depthFile);
-      if (dimg.width === w && dimg.height === h) {
+      const meta = JSON.parse(fs.readFileSync(metaFile, 'utf8'));
+      if (dimg.width === w && dimg.height === h && meta && meta.matrixWorld) {
         const dd = dimg.data, dch = dimg.channels;
-        const samples = [];
-        for (let y=0; y<h; y+=2) for (let x=0; x<w; x+=2) {
-          const p2 = y*w+x;
-          const d = dd[p2*dch] / 255;
-          if (d >= 0.999) continue;               // background / nothing rendered
-          samples.push([d, Math.pow(lum[p2], 1/2.2)]);
+        const m = meta.matrixWorld;                       // column-major THREE.Matrix4
+        const tanHalf = Math.tan((meta.fov * Math.PI / 180) / 2);
+        const R = meta.arenaR || 16;
+        const rNear = 0.75 * R, rMid = 1.35 * R;
+        const buckets = [[], [], []];
+        for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
+          const p2 = y * w + x;
+          const dn = dd[p2 * dch] / 255;
+          if (dn >= 0.999) { buckets[2].push(Math.pow(lum[p2], 1/2.2)); continue; }  // nothing = void
+          const vd = meta.near + dn * (meta.far - meta.near);   // linear view depth
+          const ndcX = (x / w) * 2 - 1, ndcY = -((y / h) * 2 - 1);
+          const vx = ndcX * vd * tanHalf * meta.aspect, vy = ndcY * vd * tanHalf, vz = -vd;
+          const wx = m[0]*vx + m[4]*vy + m[8]*vz  + m[12];
+          const wz = m[2]*vx + m[6]*vy + m[10]*vz + m[14];
+          const r = Math.hypot(wx, wz);
+          const L = Math.pow(lum[p2], 1/2.2);
+          buckets[r < rNear ? 0 : (r < rMid ? 1 : 2)].push(L);
         }
-        if (samples.length > 500) {
-          samples.sort((a,b)=>a[0]-b[0]);
-          const t = (samples.length/3)|0;
-          const med = (arr)=>{ const v=arr.map(s2=>s2[1]).sort((a,b)=>a-b); return v[(v.length/2)|0]; };
-          const near = med(samples.slice(0,t));
-          const mid  = med(samples.slice(t, 2*t));
-          const far  = med(samples.slice(2*t));
-          trueBands = { near:+near.toFixed(3), mid:+mid.toFixed(3), far:+far.toFixed(3),
-                        spread:+(Math.max(near,mid,far)-Math.min(near,mid,far)).toFixed(3),
-                        coverage:+(samples.length/((w/2|0)*(h/2|0))).toFixed(3) };
+        const med = (a)=>{ if(!a.length) return null; a.sort((p3,q)=>p3-q); return a[(a.length/2)|0]; };
+        const near = med(buckets[0]), mid = med(buckets[1]), far = med(buckets[2]);
+        if (near !== null && mid !== null && far !== null) {
+          const tot = buckets[0].length + buckets[1].length + buckets[2].length;
+          trueBands = {
+            near:+near.toFixed(3), mid:+mid.toFixed(3), far:+far.toFixed(3),
+            spread:+(Math.max(near,mid,far)-Math.min(near,mid,far)).toFixed(3),
+            pixelShare: [ +(buckets[0].length/tot).toFixed(2), +(buckets[1].length/tot).toFixed(2), +(buckets[2].length/tot).toFixed(2) ],
+          };
         }
       }
-    } catch(e){ /* depth companion optional */ }
+    } catch(e){ /* companions optional */ }
   }
+
+  // hue diversity: share of saturated pixels outside the dominant 60-degree hue span
   const hueBins=new Array(12).fill(0); let satPix=0;
   for(let i=0,px=0;px<N;px++,i+=ch){ const [hh,ss,ll]=rgb2hsl(data[i],data[i+1],data[i+2]);
     if(ss>0.22 && ll>0.08){ hueBins[Math.min(11,(hh/30)|0)]++; satPix++; } }
   let domBin=0; for(let i=1;i<12;i++) if(hueBins[i]>hueBins[domBin]) domBin=i;
-  const near = (hueBins[domBin]+hueBins[(domBin+11)%12]+hueBins[(domBin+1)%12]);
-  const secondaryHueFrac = satPix? (satPix-near)/satPix : 0;
+  const nearHue = (hueBins[domBin]+hueBins[(domBin+11)%12]+hueBins[(domBin+1)%12]);
+  const secondaryHueFrac = satPix? (satPix-nearHue)/satPix : 0;
 
   return {
     file: path.basename(file), w, h,
@@ -191,7 +214,7 @@ function verdict(m){
 
 const target = process.argv[2] || 'shots/latest';
 const files = fs.statSync(target).isDirectory()
-  ? fs.readdirSync(target).filter(f=>f.endsWith('.png')).sort().map(f=>path.join(target,f))
+  ? fs.readdirSync(target).filter(f=>f.endsWith('.png') && !f.endsWith('.depth.png')).sort().map(f=>path.join(target,f))
   : [target];
 const out = files.map(f=>{ try{ const m=analyze(f); return {...m, shotKind: INSPECTION.test(path.basename(f))?'inspection':'composition', warnings:verdict(m)}; }
   catch(e){ return { file:path.basename(f), error:String(e.message) }; } });
