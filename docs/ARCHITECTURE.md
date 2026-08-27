@@ -231,6 +231,12 @@ Healthy targets for a shipped EREBUS frame:
 | `shadowTint.hue` | 240 – 320 | shadows sit in the violet/plum range |
 | `detailDensity` | > 0.010 | surfaces carry real texture |
 | `tiling.strength` | < 0.45 | no visible repeat |
+
+`tiling.strength` measures a *prominent periodic peak* in the horizontal autocorrelation, detrended
+against a local baseline. Raw autocorrelation is high for any smooth image, so an earlier version of
+this metric reported 0.94 on a perfectly smooth gradient and sent agents chasing a repeat that did
+not exist. It is now validated against synthetic cases: a smooth gradient scores 0, a hard 64px tile
+scores 1.0 at period 64.
 | `crushedPct` | < 18 | shadows still hold detail |
 | `blownPct` | < 3 | highlights are not clipped |
 

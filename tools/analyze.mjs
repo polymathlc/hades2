@@ -46,34 +46,46 @@ export function analyze(file){
   const hi = highN? highH.map(v=>v/highN) : [0,0,0];
   const shHue = rgb2hsl(sh[0],sh[1],sh[2]);
   const hiHue = rgb2hsl(hi[0],hi[1],hi[2]);
-  // tiling: horizontal autocorrelation of a mid row-band, look for a strong periodic peak
+  // tiling: find a PROMINENT PERIODIC PEAK in the horizontal autocorrelation.
+  // Raw autocorrelation is monotonically high for any smooth image, so we detrend against a
+  // local baseline and look for a genuine local maximum standing above it. A smooth gradient
+  // has no such peak; a repeating texture has one at its period.
   let bestLag=0, bestCorr=0;
   {
     const y0=(h*0.62)|0; const row=new Float32Array(w);
-    for(let x=0;x<w;x++){ let s=0; for(let dy=-3;dy<=3;dy++) s+=lum[(y0+dy)*w+x]; row[x]=s/7; }
+    for(let x=0;x<w;x++){ let s2=0; for(let dy=-3;dy<=3;dy++) s2+=lum[(y0+dy)*w+x]; row[x]=s2/7; }
     let m=0; for(let x=0;x<w;x++) m+=row[x]; m/=w;
     for(let x=0;x<w;x++) row[x]-=m;
     let denom=0; for(let x=0;x<w;x++) denom+=row[x]*row[x];
-    for(let lag=24; lag<w/3; lag++){
-      let s=0; for(let x=0;x+lag<w;x++) s+=row[x]*row[x+lag];
-      const c = s/(denom||1);
-      if(c>bestCorr){ bestCorr=c; bestLag=lag; }
+    const LAG0=8, LAG1=Math.floor(w/3);
+    const corr=new Float32Array(LAG1);
+    for(let lag=LAG0; lag<LAG1; lag++){
+      let s2=0; for(let x=0;x+lag<w;x++) s2+=row[x]*row[x+lag];
+      corr[lag] = s2/(denom||1);
     }
+    // local baseline = moving average over a wide window
+    const WIN=40;
+    for(let lag=LAG0+2; lag<LAG1-2; lag++){
+      let acc=0, n2=0;
+      for(let k=lag-WIN;k<=lag+WIN;k++){ if(k<LAG0||k>=LAG1) continue; acc+=corr[k]; n2++; }
+      const base = acc/(n2||1);
+      const prom = corr[lag]-base;
+      // must be a local maximum to count as a period, not just a high plateau
+      if(corr[lag]>corr[lag-1] && corr[lag]>=corr[lag+1] && prom>bestCorr){ bestCorr=prom; bestLag=lag; }
+    }
+    bestCorr = Math.max(0, Math.min(1, bestCorr*2.5)); // calibrated so a hard tile repeat lands near 1
   }
   // ground plane proxy: bottom 40% of frame, central 70% horizontally (where the floor sits in our poses)
-  let gsum=0, gn2=0; const gy0=(h*0.60)|0, gx0=(w*0.15)|0, gx1=(w*0.85)|0;
-  const gvals=[];
-  for(let y=gy0;y<h;y+=2) for(let x=gx0;x<gx1;x+=2){ const L=Math.pow(lum[y*w+x],1/2.2); gsum+=L; gn2++; gvals.push(L); }
+  const gvals=[]; const gy0=(h*0.60)|0, gx0=(w*0.15)|0, gx1=(w*0.85)|0;
+  for(let y=gy0;y<h;y+=2) for(let x=gx0;x<gx1;x+=2) gvals.push(Math.pow(lum[y*w+x],1/2.2));
   gvals.sort((a,b)=>a-b);
   const groundLuma = gvals.length? gvals[(gvals.length/2)|0] : 0;
   const allSorted = Array.from(lum).map(v=>Math.pow(v,1/2.2)).sort((a,b)=>a-b);
   const frameMedian = allSorted[(allSorted.length/2)|0];
-  // depth bands: median luma of top / middle / bottom thirds
   const bandMed = (y0,y1)=>{ const v=[]; for(let y=y0;y<y1;y+=3) for(let x=0;x<w;x+=3) v.push(Math.pow(lum[y*w+x],1/2.2));
     v.sort((a,b)=>a-b); return v[(v.length/2)|0]; };
   const dTop=bandMed(0,(h/3)|0), dMid=bandMed((h/3)|0,(2*h/3)|0), dBot=bandMed((2*h/3)|0,h);
   const depthSpread = Math.max(dTop,dMid,dBot)-Math.min(dTop,dMid,dBot);
-  // hue diversity: fraction of saturated pixels outside the dominant 60-degree hue bin
   const hueBins=new Array(12).fill(0); let satPix=0;
   for(let i=0,px=0;px<N;px++,i+=ch){ const [hh,ss,ll]=rgb2hsl(data[i],data[i+1],data[i+2]);
     if(ss>0.22 && ll>0.08){ hueBins[Math.min(11,(hh/30)|0)]++; satPix++; } }
