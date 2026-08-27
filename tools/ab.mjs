@@ -43,7 +43,9 @@ let seed = (SEEDARG ? +SEEDARG : 20260827) >>> 0;
 const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
 
 const isDir = p => fs.existsSync(p) && fs.statSync(p).isDirectory();
-const pngs = p => isDir(p) ? fs.readdirSync(p).filter(f => f.endsWith('.png')).sort() : [path.basename(p)];
+// Skip measurement companions — they are data, not frames a critic should be shown.
+const isFrame = f => f.endsWith('.png') && !f.endsWith('.depth.png') && !f.endsWith('.clean.png');
+const pngs = p => isDir(p) ? fs.readdirSync(p).filter(isFrame).sort() : [path.basename(p)];
 
 let pairs;
 if(isDir(A) && isDir(B)){
