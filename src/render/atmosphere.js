@@ -163,8 +163,14 @@ const AIR = {
     // The void is the DARKEST band in the histogram, always (§1.8). These are
     // ~45% down on the first pass, where the upper third of the wide shot read
     // as a flat mid-value purple haze brighter than the arena.
-    zenith: '#080516', horizon: '#11091d', nadir: '#040308',
-    glow: '#2c0a0d', glowY: -0.18, glowSharp: 3.4, cloud: 0.64,
+    // §9.4: the void is still the darkest band that contains no architecture,
+    // but a DEAD band is not a band. At the old values the wide shot measured
+    // 20% of its pixels crushed under display 0.02, which both kills §1.1's
+    // "hazed background" and drags the frame median below the floor so the
+    // floor can never win the value law. These sit ~1.5 stops up: painted,
+    // low-chroma, and still unmistakably the bottom of the frame.
+    zenith: '#131028', horizon: '#26183f', nadir: '#0c0814',
+    glow: '#3a1016', glowY: -0.18, glowSharp: 3.4, cloud: 0.64,
     ember: '#e8a24a', emberAmt: 0.30,
     motes: [
       // Recoloured off the GOLD ramp (§2 gold core -> bronze shadow) so the

@@ -220,20 +220,32 @@ export const RAMPS = {
   // magenta-to-orange axis with no complement anywhere in the frame. The floor's
   // cool glaze is now a blue-slate that belongs to the same family as the
   // mandated #5fd0ff accent, so the ground plane itself carries the cold note.
+  // §9.1 THE VALUE LAW: a Hades flagstone sits at 0.10-0.16 DISPLAY luma with a
+  // key on it, which puts its albedo far lower than any of these stops used to
+  // sit. The cool glaze keeps the two-hue structure §2 asks for; it just no
+  // longer reaches slate-grey mid values that a strong key can push to 0.30.
   'floor.tartarus.cool': [
-    S(0.00, '#050710'), S(0.20, '#0c1119'), S(0.42, '#152230'),
-    S(0.62, '#213645'), S(0.80, '#2f4c59'), S(0.93, '#456670'),
-    S(1.00, '#648088'),
+    S(0.00, '#04050b'), S(0.20, '#080c13'), S(0.42, '#0e1720'),
+    S(0.62, '#16242e'), S(0.80, '#1f333c'), S(0.93, '#2d444d'),
+    S(1.00, '#40575f'),
   ],
   // VALUE, NOT JUST HUE. The old ramp centred near #210e18 — about 1% linear
   // reflectance. No light rig can pull a 1%-albedo floor up to the 0.34-0.42
   // display luma §1.1 needs for the foreground band, so the frame was condemned
   // to one flat dark plane before a single light was placed. Re-centred on §2's
   // Stone mid #5a2331 with the ink ramp still owning the bottom two stops.
+  // VALUE, NOT JUST HUE — and the correction runs the other way now. The
+  // previous re-centring on §2's Stone mid #5a2331 was reasoning about ALBEDO
+  // in isolation; with a 34-unit key at 38deg on a 100%-up-facing plane it
+  // produced a ground plane measuring 0.31 display luma against a frame median
+  // of 0.19 (§9.1 requires < 0.18, and BELOW the frame median). The floor is a
+  // DARK STAGE: these stops are ~40% down and the top stop no longer reaches a
+  // value the architecture has to compete with. The lit look is bought back
+  // where §9.5 wants it — on edges, trim and emissives.
   'floor.tartarus': [
-    S(0.00, '#0a0510'), S(0.18, '#180b18'), S(0.38, '#281426'),
-    S(0.58, '#3d2036'), S(0.76, '#552d40'), S(0.90, '#6e4050'),
-    S(0.97, '#875260'), S(1.00, '#a06a74'),
+    S(0.00, '#080410'), S(0.18, '#140a17'), S(0.38, '#21101f'),
+    S(0.58, '#30182c'), S(0.76, '#442337'), S(0.90, '#583046'),
+    S(0.97, '#6b3d52'), S(1.00, '#7e5060'),
   ],
 
   // The column shafts are a DIFFERENT stone from the wall: quarried paler, less

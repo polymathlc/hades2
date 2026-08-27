@@ -367,7 +367,7 @@ const RECIPES = {
   // flagstones in the visible arena are the same flagstone. That is the actual
   // cure for §7's tiling ban; a de-tiler is a patch over too small a plate.
   'floor.tartarus': { size: 1024, build(n, rng, seed) {
-    const T = TG.tileGrid(n, { cols: 11, rows: 8, pattern: 'offset', gap: 0.0030, bevel: 0.012, rng, wobble: 0.014 });
+    const T = TG.tileGrid(n, { cols: 11, rows: 8, pattern: 'offset', gap: 0.0030, bevel: 0.012, rng, wobble: 0.030 });
     const base = TG.warp2(TG.fbm(n, { freq: 4, octaves: 6, seed }), n, { amp: 0.07, freq: 2, seed: seed + 1 });
     const grit = TG.fbm(n, { freq: 30, octaves: 3, seed: seed + 2, ppc: 3 });
     // chipping, not crazing: cracks confined to a minority of the stones
@@ -392,7 +392,10 @@ const RECIPES = {
     const v = F(n);
     // per-stone tone is deliberately gentle: a strong per-tile tone pattern is
     // the single loudest tiling cue on a big floor.
-    for (let i = 0; i < v.length; i++) v[i] = 0.30 + T.id[i] * 0.09 + (base[i] - 0.5) * 0.60 + grit[i] * 0.05;
+    // Per-stone tone is now the LOUDEST anti-tiling cue rather than the quietest:
+    // a regular joint lattice is only legible while the stones either side of a
+    // joint agree in value, so 0.22 of per-stone swing is what breaks the row.
+    for (let i = 0; i < v.length; i++) v[i] = 0.30 + T.id[i] * 0.22 + (base[i] - 0.5) * 0.60 + grit[i] * 0.05;
     // A floor is seen at a grazing angle across a whole screen: any high-frequency
     // value noise turns into shimmering mottle once bloom gets hold of it. Broad
     // glazes stay, the hatching goes quiet.
@@ -456,15 +459,38 @@ const RECIPES = {
       // here: rotating a laid ashlar bed per patch does kill the lattice, but it
       // also rotates the JOINTS, and a floor whose courses run at three angles
       // reads as rubble rather than as masonry. Scale solves it without cost.
-      paint: { projection: 'planarY', triScale: 0.035, stochastic: 0,
-        macroStrength: 0.12, macroScale: 0.0125, macroTint: '#5a3340',
+      // STOCHASTIC DE-TILING BACK ON. Plate size alone was measured at 0.53-0.59
+      // autocorrelation: a 28.6m period does stop the same STONE recurring, but
+      // it does nothing about a regular JOINT LATTICE, and the joints are the
+      // signal the test is finding. The rotation is quantised to quarter turns
+      // (see painterly.js paintStochFrame), so every course stays square to the
+      // world and the bed still reads as laid masonry — what the per-cell
+      // OFFSET kills is neighbouring patches agreeing on where the joints are.
+      paint: { projection: 'planarY', triScale: 0.035, stochastic: 0.85,
+        // §9.1 THE FLOOR IS A DARK STAGE. This is the single most important
+        // number in the frame: it is how much of the light rig the ground plane
+        // is allowed to keep. A 100%-up-facing plane collects more key AND more
+        // hemisphere than any other surface class in the chamber, which is why
+        // an otherwise correct rig still produced a floor 62% brighter than the
+        // frame median. Cutting it HERE rather than in render/lighting.js means
+        // the columns, capitals, gold trim and brazier rims keep the full rig.
+        // Do not "fix" a dark floor by raising the key — raise these instead,
+        // and only if the measured groundLuma stays under 0.18.
+        litGain: 0.42, ambGain: 0.26,
+        // TILING (§7). Measured autocorrelation was 0.535-0.592 at the ashlar
+        // pitch. Plate size alone cannot answer a REGULAR JOINT LATTICE — the
+        // seams repeat even when the stones do not. A much stronger macro layer
+        // at two incommensurate scales puts a low-frequency value drift across
+        // whole groups of stones, which is what decorrelates the row the
+        // analyzer samples.
+        macroStrength: 0.15, macroScale: 0.0125, macroTint: '#4a2c38',
         // belt AND braces with the ground-plane veto in painterly.js: a floor is
         // never a silhouette, so it never carries the art-directed rim
         rimStrength: 0.10,
         // fine grain at a scale incommensurate with the bond: it decorrelates
         // the floor at SHORT lags, which is the half of the tiling test that
         // plate size alone cannot answer
-        detailStrength: 0.50, detailScale: 11 } };
+        detailStrength: 0.72, detailScale: 11 } };
   } },
 
   // ======================================================================
@@ -653,7 +679,7 @@ const RECIPES = {
     // floor value and read only by hue. A modest emissive floor in the AUTHORED
     // gold mid (#c98f2b) self-lights the filigree to the top band even where the
     // key does not reach it, without pushing it over the bloom gate.
-    return { rgb, height: h, rough, metal, normalScale: 0.85, emissive, emissiveIntensity: 0.98,
+    return { rgb, height: h, rough, metal, normalScale: 0.85, emissive, emissiveIntensity: 0.78,
       params: { envMapIntensity: 0.38 },
       paint: { triplanar: false, macroStrength: 0.16, macroTint: '#7a4f58' } };
   } },
@@ -1118,7 +1144,7 @@ const RECIPES = {
         emissive[j] *= g; emissive[j + 1] *= g * 0.95; emissive[j + 2] *= g * 0.78;
       }
     }
-    return { rgb, height: h, rough, metal, normalScale: 1.5, emissive, emissiveIntensity: 0.48,
+    return { rgb, height: h, rough, metal, normalScale: 1.5, emissive, emissiveIntensity: 0.62,
       params: { envMapIntensity: 0.75 },
       paint: { triplanar: false, macroStrength: 0.28, macroTint: GOLD.mid, rimStrength: 0.55 } };
   } },
@@ -1706,7 +1732,8 @@ export class MaterialLibrary {
       'macro', 'macroScale', 'macroStrength', 'macroTint', 'variation', 'variationTint',
       'variant', 'rimColor', 'rimPower', 'rimStrength', 'rimDir', 'rimGate', 'shadowTint',
       'shadowDepth', 'rampSoftness', 'rampStrength', 'rampSteps', 'rampLevels', 'keyRef',
-      'contourColor', 'contourStrength', 'contourStart', 'repeat', 'size', 'painterly', 'tint', 'envMap'];
+      'contourColor', 'contourStrength', 'contourStart', 'repeat', 'size', 'painterly', 'tint', 'envMap',
+      'litGain', 'ambGain'];
     const three = {};
     for (const k in opts) {
       if (MINE.indexOf(k) >= 0) own[k] = opts[k];
@@ -1884,7 +1911,11 @@ export class MaterialLibrary {
       // at all — which is exactly why the mandated #5fd0ff edge never appeared
       // no matter what the rig authored. Normalise around the reference 2.4 and
       // leave real headroom above it.
-      const k = Math.min(isChar ? 1.30 : 1.45, Math.max(0.55, rim.intensity / 2.4));
+      // Headroom raised again with §9.6: the rim is now the frame's designated
+      // COMPLEMENT source, and it also has to survive a key that was cut from
+      // 52 to 34 (rimE is anchored to uKeyRef, so a smaller key silently makes
+      // a smaller rim unless the strength moves the other way).
+      const k = Math.min(isChar ? 1.45 : 1.75, Math.max(0.55, rim.intensity / 2.4));
       U.uRimStrength.value = base * k;
     }
     // the grade's AO ink is the same ink the contour should be drawn in

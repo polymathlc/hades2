@@ -45,7 +45,7 @@ export const GRADES = {
     // with the other two biomes. Anything scene-referred that is NOT a light —
     // emissive intensities, the flame/portal quads, the atmosphere layers —
     // carries the same 2.42x.
-    exposure: 1.20,
+    exposure: 1.45,
     agxSlope: [1.06, 1.0, 0.96],
     agxPower: [1.16, 1.18, 1.24],
     // §2 asks for crimson stone and molten gold; the close-ups measured
@@ -55,11 +55,21 @@ export const GRADES = {
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
     contrast: 0.95,
-    pivot: 0.34,
+    // PIVOT FOLLOWS THE FRAME. The S-curve is a power law about this point, so
+    // a pivot ABOVE the frame's tonal centre can only push pixels down — and
+    // once §9.1 put the ground plane where it belongs, 0.34 sat two stops over
+    // everything except the ornament and collapsed the whole image. 0.29 keeps
+    // the architecture on the curve's upper arm and the floor on its lower one,
+    // which is exactly the separation the value law is asking for.
+    pivot: 0.29,
     // `black` SUBTRACTS a black point — raising it crushes, it does not protect
     // the darks. What keeps the bottom of the frame off dead #000 is the
     // positive violet `lift` below, which has to survive this subtraction.
-    black: 0.008, white: 0.86, shoulder: 0.30, hiRoll: 0.78,
+    // hiRoll raised: 0.78 was compressing the top 22% of the display range so
+    // hard that gold ornament and brazier cores shared one value with lit
+    // stone. §9.3 wants real content in the top band; the roll still preserves
+    // hue, it just starts later.
+    black: 0.008, white: 0.86, shoulder: 0.30, hiRoll: 0.86,
     // §2: the ink ramp bottoms at #07060f — a VIOLET black, not a neutral zero.
     // A negative blue lift clipped the column bases to dead #000.
     lift:  [ 0.010,  0.004,  0.026 ],
@@ -102,7 +112,10 @@ export const GRADES = {
       // #e8c060–#f2c14e range so gold is a YELLOW again.
       [0.070, 0.058,  0.054],
     ],
-    vignette: { amount: 0.66, radius: 0.60, softness: 0.86, depth: 0.12, color: H('#150820') },
+    // §1.8 the frame is composed: the vignette is what turns a lit arena into an
+    // ISLAND. It also does real work for §9.1 — the bottom corners of frame are
+    // foreground floor, and a repoussoir is supposed to be dark.
+    vignette: { amount: 0.72, radius: 0.58, softness: 0.84, depth: 0.14, color: H('#120718') },
     grain:    { amount: 0.0070, size: 1.0, darkBoost: 1.8 },
     chroma:   1.35,
     // §1.7 "bloom is a paint layer over a core that has ALREADY gone bright" —
@@ -115,9 +128,21 @@ export const GRADES = {
     // bright pass, so retuning exposure can never silently move the bloom
     // threshold again. 4.20 puts the gate ~4.5 stops over middle grey — only
     // the brazier cores, the portal and genuine gold highlights get through.
-    bloom:    { threshold: 4.20, knee: 0.42, intensity: 0.34, tint: H('#ffe0b8'), radius: 0.80, clamp: 3.0 },
-    ao:       { intensity: 0.95, radius: 1.75, power: 2.0, bias: 0.04, ink: H('#3a1d52') },
-    godrays:  { intensity: 0.26, color: H('#ff7a44'), decay: 0.955, density: 0.72, weight: 0.5 },
+    // §9.3 THE FRAME MUST REACH BRIGHT. Measured bands.highlight was 0.008-0.015
+    // against a floor of 0.04, i.e. the frame effectively had no highlight band
+    // at all — and the fix is emphatically NOT a brighter floor. The gate stays
+    // ~3.7 stops over middle grey so only genuine emissives (brazier cores, the
+    // portal, lava veins, crystal) and real gold speculars get through it; what
+    // changes is how much energy those cores are allowed to SPEND once through.
+    // Intensity 3x and radius 1.5x turns each core into a wide painted halo,
+    // which is where the top luma band comes from in every Hades frame.
+    bloom:    { threshold: 3.20, knee: 0.44, intensity: 0.72, tint: H('#ffe0b8'), radius: 1.05, clamp: 4.5 },
+    // §9.7 contact. A 1.75u radius on a 3/4 camera is a soft dirt halo, not an
+    // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
+    // the ink goes several stops darker so the base of a column reads planted
+    // instead of floating in a lilac smudge.
+    ao:       { intensity: 1.18, radius: 1.25, power: 2.1, bias: 0.035, ink: H('#180c22') },
+    godrays:  { intensity: 0.34, color: H('#ff7a44'), decay: 0.955, density: 0.72, weight: 0.5 },
     // §1.1 the background must be LOW value and HAZED. At density 0.030 /
     // hazeStart 26 the arena silhouette met a dead-#000 void at a razor edge
     // with no atmospheric band behind it at all.
@@ -127,7 +152,15 @@ export const GRADES = {
     // tint was applied to the near floor as hard as to the far wall and the two
     // converged instead of separating. The ramp now lands on the perimeter and
     // the void only.
-    fog:      { color: H('#2a1030'), far: H('#180b24'), density: 0.042, height: 0.14, haze: H('#241338'), hazeStart: 30, hazeEnd: 70, hazeDesat: 0.75, voidSky: 0.17 },
+    // §9.4 THREE SEPARATED VALUE BANDS + §7 "blacks crushed to nothing".
+    // The void was measuring 0.02-0.05 display over ~45% of the wide shot
+    // (crushedPct 20.2), which does two bad things at once: it is a dead band,
+    // and it drags the FRAME MEDIAN below the floor, so the floor scores as the
+    // bright surface no matter how dark it is made. A painted void that sits at
+    // ~0.12 — low value, low chroma, hazed, still unmistakably the darkest
+    // *architecture-free* band — is what §1.1 actually asks for, and it is what
+    // lets the arena's mid-ground read as the lit band above it.
+    fog:      { color: H('#2a1030'), far: H('#20142e'), density: 0.042, height: 0.14, haze: H('#2c1d46'), hazeStart: 33, hazeEnd: 96, hazeDesat: 0.72, voidSky: 1.90 },
     dof:      { range: 52.0, nearRange: 16.0, maxBlur: 0.36, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 

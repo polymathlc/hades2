@@ -69,61 +69,71 @@ const RIGS = {
     // INTENSITY: the whole rig is authored 2.42x hotter than it was, because
     // grades.js no longer carries a 2.90 exposure to compensate for it. The
     // extra 1.6x on top is the luminance the saturated key gives back.
-    key:    { color: '#ff8a58', intensity: 52.0, dir: [0.679, -0.545, -0.493] },
-    // §3: "fill ... never lifts blacks above ~0.06 luminance". 0.40 of blue sky
-    // on a 100%-up-facing floor was seven times that and it turned crimson
-    // stone into periwinkle vinyl. The floor's luminance is bought back with a
-    // DIRECTIONAL bounce pool below, which gives a gradient instead of a wash.
-    // §3: the fill is tinted with the biome's SHADOW colour (#241238 plum), not
-    // with a blue sky. A saturated blue fill on a 100%-up-facing floor is what
-    // painted crimson stone periwinkle in the first place.
-    // A HEMISPHERE IS A UNIFORM WASH. It raises the far wall by exactly as much
-    // as it raises the near floor, so every unit of it welds the three value
-    // bands §1.1 demands into one. Measured luma spread across the full depth of
-    // 02_gameplay was 0.017. Halved (0.14 in the old exposure's units) and the
-    // near band rebuilt below as a GRADIENT instead.
-    hemi:   { sky: '#54459a', ground: '#3a1d52', intensity: 2.60 },
-    // centre pool, not a 26x26 uniform lift: real falloff toward the skirt
-    // THE NEAR BAND. Small, hot, and high enough that it falls off hard toward
-    // the skirt — this is what puts the foreground floor a full band above the
-    // mid floor instead of matching it.
-    bounce: { color: '#7a3a52', intensity: 2.78, size: [11, 11], y: 1.6 },
-    // §3 fake floor bounce: wide, dim, tinted with the FLOOR albedo, sitting low
-    // so it grazes and gives the ground plane a light-to-dark gradient.
-    // and the §3 fake bounce proper stays a WHISPER: at 0.78 (old units) a
-    // 34x34 plate at y=0.12 was the single biggest contributor to the flat frame.
-    bounce2:{ color: '#4a2129', intensity: 0.725, size: [34, 34], y: 0.12 },
-    // §1.2 non-negotiable. 2.4 against a key of 12.0 is 1:5 and the grade's ink
-    // mask ate it. Wider band (power 1.5) so it survives a 30px subject.
-    rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 5.0, power: 1.5, wrap: 0.50 },
-    ambient:{ color: '#3a1d52', intensity: 0.60 },
+    // §9 THE VALUE LAW. The rig used to be authored so that the FLOOR read as
+    // lit — key 52 x NdotL 0.545 on a 100%-up-facing plane was the single
+    // largest irradiance in the frame, and the measured result was a salmon
+    // ground plane 62% brighter than the frame median. The floor is now cut at
+    // the MATERIAL (floor.tartarus litGain/ambGain in materials/library.js), so
+    // the key can stay strong for the architecture without ever painting the
+    // stage. Everything below is authored around that split.
+    //
+    // KEY. Lowered from 52 because the ground-plane cut no longer has to be
+    // paid for by the whole rig, and raised in elevation from -0.545 to -0.615:
+    // the 32deg sun threw column shadows two-thirds of the way across the arena
+    // as huge soft lozenges (§9.7 "stains, not shadows"). At 38deg they are
+    // still long enough to describe the form and short enough to read as cast
+    // shapes with an end.
+    key:    { color: '#ff8a58', intensity: 56.0, dir: [0.646, -0.615, -0.452] },
+    // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
+    // saturated periwinkle sky this was the brightest thing landing on the
+    // floor after the key, and it is what turned every cast shadow into a
+    // lilac stain instead of an ink shape. The fill is now a WHISPER in the
+    // authored plum, and the cool note in the frame is carried by the RIM and
+    // by real cyan practicals instead of by a wash.
+    hemi:   { sky: '#3a2a6e', ground: '#170d26', intensity: 1.55 },
+    // A tight warm pool that grazes the standing forms near the centre — the
+    // §3 fake bounce, not a lift.
+    bounce: { color: '#8a3a34', intensity: 1.90, size: [11, 11], y: 1.6 },
+    bounce2:{ color: '#3a1a20', intensity: 0.42, size: [34, 34], y: 0.12 },
+    // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
+    // The rim is now the second-strongest light in the frame by design: it is
+    // what draws every vertical edge in the chamber.
+    rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 7.6, power: 1.35, wrap: 0.55 },
+    ambient:{ color: '#241238', intensity: 0.52 },
     godrayAnchor: [0.22, 1.06],
-    env:    { zenith: '#150e30', horizon: '#33183e', nadir: '#140916', keyGain: 18.0, keySharp: 220, keyWide: 0.07, rimGain: 3.4, rimSharp: 26, bounce: '#8c2f26', bounceGain: 0.04, intensity: 0.967 },
-    // §2 two-hue rule: the warm braziers need a real cool complement or the
-    // whole frame collapses on to one magenta-orange axis.
-    // The last two are ARCHITECTURE WASHES (§1.1): the mid-ground had collapsed
-    // into the shadow band at L 0.083 and contributed nothing to depth. They sit
-    // at the wall, high, aimed at nothing else, and pull the masonry up to its
-    // own value band between the floor and the void.
-    // §1.8 ISLANDS OF LIGHT, NOT A WASH. Four warm practicals at radius ~12.5 on
-    // a 32u arena with distance 18-20 have fully overlapping falloff spheres:
-    // they integrate to an even lift across the whole floor, which raises the
-    // mean without creating any contrast. Distances are cut to ~9 so the pools
-    // are discrete and the stone between them is genuinely dark; the intensities
-    // hold the pool CENTRES where they were once the exposure correction is
-    // applied. The two big cool wall-washes are more than halved for the same
-    // reason: the far wall has to be the LOWEST value band in the frame (§1.1),
-    // not a lit backdrop.
+    // §9.5 "ornament carries the light": keyGain drives the sharp specular lobe
+    // the gold filigree, the bronze and the brazier rims reflect, and it is the
+    // cheapest route to a real highlight band that is NOT a lit floor.
+    env:    { zenith: '#150e30', horizon: '#33183e', nadir: '#140916', keyGain: 30.0, keySharp: 200, keyWide: 0.07, rimGain: 6.4, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 1.05 },
+    // §9.5 + §9.6. Two families:
+    //   WARM  tight brazier pools, radius ~8.5, sitting ON the ornament ring so
+    //         the light lands on the annulus of floor the glaze paints bright
+    //         and dies before it reaches the near apron (§9.1).
+    //   COOL  #5fd0ff wall / capital washes. These are the ones that put the
+    //         mid-ground architecture a full value band ABOVE the ground plane
+    //         and carry the mandated complement into the frame at scale.
     practicals: [
-      { pos: [ 11.0, 1.7,  -6.0], color: '#ffa257', intensity: 380, distance: 11.0, speed: 1.00 },
-      { pos: [-11.0, 1.7,   6.0], color: '#ffa257', intensity: 380, distance: 11.0, speed: 0.83 },
-      { pos: [  6.0, 1.7,  11.0], color: '#ff8a3e', intensity: 320, distance: 10.0, speed: 1.21 },
-      { pos: [ -6.0, 1.7, -11.0], color: '#ff8a3e', intensity: 320, distance: 10.0, speed: 0.72 },
-      { pos: [  0.0, 3.2, -13.5], color: '#5fd0ff', intensity: 363, distance: 12, speed: 0.44 },
-      { pos: [-13.2, 2.6,  -7.5], color: '#4fc4f0', intensity: 290, distance: 11, speed: 0.61 },
-      { pos: [ -7.5, 5.6, -13.2], color: '#3fb8ff', intensity: 170, distance: 18, speed: 0.31, flicker: 0.10 },
-      { pos: [ 12.6, 5.6,  -9.0], color: '#3fb8ff', intensity: 150, distance: 17, speed: 0.27, flicker: 0.10 },
-      { pos: [-14.5, 3.4,   3.0], color: '#5fd0ff', intensity: 300, distance: 13, speed: 0.52, flicker: 0.16 },
+      // WARM braziers, ALL on the far arc (theta 148-284deg). §1.8 + §9.1: the
+      // foreground of a composed frame is a dark repoussoir, and a brazier
+      // standing in it lights the very apron the value law needs black. Moving
+      // them upstage is what lets the near half of the arena stay ink while the
+      // mid-ground stays a lit stage. chamber.js reads these positions to place
+      // the brazier GEOMETRY, so the props follow the lights automatically.
+      { pos: [-10.52, 1.7,   6.57], color: '#ffb070', intensity: 340, distance: 9.5, speed: 1.00 },
+      { pos: [-12.13, 1.7,  -2.58], color: '#ffb070', intensity: 340, distance: 9.5, speed: 0.83 },
+      { pos: [ -6.93, 1.7, -10.28], color: '#ff9a52', intensity: 300, distance: 9.0, speed: 1.21 },
+      { pos: [  3.00, 1.7, -12.03], color: '#ff9a52', intensity: 300, distance: 9.0, speed: 0.72 },
+      // COOL #5fd0ff washes on the perimeter masonry, the column capitals and
+      // the gate. §9.4 needs the mid/background architecture to sit a full value
+      // band ABOVE the ground plane, and §9.6 needs the complement at scale —
+      // these do both jobs at once, and they are aimed at surfaces the floor
+      // cannot see (the floor's litGain keeps what does reach it negligible).
+      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 880, distance: 17, speed: 0.44, flicker: 0.14 },
+      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 780, distance: 17, speed: 0.61, flicker: 0.12 },
+      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 620, distance: 19, speed: 0.31, flicker: 0.09 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 620, distance: 19, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 700, distance: 17, speed: 0.52, flicker: 0.14 },
+      { pos: [ 14.0, 5.2,   4.2], color: '#5fd0ff', intensity: 660, distance: 17, speed: 0.38, flicker: 0.12 },
     ],
   },
   asphodel: {
@@ -188,11 +198,18 @@ export class LightRig {
     this.key.shadow.mapSize.set(sm, sm);
     // §1.3: the terminator is a painted edge. A wide PCF radius turns a cast
     // shadow into a smudge, which is exactly what "reads as dirt" looks like.
-    this.key.shadow.radius = Math.min(1.6, q.shadowRadius ?? 1.4);
+    // §9.7 "cast shadows must read as shadows, not stains". A PCF radius is
+    // measured in TEXELS, but it is spent at whatever world scale the ortho
+    // frustum happens to be, so 1.5 over a 38u frustum is a genuinely soft
+    // edge on a 3m-wide column shadow. 0.85 keeps just enough softening to
+    // kill the staircase and lets the shape keep a painted edge.
+    this.key.shadow.radius = Math.min(1.0, (q.shadowRadius ?? 1.4) * 0.6);
     // A tight ortho frustum around the arena keeps the texel density high, which
     // is what makes the shadow read as a painted shape rather than a smear.
-    this.key.shadow.bias = -0.00022;
-    this.key.shadow.normalBias = 0.022;
+    this.key.shadow.bias = -0.00015;
+    // A large normalBias walks the shadow off the base of whatever casts it,
+    // which is exactly the contact the eye uses to plant an object on a floor.
+    this.key.shadow.normalBias = 0.012;
     this.key.shadow.camera.near = 1;
     this.key.shadow.camera.far = 60;
     this.keyTarget = new THREE.Object3D();
@@ -478,7 +495,9 @@ export class LightRig {
     // Clamp the ortho frustum to the arena itself (+2u for the wall and the
     // gate). Every texel spent outside the island is a texel the terminator
     // does not get.
-    const half = r + 2.0;
+    // Every texel spent outside the island is a texel the terminator does not
+    // get: 1.35 instead of 2.0 buys ~7% more density for free.
+    const half = r + 1.35;
     const dist = r * 1.9 + 10;
     this.keyTarget.position.set(cx.x || 0, (cx.y || 0) + 1.0, cx.z || 0);
     this.key.position.set(

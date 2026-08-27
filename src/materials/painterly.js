@@ -47,7 +47,9 @@ export const ENVIRONMENT_LOOK = {
   // 0.22 is not a rim, it is a rumour. 0.40 is the level at which a column
   // arris genuinely carries a cool edge at the play camera; the ground-plane
   // veto below is what keeps it off the floor.
-  rimStrength: 0.40,
+  // §9.6 raised again: the rim is the frame's designated complement source and
+  // the single strongest "light the EDGES, not the faces" device we have.
+  rimStrength: 0.56,
   // POSITIVE Z: see the note in render/lighting.js. A rim aimed away from the
   // shipping camera is a rim nobody ever sees.
   rimDir: [-0.62, 0.34, 0.70],
@@ -65,6 +67,16 @@ export const ENVIRONMENT_LOOK = {
   variation: 0.0,
   variationTint: '#8c3b46',
   specTint: 0.35,
+  // ── THE VALUE LAW (§9) ────────────────────────────────────────────────────
+  // How much of the rig actually lands on this surface. 1.0 = "lit like
+  // everything else". Lower it on the GROUND PLANE so the floor can be a dark
+  // stage without darkening the architecture standing on it — a global key cut
+  // would take the ornament down with the floor, which is precisely the wrong
+  // trade. These are art-directed *exposure* controls per surface class, the
+  // real-time equivalent of a background painter simply not painting light on
+  // the foreground apron. Emissives are deliberately NOT attenuated.
+  litGain: 1.0,       // direct diffuse + direct specular
+  ambGain: 1.0,       // indirect (hemisphere fill, ambient, IBL)
 };
 
 export const CHARACTER_LOOK = {
@@ -146,6 +158,8 @@ uniform float uContourStart;
 uniform float uVariation;
 uniform vec3  uVariationTint;
 uniform float uPaintTime;
+uniform float uLitGain;
+uniform float uAmbGain;
 
 float gPaintLit = 1.0;
 
@@ -350,6 +364,8 @@ export function painterly(mat, o = {}) {
     uVariation:       { value: p.variation || 0 },
     uVariationTint:   { value: col(p.variationTint) },
     uPaintTime:       { value: 0 },
+    uLitGain:         { value: p.litGain ?? 1.0 },
+    uAmbGain:         { value: p.ambGain ?? 1.0 },
   };
 
   // projection: 'uv' | 'planarY' (world XZ) | 'cylinderY' | 'triplanar'
@@ -571,10 +587,19 @@ export function painterly(mat, o = {}) {
         gPaintLit = k;
         float r = paintRampCurve( k );
         float sc = clamp( mix( 1.0, r / max( k, 1e-3 ), uRampStrength ), 0.0, 3.0 );
-        reflectedLight.directDiffuse *= sc;
-        reflectedLight.directSpecular *= mix( 1.0, clamp( sc, 0.0, 1.6 ), 0.55 );
+        reflectedLight.directDiffuse *= sc * uLitGain;
+        reflectedLight.directSpecular *= mix( 1.0, clamp( sc, 0.0, 1.6 ), 0.55 ) * uLitGain;
       }
       #include <lights_fragment_end>
+      {
+        // §9.1 the floor is a DARK STAGE. Indirect light is what was actually
+        // painting the ground plane periwinkle: a hemisphere is a uniform wash
+        // and it lifts a 100%-up-facing surface harder than anything else in
+        // the frame. Attenuating it per surface class is what lets the fill stay
+        // rich on the architecture while the floor drops a full band.
+        reflectedLight.indirectDiffuse  *= uAmbGain;
+        reflectedLight.indirectSpecular *= uAmbGain;
+      }
     `);
 
     // ---- 3+4. shadow tint, rim, contour ---------------------------------

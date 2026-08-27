@@ -406,34 +406,61 @@ export class World {
     let sx = -kdir[0], sz = -kdir[2];
     { const l = Math.hypot(sx, sz) || 1; sx /= l; sz /= l; }
 
+    const sstep = (a, b, x0) => { const u = Math.min(1, Math.max(0, (x0 - a) / (b - a))); return u * u * (3 - 2 * u); };
     const floorShade = (x, z, t) => {
-      // 1. radial falloff — the medallion zone holds, the skirt goes down
-      let v = 1.04 - 0.34 * Math.pow(Math.min(1, Math.max(0, (t - 0.14) / 0.86)), 1.25);
-      // 2. DEPTH GRADIENT (§1.1 three bands). §8 fixes the camera yaw at 45deg
-      //    world-aligned and it never rotates during play, so a world-fixed
-      //    value gradient along the +X+Z diagonal is a painted decision, not a
-      //    cheat: the near half of the ground plane is the frame's foreground
-      //    band and the far half recedes toward the mid band. Measured luma
-      //    spread from foreground floor to far wall was 0.017 — one band, not
-      //    three — and a purely radial glaze cannot fix that because it darkens
-      //    the near edge and the far edge by exactly the same amount.
+      // ── §9 THE VALUE LAW, painted into the ground plane ──────────────────
+      // Review round 1: the floor was the BRIGHTEST large surface in the frame
+      // (groundLuma 0.31 vs a frame median of 0.19) and the glaze here was a
+      // direct cause — its depth term multiplied the NEAR floor by 2.35x, and
+      // the near floor is exactly the band a 3/4 camera puts in the bottom of
+      // frame. Hades composes the opposite way, and so do we now:
+      //
+      //   DARK PLINTH   t < 0.40   the stone the character stands on. It has to
+      //                            be the darkest thing near the character or
+      //                            the silhouette has nothing to read against.
+      //   LIT ANNULUS   t ~ 0.66   the braziers stand on the ornament ring, so
+      //                            the glaze paints light where the practicals
+      //                            actually put it.
+      //   DARK APRON    dep > 0.55 the near half of the arena — the frame's
+      //                            foreground — falls away to near-ink so the
+      //                            bottom of frame is a dark repoussoir.
+      //   FAR RECESSION dep < 0.20 the far skirt dims into the distance haze.
+      //
+      // NOTE for other agents: `dep` is a WORLD-FIXED gradient along +X+Z. §8
+      // pins the camera yaw at 45deg and it never rotates during play, so this
+      // is a painted composition decision, not a view-dependent cheat. If the
+      // camera ever gains yaw, this whole function has to be re-derived.
+      // The annulus sits at t 0.74 — the radius the braziers stand on — and it
+      // is NARROW, because the measured failure was a broad lit plate reaching
+      // all the way in to the medallion. Inside 0.5 the stone is a dark plinth.
+      const ring   = Math.exp(-Math.pow((t - 0.66) / 0.16, 2));
+      let v = 0.11 + 1.62 * ring;
       const dep = Math.min(1, Math.max(0, 0.5 + 0.5 * ((x + z) * 0.70711 / (R + 0.9))));
-      v *= 0.40 + 1.95 * Math.pow(dep, 2.2);
-      // 3. a whisper of the key's own azimuth so the glaze is not purely 1-D
+      // The apron edge is SHARP on purpose: the mid-ground band and the
+      // foreground band have to be measurably different values (§9.4), and a
+      // long soft ramp averages them back into one.
+      v *= 1 - 0.88 * sstep(0.50, 0.66, dep);          // the foreground apron
+      v *= 1 - 0.42 * sstep(0.66, 1.00, dep);          // ...and it keeps falling
+      v *= 0.74 + 0.26 * sstep(0.04, 0.30, dep);       // far skirt recedes
+      // a whisper of the key's own azimuth so the glaze is not purely 1-D
       const g = 0.5 + 0.5 * ((x * sx + z * sz) / (R + 0.9));
-      v *= 0.90 + 0.20 * g;
-      // 3. warm pools under the braziers
+      v *= 0.92 + 0.16 * g;
+      // warm pools under the braziers — now a HUE cue on top of the annulus,
+      // not a second brightness term (the practicals carry the luminance)
       let warm = 0;
       for (const [px, pz] of warmPools) {
         const d = Math.hypot(x - px, z - pz);
-        warm += Math.max(0, 1 - d / 7.2) ** 2;
+        warm += Math.max(0, 1 - d / 5.8) ** 2;
       }
       warm = Math.min(1.15, warm);
-      v *= 1 + warm * 0.42;
-      // pools carry the brazier's hue into the albedo, the far side cools off
-      const r = v * (1 + warm * 0.16);
-      const gg = v * (1 - warm * 0.02) * (0.99 + 0.02 * g);
-      const b = v * (1 - warm * 0.20) * (0.94 + 0.10 * (1 - g));
+      v *= 1 + warm * 0.20;
+      // §9.6 TWO HUES FROM THE GROUND UP. Lit stone drifts warm crimson, dark
+      // stone drifts toward the #5fd0ff accent axis, so the floor's own value
+      // structure carries the complement instead of relying on a fill light.
+      const lit = Math.min(1, Math.max(0, (v - 0.18) / 1.20));
+      const r  = v * (0.88 + 0.20 * lit) * (1 + warm * 0.14);
+      const gg = v * (0.90 + 0.12 * lit);
+      const b  = v * (1.26 - 0.36 * lit) * (1 - warm * 0.14);
       return [r, gg, b];
     };
     const floor = add(new THREE.Mesh(
