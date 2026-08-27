@@ -270,8 +270,10 @@ GPU-independent, timings are not):
 | Textures | 92 | — | watch |
 | **Material generation** | **7080 ms** | **< 1500 ms** | **FAIL — P1** |
 
-**Material generation at 7 seconds is a shipping defect.** A player stares at a blank screen for
-seven seconds before the first chamber appears. Fixes, in order of preference:
+**Caveat on the timing:** 7080 ms was measured on this CI container's CPU under software
+rendering. Texture synthesis is pure JS and CPU-bound, so a developer machine will be meaningfully
+faster — the library's author targeted ~3 s. Treat 7080 ms as an upper bound, not the shipping
+number. It is still too slow: even a third of it is a blank screen before the first chamber. Fixes, in order of preference:
 1. Generate at lower resolution and upsample — most painterly surfaces do not need 2048².
 2. Generate on demand per biome rather than the whole library up front.
 3. Move synthesis into a Worker so it does not block the main thread, with a loading state.
