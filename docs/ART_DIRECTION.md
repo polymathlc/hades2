@@ -305,3 +305,24 @@ light in a dark void" cannot be judged from it at all — and no amount of light
 that frame read the way a Hades combat frame reads. The gameplay pose in `tools/shotlist.json`
 needs real void in frame: pull back, raise the camera, or frame across a rim so the abyss is
 visible behind the play space.
+
+
+---
+
+## 13. Scoreboard of metric failures
+
+Five metrics in this project have misled the work they were meant to guide. Recording them because
+the pattern matters more than any individual bug:
+
+| Metric | What it claimed to measure | What it actually measured | Caught by |
+|---|---|---|---|
+| `tiling.strength` | texture repetition | image smoothness (a gradient scored 0.94) | validating against synthetic cases |
+| `groundLuma` v1 | floor brightness | the central 70% only — a dark vignette hid a blazing floor | looking at the frame |
+| `depthBands` v1 | depth value bands | screen thirds — rewarded brightening the sky | an agent reasoning about the mechanism |
+| `depthBands` v2 | depth value bands | pixel-count terciles — in a close pose all three landed on floor | an agent building a depth mask |
+| `groundLuma` v2 | floor brightness | the bottom 45% of frame — mostly the hero and their VFX | an agent measuring with the hero excluded |
+
+**Not one was caught by the numbers themselves.** Every single one was found by looking at an image
+or by reasoning about what the number physically represents. This is why §10 exists, and why the
+critic panel that judges with its eyes is the gate — the metrics only catch gross failures on the
+way there.

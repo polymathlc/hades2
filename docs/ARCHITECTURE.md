@@ -247,6 +247,14 @@ this metric reported 0.94 on a perfectly smooth gradient and sent agents chasing
 not exist. It is now validated against synthetic cases: a smooth gradient scores 0, a hard 64px tile
 scores 1.0 at period 64.
 | `groundP90` | < 0.42 | no large blazing regions of floor |
+
+`groundLuma`/`groundP90` sample the **true floor plane** in world space (reconstructed from the
+depth companion: world Y within ±0.75 of the floor, inside the arena radius), reported as
+`groundSource: "world-plane"`. An earlier version sampled the bottom 45% of the *frame*, which in a
+combat shot is mostly the hero and their own VFX burst — an agent proved this by measuring the same
+band with the hero's column excluded and getting 0.758 vs 0.332, i.e. the thing being blamed for
+the failure was never setting it. Without a depth companion it falls back to the screen region and
+says so via `groundSource: "screen-region(approx)"`.
 | `crushedPct` | < 18 | shadows still hold detail |
 | `blownPct` | < 3 | highlights are not clipped |
 

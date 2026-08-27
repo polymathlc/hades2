@@ -80,11 +80,6 @@ export function analyze(file){
   // which a dark vignetted centre could satisfy while the actual floor blazed at the edges —
   // the metric passed while the eye said the floor still dominated. We also track the 90th
   // percentile so a floor that is dark on average but has large blown-out regions still fails.
-  const gvals=[]; const gy0=(h*0.55)|0;
-  for(let y=gy0;y<h;y+=2) for(let x=0;x<w;x+=2) gvals.push(Math.pow(lum[y*w+x],1/2.2));
-  gvals.sort((a,b)=>a-b);
-  const groundLuma = gvals.length? gvals[(gvals.length/2)|0] : 0;
-  const groundP90  = gvals.length? gvals[Math.min(gvals.length-1,(gvals.length*0.90)|0)] : 0;
   const allSorted = Array.from(lum).map(v=>Math.pow(v,1/2.2)).sort((a,b)=>a-b);
   const frameMedian = allSorted[(allSorted.length/2)|0];
   const bandMed = (y0,y1)=>{ const v=[]; for(let y=y0;y<y1;y+=3) for(let x=0;x<w;x+=3) v.push(Math.pow(lum[y*w+x],1/2.2));
@@ -105,6 +100,7 @@ export function analyze(file){
   //     play area  r <  0.75R      perimeter architecture  0.75R <= r < 1.35R      void  r >= 1.35R
   // This is pose-independent and matches what ART_DIRECTION actually legislates.
   let trueBands = null;
+  let floorSamples = null;
   const depthFile = file.replace(/\.png$/, '.depth.png');
   const metaFile  = file.replace(/\.png$/, '.meta.json');
   if (fs.existsSync(depthFile) && fs.existsSync(metaFile)) {
@@ -118,6 +114,7 @@ export function analyze(file){
         const R = meta.arenaR || 16;
         const rNear = 0.75 * R, rMid = 1.35 * R;
         const buckets = [[], [], []];
+        floorSamples = [];
         for (let y = 0; y < h; y += 2) for (let x = 0; x < w; x += 2) {
           const p2 = y * w + x;
           const dn = dd[p2 * dch] / 255;
@@ -126,10 +123,16 @@ export function analyze(file){
           const ndcX = (x / w) * 2 - 1, ndcY = -((y / h) * 2 - 1);
           const vx = ndcX * vd * tanHalf * meta.aspect, vy = ndcY * vd * tanHalf, vz = -vd;
           const wx = m[0]*vx + m[4]*vy + m[8]*vz  + m[12];
+          const wy = m[1]*vx + m[5]*vy + m[9]*vz  + m[13];
           const wz = m[2]*vx + m[6]*vy + m[10]*vz + m[14];
           const r = Math.hypot(wx, wz);
           const L = Math.pow(lum[p2], 1/2.2);
           buckets[r < rNear ? 0 : (r < rMid ? 1 : 2)].push(L);
+          // TRUE floor sampling: a pixel is ground only if its world position is on the floor
+          // plane. Sampling a screen region instead swept in the hero and their own VFX burst,
+          // so a combat frame's "ground" P90 was really the character — an agent proved this by
+          // measuring the same band with the hero's column excluded (0.758 vs 0.332).
+          if (wy > -0.75 && wy < 0.75 && r < rMid) floorSamples.push(L);
         }
         const med = (a)=>{ if(!a.length) return null; a.sort((p3,q)=>p3-q); return a[(a.length/2)|0]; };
         const near = med(buckets[0]), mid = med(buckets[1]), far = med(buckets[2]);
@@ -145,6 +148,20 @@ export function analyze(file){
     } catch(e){ /* companions optional */ }
   }
 
+  // Prefer TRUE floor samples (world-space, from the depth companion). Fall back to the crude
+  // lower-frame region only when no depth companion exists, and say which was used.
+  let gvals, groundSource;
+  if (floorSamples && floorSamples.length > 500) {
+    gvals = floorSamples; groundSource = 'world-plane';
+  } else {
+    gvals = []; const gy0=(h*0.55)|0;
+    for(let y=gy0;y<h;y+=2) for(let x=0;x<w;x+=2) gvals.push(Math.pow(lum[y*w+x],1/2.2));
+    groundSource = 'screen-region(approx)';
+  }
+  gvals.sort((a,b)=>a-b);
+  const groundLuma = gvals.length? gvals[(gvals.length/2)|0] : 0;
+  const groundP90  = gvals.length? gvals[Math.min(gvals.length-1,(gvals.length*0.90)|0)] : 0;
+
   // hue diversity: share of saturated pixels outside the dominant 60-degree hue span
   const hueBins=new Array(12).fill(0); let satPix=0;
   for(let i=0,px=0;px<N;px++,i+=ch){ const [hh,ss,ll]=rgb2hsl(data[i],data[i+1],data[i+2]);
@@ -157,6 +174,7 @@ export function analyze(file){
     file: path.basename(file), w, h,
     groundLuma: +groundLuma.toFixed(3),
     groundP90: +groundP90.toFixed(3),
+    groundSource,
     frameMedian: +frameMedian.toFixed(3),
     groundVsFrame: +(groundLuma/(frameMedian||1e-6)).toFixed(2),
     screenThirds: { top:+dTop.toFixed(3), mid:+dMid.toFixed(3), bottom:+dBot.toFixed(3), spread:+screenSpread.toFixed(3) },
