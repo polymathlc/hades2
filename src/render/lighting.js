@@ -83,23 +83,23 @@ const RIGS = {
     // as huge soft lozenges (§9.7 "stains, not shadows"). At 38deg they are
     // still long enough to describe the form and short enough to read as cast
     // shapes with an end.
-    key:    { color: '#ff8a58', intensity: 56.0, dir: [0.646, -0.615, -0.452] },
+    key:    { color: '#ff8a58', intensity: 62.0, dir: [0.646, -0.615, -0.452] },
     // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
     // saturated periwinkle sky this was the brightest thing landing on the
     // floor after the key, and it is what turned every cast shadow into a
     // lilac stain instead of an ink shape. The fill is now a WHISPER in the
     // authored plum, and the cool note in the frame is carried by the RIM and
     // by real cyan practicals instead of by a wash.
-    hemi:   { sky: '#3a2a6e', ground: '#170d26', intensity: 1.55 },
+    hemi:   { sky: '#3a2a6e', ground: '#170d26', intensity: 1.50 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
-    bounce: { color: '#8a3a34', intensity: 1.90, size: [11, 11], y: 1.6 },
-    bounce2:{ color: '#3a1a20', intensity: 0.42, size: [34, 34], y: 0.12 },
+    bounce: { color: '#8a3a34', intensity: 2.00, size: [11, 11], y: 1.6 },
+    bounce2:{ color: '#3a1a20', intensity: 0.58, size: [34, 34], y: 0.12 },
     // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
     // The rim is now the second-strongest light in the frame by design: it is
     // what draws every vertical edge in the chamber.
     rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 7.6, power: 1.35, wrap: 0.55 },
-    ambient:{ color: '#241238', intensity: 0.52 },
+    ambient:{ color: '#241238', intensity: 0.50 },
     godrayAnchor: [0.22, 1.06],
     // §9.5 "ornament carries the light": keyGain drives the sharp specular lobe
     // the gold filigree, the bronze and the brazier rims reflect, and it is the
@@ -113,27 +113,30 @@ const RIGS = {
     //         mid-ground architecture a full value band ABOVE the ground plane
     //         and carry the mandated complement into the frame at scale.
     practicals: [
-      // WARM braziers, ALL on the far arc (theta 148-284deg). §1.8 + §9.1: the
-      // foreground of a composed frame is a dark repoussoir, and a brazier
-      // standing in it lights the very apron the value law needs black. Moving
-      // them upstage is what lets the near half of the arena stay ink while the
-      // mid-ground stays a lit stage. chamber.js reads these positions to place
-      // the brazier GEOMETRY, so the props follow the lights automatically.
-      { pos: [-10.52, 1.7,   6.57], color: '#ffb070', intensity: 340, distance: 9.5, speed: 1.00 },
-      { pos: [-12.13, 1.7,  -2.58], color: '#ffb070', intensity: 340, distance: 9.5, speed: 0.83 },
-      { pos: [ -6.93, 1.7, -10.28], color: '#ff9a52', intensity: 300, distance: 9.0, speed: 1.21 },
-      { pos: [  3.00, 1.7, -12.03], color: '#ff9a52', intensity: 300, distance: 9.0, speed: 0.72 },
+      // WARM braziers on the arc theta 132-316deg. They are deliberately spread
+      // from dep 0.13 to dep 0.52 and NONE of them sits in the foreground apron
+      // (dep > 0.60): §1.8 + §9.1 want the near half of the arena to be a dark
+      // repoussoir, and a brazier standing in it lights exactly the band the
+      // value law needs black. Spreading them this wide also stops the arena
+      // from developing an unlit gap between the brazier arc and the apron,
+      // which is what collapsed the wide shot's mid band into its near band.
+      // chamber.js reads these positions to place the brazier GEOMETRY, so the
+      // props follow the lights automatically — move one and the prop moves.
+      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 430, distance: 10.5, speed: 1.00 },
+      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 430, distance: 10.5, speed: 0.83 },
+      { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 380, distance: 10.0, speed: 1.21 },
+      { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 380, distance: 10.0, speed: 0.72 },
+      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 430, distance: 10.5, speed: 0.94 },
       // COOL #5fd0ff washes on the perimeter masonry, the column capitals and
       // the gate. §9.4 needs the mid/background architecture to sit a full value
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
       // these do both jobs at once, and they are aimed at surfaces the floor
-      // cannot see (the floor's litGain keeps what does reach it negligible).
-      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 880, distance: 17, speed: 0.44, flicker: 0.14 },
-      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 780, distance: 17, speed: 0.61, flicker: 0.12 },
-      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 620, distance: 19, speed: 0.31, flicker: 0.09 },
-      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 620, distance: 19, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 700, distance: 17, speed: 0.52, flicker: 0.14 },
-      { pos: [ 14.0, 5.2,   4.2], color: '#5fd0ff', intensity: 660, distance: 17, speed: 0.38, flicker: 0.12 },
+      // barely sees (floor.tartarus litGain keeps what does reach it negligible).
+      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 900, distance: 17, speed: 0.44, flicker: 0.14 },
+      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 800, distance: 17, speed: 0.61, flicker: 0.12 },
+      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 640, distance: 19, speed: 0.31, flicker: 0.09 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 640, distance: 19, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 720, distance: 17, speed: 0.52, flicker: 0.14 },
     ],
   },
   asphodel: {

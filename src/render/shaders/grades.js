@@ -45,7 +45,7 @@ export const GRADES = {
     // with the other two biomes. Anything scene-referred that is NOT a light —
     // emissive intensities, the flame/portal quads, the atmosphere layers —
     // carries the same 2.42x.
-    exposure: 1.45,
+    exposure: 1.25,
     agxSlope: [1.06, 1.0, 0.96],
     agxPower: [1.16, 1.18, 1.24],
     // §2 asks for crimson stone and molten gold; the close-ups measured
@@ -54,14 +54,14 @@ export const GRADES = {
     agxSat: 0.98,
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
-    contrast: 0.95,
+    contrast: 1.05,
     // PIVOT FOLLOWS THE FRAME. The S-curve is a power law about this point, so
     // a pivot ABOVE the frame's tonal centre can only push pixels down — and
     // once §9.1 put the ground plane where it belongs, 0.34 sat two stops over
     // everything except the ornament and collapsed the whole image. 0.29 keeps
     // the architecture on the curve's upper arm and the floor on its lower one,
     // which is exactly the separation the value law is asking for.
-    pivot: 0.29,
+    pivot: 0.245,
     // `black` SUBTRACTS a black point — raising it crushes, it does not protect
     // the darks. What keeps the bottom of the frame off dead #000 is the
     // positive violet `lift` below, which has to survive this subtraction.
@@ -94,7 +94,7 @@ export const GRADES = {
     satShadow: 0.95,
     // measured meanSaturation was 0.68 against a §7 target of 0.28-0.60: jewel
     // tones, not neon. The chroma belongs in the PALETTE, not in the grade.
-    satMid:    0.98,
+    satMid:    0.92,
     satHigh:   0.80,
     shadowMix: 0.58, highMix: 0.26, tintStrength: 1.0,
     hueLobes: [
@@ -115,7 +115,7 @@ export const GRADES = {
     // §1.8 the frame is composed: the vignette is what turns a lit arena into an
     // ISLAND. It also does real work for §9.1 — the bottom corners of frame are
     // foreground floor, and a repoussoir is supposed to be dark.
-    vignette: { amount: 0.72, radius: 0.58, softness: 0.84, depth: 0.14, color: H('#120718') },
+    vignette: { amount: 0.62, radius: 0.66, softness: 0.86, depth: 0.14, color: H('#120718') },
     grain:    { amount: 0.0070, size: 1.0, darkBoost: 1.8 },
     chroma:   1.35,
     // §1.7 "bloom is a paint layer over a core that has ALREADY gone bright" —
@@ -136,13 +136,21 @@ export const GRADES = {
     // changes is how much energy those cores are allowed to SPEND once through.
     // Intensity 3x and radius 1.5x turns each core into a wide painted halo,
     // which is where the top luma band comes from in every Hades frame.
-    bloom:    { threshold: 3.20, knee: 0.44, intensity: 0.72, tint: H('#ffe0b8'), radius: 1.05, clamp: 4.5 },
+        // CONCENTRATED, not wide. A big radius spends the same energy over a huge
+    // area, and that is a PEDESTAL: it lifts the whole ground plane by a few
+    // display points and it is what "bloom fog across the entire frame" (§7)
+    // actually measures as. A high threshold with a tight radius puts the same
+    // energy into small, genuinely white cores — which is what fills the top
+    // luma band without touching the mid-tones.
+    bloom:    { threshold: 3.40, knee: 0.42, intensity: 2.10, tint: H('#ffe0b8'), radius: 0.95, clamp: 8.0 },
     // §9.7 contact. A 1.75u radius on a 3/4 camera is a soft dirt halo, not an
     // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
     // the ink goes several stops darker so the base of a column reads planted
     // instead of floating in a lilac smudge.
     ao:       { intensity: 1.18, radius: 1.25, power: 2.1, bias: 0.035, ink: H('#180c22') },
-    godrays:  { intensity: 0.34, color: H('#ff7a44'), decay: 0.955, density: 0.72, weight: 0.5 },
+        // Godrays are ADDITIVE over the whole frame, so at 0.34 they were a second
+    // bloom pedestal sitting on the ground plane. 0.12 keeps the shafts.
+    godrays:  { intensity: 0.07, color: H('#ff7a44'), decay: 0.955, density: 0.72, weight: 0.5 },
     // §1.1 the background must be LOW value and HAZED. At density 0.030 /
     // hazeStart 26 the arena silhouette met a dead-#000 void at a razor edge
     // with no atmospheric band behind it at all.
@@ -160,7 +168,14 @@ export const GRADES = {
     // ~0.12 — low value, low chroma, hazed, still unmistakably the darkest
     // *architecture-free* band — is what §1.1 actually asks for, and it is what
     // lets the arena's mid-ground read as the lit band above it.
-    fog:      { color: H('#2a1030'), far: H('#20142e'), density: 0.042, height: 0.14, haze: H('#2c1d46'), hazeStart: 33, hazeEnd: 96, hazeDesat: 0.72, voidSky: 1.90 },
+        // DENSITY IS A PEDESTAL. `mix(col, fc, f)` REPLACES part of every surface
+    // with the fog colour, so on a deliberately dark ground plane it is a
+    // brightness FLOOR that no amount of albedo or glaze can get under — at
+    // 0.042 it was holding the arena floor ~0.06 display above where the value
+    // law needs it, and it flattened the far half of the wide shot into the
+    // near half. The atmospheric band now comes from the distance HAZE (which
+    // is depth-gated and desaturating) rather than from a thick medium.
+    fog:      { color: H('#1c0b22'), far: H('#170e22'), density: 0.009, height: 0.14, haze: H('#40356a'), hazeStart: 40, hazeEnd: 58, hazeDesat: 0.85, voidSky: 5.20 },
     dof:      { range: 52.0, nearRange: 16.0, maxBlur: 0.36, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 

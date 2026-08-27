@@ -186,7 +186,15 @@ void main(){
     vec3 rd = normalize(far4 - uCamPos);
     float up = clamp(rd.y * 0.5 + 0.5, 0.0, 1.0);
     float horizon = exp(-pow((up - 0.50) * 5.2, 2.0));
-    vec3 sky = mix(uFogFar, uHaze, smoothstep(0.44, 0.80, up)) * (0.55 + 0.85 * horizon);
+    // THE VOID IS A PAINTED BAND, NOT A HOLE (§1.1 "background LOW value, LOW
+    // chroma, and HAZED"; §9.4 three separated bands). It used to be built from
+    // uFogFar, which is the SURFACE fog colour and therefore has to stay very
+    // dark or it becomes a brightness pedestal on every lit surface in the
+    // frame. Driving the void off uHaze instead decouples the two: the haze
+    // colour is only ever seen at distance, so it can carry a real value while
+    // the surface fog stays a whisper. Below the horizon the band darkens, which
+    // is what keeps the bottom of frame the darkest third.
+    vec3 sky = mix(uHaze * 0.62, uHaze, smoothstep(0.30, 0.85, up)) * (0.55 + 0.85 * horizon);
     col += sky * uVoidSky;
   }
   gl_FragColor = vec4(col, 1.0);

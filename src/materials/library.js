@@ -476,7 +476,7 @@ const RECIPES = {
         // the columns, capitals, gold trim and brazier rims keep the full rig.
         // Do not "fix" a dark floor by raising the key — raise these instead,
         // and only if the measured groundLuma stays under 0.18.
-        litGain: 0.42, ambGain: 0.26,
+        litGain: 0.55, ambGain: 0.30, specGain: 0.16,
         // TILING (§7). Measured autocorrelation was 0.535-0.592 at the ashlar
         // pitch. Plate size alone cannot answer a REGULAR JOINT LATTICE — the
         // seams repeat even when the stones do not. A much stronger macro layer
@@ -1733,7 +1733,7 @@ export class MaterialLibrary {
       'variant', 'rimColor', 'rimPower', 'rimStrength', 'rimDir', 'rimGate', 'shadowTint',
       'shadowDepth', 'rampSoftness', 'rampStrength', 'rampSteps', 'rampLevels', 'keyRef',
       'contourColor', 'contourStrength', 'contourStart', 'repeat', 'size', 'painterly', 'tint', 'envMap',
-      'litGain', 'ambGain'];
+      'litGain', 'ambGain', 'specGain'];
     const three = {};
     for (const k in opts) {
       if (MINE.indexOf(k) >= 0) own[k] = opts[k];

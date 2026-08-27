@@ -169,7 +169,7 @@ const AIR = {
     // "hazed background" and drags the frame median below the floor so the
     // floor can never win the value law. These sit ~1.5 stops up: painted,
     // low-chroma, and still unmistakably the bottom of the frame.
-    zenith: '#131028', horizon: '#26183f', nadir: '#0c0814',
+    zenith: '#1a1636', horizon: '#33224f', nadir: '#100a1a',
     glow: '#3a1016', glowY: -0.18, glowSharp: 3.4, cloud: 0.64,
     ember: '#e8a24a', emberAmt: 0.30,
     motes: [

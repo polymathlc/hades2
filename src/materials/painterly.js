@@ -77,6 +77,13 @@ export const ENVIRONMENT_LOOK = {
   // the foreground apron. Emissives are deliberately NOT attenuated.
   litGain: 1.0,       // direct diffuse + direct specular
   ambGain: 1.0,       // indirect (hemisphere fill, ambient, IBL)
+  // SPECULAR IS ALBEDO-INDEPENDENT. A dielectric's F0 is ~0.04 whatever colour
+  // it is painted, so darkening a floor's albedo by 20x does NOT darken its
+  // sheen by 20x — the specular lobe becomes a BRIGHTNESS PEDESTAL that no
+  // amount of palette work can get under, and on a ground plane seen at a 52deg
+  // grazing angle that lobe is wide. Measured: the arena floor's value was ~45%
+  // pedestal, which is why every attempt to darken it by albedo alone stalled.
+  specGain: 1.0,
 };
 
 export const CHARACTER_LOOK = {
@@ -160,6 +167,7 @@ uniform vec3  uVariationTint;
 uniform float uPaintTime;
 uniform float uLitGain;
 uniform float uAmbGain;
+uniform float uSpecGain;
 
 float gPaintLit = 1.0;
 
@@ -366,6 +374,7 @@ export function painterly(mat, o = {}) {
     uPaintTime:       { value: 0 },
     uLitGain:         { value: p.litGain ?? 1.0 },
     uAmbGain:         { value: p.ambGain ?? 1.0 },
+    uSpecGain:        { value: p.specGain ?? 1.0 },
   };
 
   // projection: 'uv' | 'planarY' (world XZ) | 'cylinderY' | 'triplanar'
@@ -588,7 +597,7 @@ export function painterly(mat, o = {}) {
         float r = paintRampCurve( k );
         float sc = clamp( mix( 1.0, r / max( k, 1e-3 ), uRampStrength ), 0.0, 3.0 );
         reflectedLight.directDiffuse *= sc * uLitGain;
-        reflectedLight.directSpecular *= mix( 1.0, clamp( sc, 0.0, 1.6 ), 0.55 ) * uLitGain;
+        reflectedLight.directSpecular *= mix( 1.0, clamp( sc, 0.0, 1.6 ), 0.55 ) * uLitGain * uSpecGain;
       }
       #include <lights_fragment_end>
       {
@@ -598,7 +607,7 @@ export function painterly(mat, o = {}) {
         // the frame. Attenuating it per surface class is what lets the fill stay
         // rich on the architecture while the floor drops a full band.
         reflectedLight.indirectDiffuse  *= uAmbGain;
-        reflectedLight.indirectSpecular *= uAmbGain;
+        reflectedLight.indirectSpecular *= uAmbGain * uSpecGain;
       }
     `);
 

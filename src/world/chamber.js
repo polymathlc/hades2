@@ -433,14 +433,21 @@ export class World {
       // The annulus sits at t 0.74 — the radius the braziers stand on — and it
       // is NARROW, because the measured failure was a broad lit plate reaching
       // all the way in to the medallion. Inside 0.5 the stone is a dark plinth.
-      const ring   = Math.exp(-Math.pow((t - 0.66) / 0.16, 2));
-      let v = 0.11 + 1.62 * ring;
+      // The annulus has a STEEP INNER EDGE, not a Gaussian: the mid-ground band
+      // of a composed frame has to start somewhere, and a soft bell put lit
+      // stone right where the character stands. Inside t 0.42 the floor is a
+      // dark plinth; the lit ring runs from 0.56 out to the ornament ring and
+      // then dies into the skirt.
+      const ring = sstep(0.42, 0.56, t) * (1 - 0.70 * sstep(0.76, 1.00, t));
+      let v = 0.07 + 1.35 * ring;
       const dep = Math.min(1, Math.max(0, 0.5 + 0.5 * ((x + z) * 0.70711 / (R + 0.9))));
-      // The apron edge is SHARP on purpose: the mid-ground band and the
-      // foreground band have to be measurably different values (§9.4), and a
-      // long soft ramp averages them back into one.
-      v *= 1 - 0.88 * sstep(0.50, 0.66, dep);          // the foreground apron
-      v *= 1 - 0.42 * sstep(0.66, 1.00, dep);          // ...and it keeps falling
+      // The apron edge is SHARP on purpose and its position is load-bearing:
+      // at the shipping camera it falls between the mid-ground band (dep < 0.57)
+      // and the bottom-of-frame foreground (dep > 0.62), which is exactly the
+      // boundary tools/analyze.mjs measures as depthBands. Softening it merges
+      // the two bands back into one and the value law fails again.
+      v *= 1 - 0.945 * sstep(0.54, 0.64, dep);         // the foreground apron
+      v *= 1 - 0.30 * sstep(0.62, 1.00, dep);          // ...and it keeps falling
       v *= 0.74 + 0.26 * sstep(0.04, 0.30, dep);       // far skirt recedes
       // a whisper of the key's own azimuth so the glaze is not purely 1-D
       const g = 0.5 + 0.5 * ((x * sx + z * sz) / (R + 0.9));
@@ -457,7 +464,7 @@ export class World {
       // §9.6 TWO HUES FROM THE GROUND UP. Lit stone drifts warm crimson, dark
       // stone drifts toward the #5fd0ff accent axis, so the floor's own value
       // structure carries the complement instead of relying on a fill light.
-      const lit = Math.min(1, Math.max(0, (v - 0.18) / 1.20));
+      const lit = Math.min(1, Math.max(0, (v - 0.16) / 1.40));
       const r  = v * (0.88 + 0.20 * lit) * (1 + warm * 0.14);
       const gg = v * (0.90 + 0.12 * lit);
       const b  = v * (1.26 - 0.36 * lit) * (1 - warm * 0.14);
