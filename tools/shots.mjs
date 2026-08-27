@@ -42,6 +42,13 @@ for(const s of list.shots){
     }, {s,pose});
     const file = path.join(OUT, s.id+'.png');
     fs.writeFileSync(file, Buffer.from(dataUrl.split(',')[1], 'base64'));
+    // linear depth companion so analyze.mjs can measure value bands by true depth
+    try {
+      const dUrl = await pg.evaluate(()=> window.EREBUS.capture.depth());
+      fs.writeFileSync(path.join(OUT, s.id+'.depth.png'), Buffer.from(dUrl.split(',')[1],'base64'));
+      // restore the colour frame so a later screenshot of the canvas is not the depth pass
+      await pg.evaluate(()=> window.EREBUS.capture.render());
+    } catch(e){ /* depth pass optional */ }
     report.shots.push({ id:s.id, file, note:s.note });
   }catch(e){ report.shots.push({ id:s.id, error:String(e).slice(0,300) }); }
 }

@@ -90,7 +90,39 @@ export function analyze(file){
   const bandMed = (y0,y1)=>{ const v=[]; for(let y=y0;y<y1;y+=3) for(let x=0;x<w;x+=3) v.push(Math.pow(lum[y*w+x],1/2.2));
     v.sort((a,b)=>a-b); return v[(v.length/2)|0]; };
   const dTop=bandMed(0,(h/3)|0), dMid=bandMed((h/3)|0,(2*h/3)|0), dBot=bandMed((2*h/3)|0,h);
-  const depthSpread = Math.max(dTop,dMid,dBot)-Math.min(dTop,dMid,dBot);
+  const screenSpread = Math.max(dTop,dMid,dBot)-Math.min(dTop,dMid,dBot);
+
+  // TRUE depth bands, when a linear-depth companion exists next to the frame. Screen thirds are
+  // not depth — in a wide pose the top third is mostly void, so a band metric built on screen
+  // position rewards brightening the sky. Bucket by actual scene depth instead.
+  let trueBands = null;
+  const depthFile = file.replace(/\.png$/, '.depth.png');
+  if (fs.existsSync(depthFile)) {
+    try {
+      const dimg = decodePNG(depthFile);
+      if (dimg.width === w && dimg.height === h) {
+        const dd = dimg.data, dch = dimg.channels;
+        const samples = [];
+        for (let y=0; y<h; y+=2) for (let x=0; x<w; x+=2) {
+          const p2 = y*w+x;
+          const d = dd[p2*dch] / 255;
+          if (d >= 0.999) continue;               // background / nothing rendered
+          samples.push([d, Math.pow(lum[p2], 1/2.2)]);
+        }
+        if (samples.length > 500) {
+          samples.sort((a,b)=>a[0]-b[0]);
+          const t = (samples.length/3)|0;
+          const med = (arr)=>{ const v=arr.map(s2=>s2[1]).sort((a,b)=>a-b); return v[(v.length/2)|0]; };
+          const near = med(samples.slice(0,t));
+          const mid  = med(samples.slice(t, 2*t));
+          const far  = med(samples.slice(2*t));
+          trueBands = { near:+near.toFixed(3), mid:+mid.toFixed(3), far:+far.toFixed(3),
+                        spread:+(Math.max(near,mid,far)-Math.min(near,mid,far)).toFixed(3),
+                        coverage:+(samples.length/((w/2|0)*(h/2|0))).toFixed(3) };
+        }
+      }
+    } catch(e){ /* depth companion optional */ }
+  }
   const hueBins=new Array(12).fill(0); let satPix=0;
   for(let i=0,px=0;px<N;px++,i+=ch){ const [hh,ss,ll]=rgb2hsl(data[i],data[i+1],data[i+2]);
     if(ss>0.22 && ll>0.08){ hueBins[Math.min(11,(hh/30)|0)]++; satPix++; } }
@@ -104,7 +136,8 @@ export function analyze(file){
     groundP90: +groundP90.toFixed(3),
     frameMedian: +frameMedian.toFixed(3),
     groundVsFrame: +(groundLuma/(frameMedian||1e-6)).toFixed(2),
-    depthBands: { top:+dTop.toFixed(3), mid:+dMid.toFixed(3), bottom:+dBot.toFixed(3), spread:+depthSpread.toFixed(3) },
+    screenThirds: { top:+dTop.toFixed(3), mid:+dMid.toFixed(3), bottom:+dBot.toFixed(3), spread:+screenSpread.toFixed(3) },
+    depthBands: trueBands,
     secondaryHueFrac: +secondaryHueFrac.toFixed(3),
     bands: { shadow: +band(0,16).toFixed(3), mid: +band(16,44).toFixed(3), highlight: +band(44,64).toFixed(3) },
     deepShadowPresent: +band(0,6).toFixed(4),
@@ -143,7 +176,9 @@ function verdict(m){
     if(m.groundP90 > 0.42) bad.push(`VALUE LAW: the brightest tenth of the floor reaches ${m.groundP90} — large regions of the ground are still blazing even if the median passes`);
   }
   if(m.bands.highlight < 0.04) bad.push('VALUE LAW: no highlight band (<4%) — frame never reaches bright');
-  if(m.depthBands.spread < 0.18) bad.push(`VALUE LAW: depth luma spread only ${m.depthBands.spread} — no separated value bands (need >=0.18)`);
+  if(m.depthBands){
+    if(m.depthBands.spread < 0.18) bad.push(`VALUE LAW: true-depth luma spread only ${m.depthBands.spread} (near ${m.depthBands.near} / mid ${m.depthBands.mid} / far ${m.depthBands.far}) — no separated value bands (need >=0.18)`);
+  } // no depth companion captured -> the screen-thirds proxy is NOT used as a gate, it lies too often
   if(m.secondaryHueFrac < 0.08) bad.push(`MONOCHROME: only ${(m.secondaryHueFrac*100).toFixed(0)}% of saturated pixels sit outside the dominant hue — needs an opposing accent hue`);
   return bad;
 }

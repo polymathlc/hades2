@@ -144,6 +144,30 @@ function setupCapture(engine, ctx, setBiome){
       else if(ctx.post && ctx.post.render) ctx.post.render(ctx);
       else ctx.renderer.render(ctx.scene, ctx.camera);
     },
+    // Render a linear view-depth pass to the canvas so the analyzer can bucket luma by TRUE scene
+    // depth instead of by screen position. Screen-thirds is not depth: in a wide pose the top third
+    // is mostly void, so a band metric built on it improves when you brighten the sky, which is
+    // exactly the wrong incentive.
+    depth(){
+      const r = ctx.renderer, scene = ctx.scene, cam = ctx.camera;
+      const prevOverride = scene.overrideMaterial, prevBg = scene.background;
+      const prevTone = r.toneMapping, prevCS = r.outputColorSpace;
+      const mat = new THREE.ShaderMaterial({
+        vertexShader: 'varying float vD; void main(){ vec4 mv = modelViewMatrix*vec4(position,1.0); vD = -mv.z; gl_Position = projectionMatrix*mv; }',
+        fragmentShader: 'varying float vD; uniform float uNear; uniform float uFar; void main(){ float d = clamp((vD-uNear)/(uFar-uNear),0.0,1.0); gl_FragColor = vec4(d,d,d,1.0); }',
+        uniforms: { uNear:{value:cam.near}, uFar:{value:cam.far} },
+        side: THREE.DoubleSide,
+      });
+      scene.overrideMaterial = mat;
+      scene.background = new THREE.Color(0xffffff);   // nothing there = infinitely far
+      r.toneMapping = THREE.NoToneMapping;
+      r.outputColorSpace = THREE.LinearSRGBColorSpace;
+      r.render(scene, cam);
+      scene.overrideMaterial = prevOverride; scene.background = prevBg;
+      r.toneMapping = prevTone; r.outputColorSpace = prevCS;
+      mat.dispose();
+      return document.querySelector('canvas').toDataURL('image/png');
+    },
     info(){ const ms = ctx.mats && ctx.mats.stats ? ctx.mats.stats : null;
             return { fps: engine.perf.fps, calls: ctx.renderer.info.render.calls, tris: ctx.renderer.info.render.triangles,
                      progs: ctx.renderer.info.programs ? ctx.renderer.info.programs.length : 0,

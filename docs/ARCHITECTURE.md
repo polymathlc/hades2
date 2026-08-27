@@ -230,7 +230,16 @@ Healthy targets for a shipped EREBUS frame:
 | `shadowTint.sat` | > 0.15 | shadows are coloured, not neutral grey |
 | `shadowTint.hue` | 240 – 320 | shadows sit in the violet/plum range |
 | `detailDensity` | > 0.010 | surfaces carry real texture |
+| `depthBands.spread` | >= 0.18 | three separated value bands, measured by TRUE depth |
 | `tiling.strength` | < 0.45 | no visible repeat |
+
+`depthBands` is computed from a **linear view-depth companion** (`<shot>.depth.png`) that the capture
+harness renders alongside every frame, bucketing luma by actual scene depth into near/mid/far
+terciles. An earlier version bucketed by *screen thirds*, which is not depth: in a wide pose the top
+third is mostly void, so the metric improved when you brightened the sky — the opposite of the
+intended incentive. An agent caught and reported this. The screen-thirds figure is still emitted as
+`screenThirds` for reference but is **never used as a gate**. If no depth companion exists,
+`depthBands` is `null` and the value-band law simply is not checked, rather than checked wrongly.
 
 `tiling.strength` measures a *prominent periodic peak* in the horizontal autocorrelation, detrended
 against a local baseline. Raw autocorrelation is high for any smooth image, so an earlier version of
