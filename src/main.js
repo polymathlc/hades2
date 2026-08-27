@@ -43,15 +43,32 @@ async function boot(){
   const audio    = engine.add(new Audio(), 'audio');
   const run      = engine.add(new RunState(), 'run');
 
+  const tBoot = performance.now();
   await engine.initAll();
   ctx.input.attach(ctx.renderer.domElement);
 
+  // One-line boot budget report. Texture synthesis is the expensive half of
+  // init and it is lazy, so this number is "everything the first chamber
+  // actually asked for", which is the number that matters.
+  const ms = ctx.mats && ctx.mats.stats ? ctx.mats.stats : null;
+  console.info(`[erebus] boot ${(performance.now() - tBoot).toFixed(0)}ms | materials `
+    + `${ms ? ms.built : 0} sets in ${ms ? ms.ms.toFixed(0) : 0}ms `
+    + `(${ms ? (ms.texels / 1e6).toFixed(1) : 0} Mtexel) | tier ${ctx.quality.tier}`);
+
   addEventListener('resize', ()=> engine.resize(innerWidth, innerHeight));
 
-  window.EREBUS = { engine, ctx, THREE };
+  // switching biome retunes world materials, the light rig, the grade and the
+  // air in one call — everything listens to 'biome.changed'
+  const setBiome = (name) => {
+    if(ctx.world && ctx.world.setBiome) ctx.world.setBiome(name, ctx);
+    else ctx.events.emit('biome.changed', { name });
+    if(ctx.run) ctx.run.biome = name;
+    return name;
+  };
+  window.EREBUS = { engine, ctx, THREE, setBiome };
 
   if(CAPTURE){
-    setupCapture(engine, ctx);
+    setupCapture(engine, ctx, setBiome);
   } else {
     const unlock = ()=>{ ctx.audio.unlock && ctx.audio.unlock(); removeEventListener('pointerdown',unlock); removeEventListener('keydown',unlock); };
     addEventListener('pointerdown',unlock); addEventListener('keydown',unlock);
@@ -63,7 +80,7 @@ async function boot(){
 // ---------------------------------------------------------------------------
 // Deterministic capture driver — the eyes of the critic agents.
 // ---------------------------------------------------------------------------
-function setupCapture(engine, ctx){
+function setupCapture(engine, ctx, setBiome){
   const DT = 1/60;
   let resolveReady;
   const drv = {
@@ -88,9 +105,17 @@ function setupCapture(engine, ctx){
       ctx.renderer.render(ctx.scene, ctx.camera);
     },
     state(name, args){ ctx.events.emit('capture.state', {name, args}); },
+    // deterministic biome switch for the critic loop: capture.biome('elysium')
+    biome(name){ setBiome(name); drv.step(0.2); return name; },
     hide(list){ for(const n of list||[]){ const o=ctx.scene.getObjectByName(n); if(o) o.visible=false; } },
     hud(v){ const el=document.getElementById('ui'); if(el) el.style.display = v?'':'none'; },
-    render(){ if(ctx.post&&ctx.post.render) ctx.post.render(ctx); else ctx.renderer.render(ctx.scene,ctx.camera); },
+    render(){
+      // go through the render system so the frame is counted and the fallback
+      // path (no post) still tone maps
+      if(ctx.renderSystem && ctx.renderSystem.render) ctx.renderSystem.render(ctx);
+      else if(ctx.post && ctx.post.render) ctx.post.render(ctx);
+      else ctx.renderer.render(ctx.scene, ctx.camera);
+    },
     info(){ return { fps: engine.perf.fps, calls: ctx.renderer.info.render.calls, tris: ctx.renderer.info.render.triangles,
                      t: ctx.time.t, frame: ctx.time.frame }; },
   };
