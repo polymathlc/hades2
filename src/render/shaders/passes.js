@@ -427,7 +427,7 @@ uniform float uTintStrength, uShadowMix, uHighMix;
 uniform float uSatShadow, uSatMid, uSatHigh;
 uniform vec3  uHueLobe0, uHueLobe1, uHueLobe2;   // (center, width, shift)
 
-uniform float uVigAmount, uVigRadius, uVigSoft, uVigDepth; uniform vec3 uVigColor;
+uniform float uVigAmount, uVigRadius, uVigSoft, uVigDepth, uVigFloor; uniform vec3 uVigColor;
 uniform float uGrainAmount, uGrainSize, uGrainDark, uGrainSeed;
 
 varying vec2 vUv;
@@ -544,8 +544,16 @@ void main(){
   t = hsv2rgb(hsv);
 
   // ── vignette: soft, warm-dark, multiplicative so it stays in the ink ramp ─
+  // A RADIALLY SYMMETRIC vignette treats the top of frame (which in a 3/4
+  // camera is the far distance) and the bottom (which is the near foreground)
+  // as the same thing. A painter does not: the foreground apron is the
+  // repoussoir you look PAST, and it is darker than anything else in the
+  // picture. The extra weight below centre is what gives the frame its third
+  // value band (§9.4) without touching the lit island or the focal wall.
   float vd = length(dir * vec2(uAspect, 1.0)) / 0.7071;
-  float v  = 1.0 - uVigAmount * smoothstep(uVigRadius, uVigRadius + uVigSoft, vd);
+  float below = smoothstep(-0.06, 0.42, -dir.y);
+  float amt = uVigAmount * (1.0 + uVigFloor * below);
+  float v  = 1.0 - amt * smoothstep(uVigRadius * (1.0 - 0.30 * below), uVigRadius + uVigSoft, vd);
   t *= mix(uVigColor * uVigDepth, vec3(1.0), clamp(v, 0.0, 1.0));
 
   // ── film grain, heavier in the darks ─────────────────────────────────────

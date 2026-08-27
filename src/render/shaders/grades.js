@@ -115,7 +115,9 @@ export const GRADES = {
     // §1.8 the frame is composed: the vignette is what turns a lit arena into an
     // ISLAND. It also does real work for §9.1 — the bottom corners of frame are
     // foreground floor, and a repoussoir is supposed to be dark.
-    vignette: { amount: 0.62, radius: 0.66, softness: 0.86, depth: 0.14, color: H('#120718') },
+    // `floor` is extra vignette weight BELOW frame centre — the foreground
+    // repoussoir (§1.8) and the third value band (§9.4).
+    vignette: { amount: 0.62, radius: 0.60, softness: 0.86, depth: 0.14, floor: 0.95, color: H('#120718') },
     grain:    { amount: 0.0070, size: 1.0, darkBoost: 1.8 },
     chroma:   1.35,
     // §1.7 "bloom is a paint layer over a core that has ALREADY gone bright" —
@@ -192,7 +194,16 @@ export const GRADES = {
     // law needs it, and it flattened the far half of the wide shot into the
     // near half. The atmospheric band now comes from the distance HAZE (which
     // is depth-gated and desaturating) rather than from a thick medium.
-    fog:      { color: H('#1c0b22'), far: H('#170e22'), density: 0.009, height: 0.14, haze: H('#2f3a72'), hazeStart: 40, hazeEnd: 58, hazeDesat: 0.85, voidSky: 1.74 },
+    // THE BACKGROUND HAS TO BE A BAND. §9.4 wants three separated value bands
+    // and the measured spread was 0.11-0.15 against a 0.18 floor, because the
+    // top third of every 3/4 frame is far architecture DISSOLVING INTO A HOLE:
+    // the void behind the arena measured darker than the arena itself, so the
+    // frame's tonal range ran mid-to-ink with nothing above it. A hazed
+    // background is not a bright one — it is a LOW-CHROMA one held at a value
+    // the foreground can be read against (§1.1). The haze colour carries more
+    // value and the void band is pushed, so the arena is now an island of light
+    // seen against a luminous mist rather than a die-cut against black.
+    fog:      { color: H('#1c0b22'), far: H('#170e22'), density: 0.009, height: 0.14, haze: H('#414d8e'), hazeStart: 34, hazeEnd: 56, hazeDesat: 0.88, voidSky: 2.30 },
     dof:      { range: 52.0, nearRange: 16.0, maxBlur: 0.36, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 
@@ -223,7 +234,7 @@ export const GRADES = {
       [0.62, 0.060, 0.020],     // blues   -> indigo (narrow: the teal rim must survive)
       [0.48, 0.100, 0.030],     // cyans   -> teal (rim colour)
     ],
-    vignette: { amount: 0.58, radius: 0.64, softness: 0.86, depth: 0.18, color: H('#0d0b18') },
+    vignette: { amount: 0.58, radius: 0.62, softness: 0.86, depth: 0.18, floor: 0.48, color: H('#0d0b18') },
     grain:    { amount: 0.0075, size: 1.0, darkBoost: 1.9 },
     chroma:   1.7,
     bloom:    { threshold: 1.10, knee: 0.5, intensity: 0.76, tint: H('#ffa03c'), radius: 0.60, clamp: 3.2 },
@@ -260,7 +271,7 @@ export const GRADES = {
       [0.30, 0.12, -0.030],     // greens  -> verdant/olive
       [0.11, 0.09, -0.014],
     ],
-    vignette: { amount: 0.48, radius: 0.70, softness: 0.88, depth: 0.24, color: H('#241a3a') },
+    vignette: { amount: 0.48, radius: 0.68, softness: 0.88, depth: 0.24, floor: 0.40, color: H('#241a3a') },
     grain:    { amount: 0.0060, size: 1.0, darkBoost: 1.5 },
     chroma:   1.1,
     bloom:    { threshold: 1.05, knee: 0.45, intensity: 0.62, tint: H('#ffe6a3'), radius: 0.58, clamp: 3.2 },

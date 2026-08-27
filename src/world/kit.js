@@ -541,6 +541,122 @@ export function flutedShaft(rBase, rTop, H, flutes = 20, depth = 0.055, rings = 
   return g;
 }
 
+// ===========================================================================
+// 1c. RELIEF SHADING — the difference between CARVED ornament and PRINTED
+//     ornament, and the single biggest gap review found between this build and
+//     Hades.
+//
+// A meander extruded off a wall has the SAME NORMAL as the wall it sits on:
+// its front face and the masonry behind it receive identical irradiance, so the
+// only thing separating them is albedo. That is a decal. It reads at gameplay
+// distance as flat light-on-dark line-art — literally as the glyph "01010"
+// where a bead-and-reel astragal should be.
+//
+// Carved ornament reads because of four things, and none of them is albedo:
+//   1. a CHAMFERED ARRIS, so the top of every member turns up into the key and
+//      the bottom turns away from it — a lit edge and a dark undercut,
+//   2. CONTACT OCCLUSION where the member meets its host,
+//   3. a value gradient ACROSS a round member (a bead is dark underneath),
+//   4. a low ALBEDO contrast against the host, so LIGHT makes the contrast.
+//
+// (1) is geometry — see `chamferedPrism` and the rebuilt `meanderPeriod`.
+// (2) and (3) are baked here into vertex colour: hand-painted occlusion, the
+// architectural equivalent of §4's "subtle AO by hand", and it survives
+// instancing (it is a per-vertex attribute, not a per-instance one) so a band
+// of 300 instanced frets still costs one draw call.
+//
+// The shading is authored in the unit's OWN frame, relative to the direction it
+// stands proud of its host (+Z by convention for every moulding in this kit),
+// so the same bake is correct on a wall band, a floor band, an arch soffit or a
+// vertical jamb run.
+// ===========================================================================
+
+/**
+ * reliefShade(geo, opts) -> geo   (adds/multiplies a 'color' attribute)
+ *
+ *   seat     value at the host surface (contact occlusion at the root)
+ *   seatEnd  fraction of the proud depth over which the occlusion lifts
+ *   side     value on faces that face along the run rather than out of the host
+ *   up       extra light on up-facing facets (the catch-light on a top arris)
+ *   down     extra crush on down-facing facets (the undercut)
+ *   axis     'z' (default) | 'y' | 'x' — which local axis is "proud of the host"
+ *
+ * Materials wearing this must be requested with { vertexColors: true }.
+ */
+export function reliefShade(geo, opts = {}) {
+  const pos = geo.attributes.position, nrm = geo.attributes.normal;
+  if (!pos || !nrm) return geo;
+  const seat = opts.seat ?? 0.40;
+  const seatEnd = opts.seatEnd ?? 0.55;
+  const side = opts.side ?? 0.74;
+  const up = opts.up ?? 0.20;
+  const down = opts.down ?? 0.34;
+  const gain = opts.gain ?? 1.0;
+  const ax = opts.axis === 'y' ? 1 : opts.axis === 'x' ? 0 : 2;
+  const comp = (a, i) => a.array[i * a.itemSize + ax];
+
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < pos.count; i++) { const v = comp(pos, i); if (v < lo) lo = v; if (v > hi) hi = v; }
+  const span = Math.max(1e-5, (hi - lo) * seatEnd);
+
+  const prev = geo.attributes.color;
+  const C = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    // (2) contact occlusion: dark where the member is swallowed by its host
+    let t = (comp(pos, i) - lo) / span;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    t = t * t * (3 - 2 * t);
+    let k = seat + (1 - seat) * t;
+    // (3) form: how much this facet looks OUT of the host rather than along it.
+    // Front faces keep their value, returns and undercuts fall away — which is
+    // what gives a bead a lit crown and a dark belly.
+    const nx = nrm.array[i * 3], ny = nrm.array[i * 3 + 1], nz = nrm.array[i * 3 + 2];
+    const out = ax === 0 ? nx : ax === 1 ? ny : nz;
+    k *= side + (1 - side) * Math.max(0, out);
+    // the catch-light / undercut pair — the reason a chamfer reads at 8 pixels
+    k *= 1 + up * Math.max(0, ny) - down * Math.max(0, -ny);
+    k = 1 + (k - 1) * gain;
+    const c = k < 0.02 ? 0.02 : k > 1.6 ? 1.6 : k;
+    const p0 = prev ? prev.array[i * prev.itemSize] : 1;
+    C[i * 3] = C[i * 3 + 1] = C[i * 3 + 2] = c * p0;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
+  return geo;
+}
+
+/**
+ * Safety net for the relief bake: any geometry handed to a material that reads
+ * vertex colours MUST carry the attribute, or WebGL feeds the shader the
+ * default constant attribute (black) and the mesh vanishes. Plain members that
+ * share an ornament material get a neutral white so they are unaffected.
+ */
+export function ensureColor(geo) {
+  if (geo && geo.attributes && geo.attributes.position && !geo.attributes.color) {
+    const C = new Float32Array(geo.attributes.position.count * 3).fill(1);
+    geo.setAttribute('color', new THREE.BufferAttribute(C, 3));
+  }
+  return geo;
+}
+
+/**
+ * A closed 2D outline extruded along +Z with a REAL 45-degree chamfer round
+ * both arrises, centred on z=0. This is the workhorse behind every carved band
+ * in the kit: the chamfer is what turns a flat inlay into a moulding, because
+ * its top facet catches the key and its bottom facet is a shadow line.
+ */
+export function chamferedPrism(outline, depth, chamfer) {
+  const ch = Math.max(1e-4, Math.min(chamfer, depth * 0.42));
+  const shape = new THREE.Shape(outline.map(([x, y]) => new THREE.Vector2(x, y)));
+  const g = new THREE.ExtrudeGeometry(shape, {
+    depth: Math.max(1e-4, depth - 2 * ch), bevelEnabled: true,
+    bevelThickness: ch, bevelSize: ch, bevelOffset: 0, bevelSegments: 1, steps: 1,
+  });
+  g.computeBoundingBox();
+  const bb = g.boundingBox;
+  g.translate(0, 0, -(bb.min.z + bb.max.z) * 0.5);
+  return g;
+}
+
 /** Deterministic float source adapter: accepts an RNG object or a function. */
 function F(rng) {
   if (!rng) return () => 0.5;
@@ -574,55 +690,91 @@ export function eggAndDartUnit(h = 1) {
   p.add(stalk, { p: [0.50 * h, -0.02 * h, 0.20 * h] });
   const head = new THREE.ConeGeometry(0.11 * h, 0.28 * h, 4);
   p.add(head, { p: [0.50 * h, -0.34 * h, 0.20 * h], r: [Math.PI, 0, 0] });
-  return faceted(p.merge());
-}
-
-/** BEAD-AND-REEL. Alternating bead (sphere) and reel (a spool with two discs). */
-export function beadAndReelUnit(h = 1) {
-  const p = new Parts();
-  const bead = new THREE.SphereGeometry(0.30 * h, 8, 5);
-  p.add(bead, { p: [0, 0, 0] });
-  const spool = new THREE.CylinderGeometry(0.14 * h, 0.14 * h, 0.30 * h, 6);
-  p.add(spool, { p: [0.50 * h, 0, 0], r: [0, 0, Math.PI / 2] });
-  for (const s of [-1, 1]) {
-    const disc = new THREE.CylinderGeometry(0.24 * h, 0.24 * h, 0.07 * h, 7);
-    p.add(disc, { p: [0.50 * h + s * 0.16 * h, 0, 0], r: [0, 0, Math.PI / 2] });
-  }
-  return faceted(p.merge());
+  return reliefShade(faceted(p.merge()), { seat: 0.36, seatEnd: 0.60, side: 0.70, up: 0.24, down: 0.42 });
 }
 
 /**
- * THE GREEK KEY (meander), as REAL EXTRUDED GEOMETRY. The brief is explicit
- * that this must not be a texture: a carved fret throws its own shadow, and the
- * top rail of each spiral is a hard lit arris. One period is returned; a band
- * instances it along a straight run or an arc.
+ * BEAD-AND-REEL. Alternating bead and reel, standing on a continuous fillet.
  *
- * Grid: 8 wide x 8 tall, ribbon 1 unit thick. The spiral runs
- *   rail -> riser -> top bar -> descender -> return bar -> inner stub.
+ * The old unit was an 8x5 flat-shaded sphere and three flat-shaded discs, which
+ * at gameplay distance is six facets across six pixels: the beads read as hard
+ * light-on-dark rings, i.e. as the characters "0 I 0 I 0" printed on the stone.
+ * The bead is now SMOOTH (a round member reads by its gradient, not by its
+ * facets), oblate so its crown faces up into the key, seated on a fillet that
+ * gives the whole course a lit lower edge, and carries hand-baked occlusion so
+ * its belly and its root against the wall are dark whatever the light does.
  */
-export function meanderPeriod(h = 1, depth = 0.35) {
-  const u = h / 8;                       // one grid unit
+export function beadAndReelUnit(h = 1) {
   const p = new Parts();
-  const seg = (x0, y0, x1, y1) => {
-    const w = (x1 - x0) * u, hh = (y1 - y0) * u;
-    p.box(w, hh, depth * h, [(x0 + x1) * 0.5 * u - h * 0.5, (y0 + y1) * 0.5 * u - h * 0.5, 0]);
-  };
-  seg(1, 1, 2, 7);      // riser
-  seg(1, 6, 7, 7);      // top bar
-  seg(6, 3, 7, 6);      // descender
-  seg(3, 3, 7, 4);      // return bar
-  seg(3, 4, 4, 5.6);    // inner stub — the eye of the spiral
-  return faceted(p.merge());
+  // the bead — smooth, and squashed back into the wall so it is a hemisphere-
+  // and-a-bit proud rather than a ball stuck on a flat
+  const bead = new THREE.SphereGeometry(0.30 * h, 14, 10);
+  bead.scale(1.0, 1.06, 0.80);
+  p.add(bead, { p: [0, 0.02 * h, 0.06 * h] });
+  // the reel — a spool between two discs, faceted so it contrasts with the bead
+  const spool = faceted(new THREE.CylinderGeometry(0.125 * h, 0.125 * h, 0.34 * h, 10));
+  p.add(spool, { p: [0.50 * h, 0, 0.02 * h], r: [0, 0, Math.PI / 2] });
+  for (const s of [-1, 1]) {
+    const disc = faceted(new THREE.CylinderGeometry(0.215 * h, 0.235 * h, 0.075 * h, 12));
+    p.add(disc, { p: [0.50 * h + s * 0.17 * h, 0, 0.02 * h], r: [0, 0, Math.PI / 2] });
+  }
+  // the fillet the course stands on: a chamfered bar, so the astragal has a
+  // continuous lit top arris and a continuous shadow under it (§9.5)
+  p.add(chamferedPrism([[-0.5 * h, -0.20 * h], [0.5 * h, -0.20 * h],
+    [0.5 * h, -0.02 * h], [-0.5 * h, -0.02 * h]], 0.30 * h, 0.055 * h),
+    { p: [0.25 * h, 0, -0.06 * h] });
+  return reliefShade(p.merge(), { seat: 0.34, seatEnd: 0.62, side: 0.70, up: 0.24, down: 0.42 });
 }
 
-/** The continuous rail the meander spirals rise from (one straight run). */
+/**
+ * THE GREEK KEY (meander), as REAL CARVED GEOMETRY.
+ *
+ * The previous unit was five extruded boxes. That is real geometry and it still
+ * read as printed line-art, because a box extruded off a wall presents the
+ * camera one face whose normal is IDENTICAL to the wall's: the fret and the
+ * masonry behind it get the same irradiance and only their albedo differs.
+ * Light was doing no work at all.
+ *
+ * The period is now ONE closed spiral outline extruded with a genuine 45-degree
+ * chamfer round its whole contour. That chamfer is the entire point: the upper
+ * arris of every bar turns up into the key and fires, the lower arris turns
+ * away and goes to ink, and the fret finally reads as a channel cut in stone
+ * with a lit edge and a dark undercut instead of as a gold sticker.
+ *
+ * Grid: 8 x 8, ribbon 1 unit wide, traced counter-clockwise from the foot of
+ * the riser round the outside of the spiral and back down its inside.
+ */
+export function meanderPeriod(h = 1, depth = 0.35) {
+  const u = h / 8, o = -h * 0.5;
+  const G = [
+    [2, 1], [2, 6], [6, 6], [6, 4], [4, 4], [4, 5.6],
+    [3, 5.6], [3, 3], [7, 3], [7, 7], [1, 7], [1, 1],
+  ].map(([x, y]) => [x * u + o, y * u + o]);
+  const d = Math.max(0.02 * h, depth * h);
+  const g = chamferedPrism(G, d, Math.min(u * 0.34, d * 0.40));
+  return reliefShade(faceted(g), { seat: 0.50, seatEnd: 0.50, side: 0.80, up: 0.24, down: 0.38 });
+}
+
+/**
+ * The continuous rail the meander spirals rise from (one straight run). It is
+ * the RECESSED BED as much as a member: shaded darker than the fret so the
+ * carving sits in a channel rather than floating on the wall.
+ */
 export function meanderRail(h = 1, len = 1, depth = 0.35) {
-  return faceted(new THREE.BoxGeometry(len, h / 8, depth * h));
+  const d = Math.max(0.02 * h, depth * h);
+  const g = chamferedPrism([[-len * 0.5, -h / 16], [len * 0.5, -h / 16],
+    [len * 0.5, h / 16], [-len * 0.5, h / 16]], d, Math.min(h / 40, d * 0.36));
+  return reliefShade(faceted(g), { seat: 0.34, seatEnd: 0.70, side: 0.62, up: 0.26, down: 0.44, gain: 1.15 });
 }
 
 /** A run of dentils (the square teeth under a cornice). */
 export function dentilUnit(h = 1) {
-  return faceted(new THREE.BoxGeometry(0.52 * h, h, 0.66 * h));
+  // A raw box is a tooth with no arris. The chamfer gives each dentil a lit top
+  // edge and a hard shadow line down its return, which is what makes a dentil
+  // course read as a row of blocks instead of as a dashed line.
+  const g = chamferedPrism([[-0.26 * h, -0.5 * h], [0.26 * h, -0.5 * h],
+    [0.26 * h, 0.5 * h], [-0.26 * h, 0.5 * h]], 0.66 * h, 0.055 * h);
+  return reliefShade(faceted(g), { seat: 0.42, seatEnd: 0.55, side: 0.70, up: 0.24, down: 0.40 });
 }
 
 /**
@@ -822,6 +974,7 @@ export class Kit {
 
   // ---- helpers -----------------------------------------------------------
   _mesh(geo, mat, name, cast = true, recv = true) {
+    if (mat && mat.vertexColors) ensureColor(geo);
     const m = new THREE.Mesh(geo, mat);
     m.name = name; m.castShadow = cast; m.receiveShadow = recv;
     return m;
@@ -2328,6 +2481,7 @@ export class Kit {
    * 200 rubble chunks cost one draw call and the caller never touches matrices.
    */
   instancer(geometry, material, count, opts = {}) {
+    if (material && material.vertexColors) ensureColor(geometry);
     const im = new THREE.InstancedMesh(geometry, material, count);
     im.name = opts.name || 'instanced';
     im.castShadow = opts.cast !== false;

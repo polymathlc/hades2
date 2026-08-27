@@ -21,7 +21,7 @@
 //   doors.setSealed(bool)         -> force state (capture harness / debug)
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
-import { Parts, Batcher, lathe, faceted, mergeGeos, TAU, DEG } from './kit.js';
+import { Parts, Batcher, lathe, faceted, mergeGeos, ensureColor, TAU, DEG } from './kit.js';
 
 export const REWARDS = {
   boon:   { label: 'Boon of the Gods', color: '#c9b8ff', core: '#ffffff', glyph: 0 },
@@ -266,7 +266,13 @@ export class Doors {
     if (bi > 0) { const t = pool[0]; pool[0] = pool[bi]; pool[bi] = t; }
 
     const stone = kit.mat('wall');
-    const trim = kit.mat('leaf');
+    // §9.5 relief pass: the jamb fret is the ornament closest to camera in the
+    // whole room, so it is the one that most has to read as CUT stone. Mid
+    // albedo + a hot specular arris + the moulding units' baked contact
+    // occlusion (kit.js reliefShade) instead of white-on-black line-art.
+    const trim = kit.mat('leaf', {
+      vertexColors: true, tint: '#f4ece0', litGain: 1.02, ambGain: 0.60, specGain: 1.95,
+    });
     const metal = kit.mat('metal');
 
     // The static half of every doorway (piers, voussoirs, mouldings, sigil
@@ -374,7 +380,7 @@ export class Doors {
       }
       return p.merge();
     });
-    const mount = new THREE.Mesh(mountGeo, o.trim);
+    const mount = new THREE.Mesh(ensureColor(mountGeo), o.trim);
     mount.name = 'door.sigilmount';
     mount.position.set(0, sigY, JD * 0.5 + 0.14);
     mount.castShadow = true;
@@ -496,7 +502,7 @@ export class Doors {
       return p.merge();
     });
     for (const l of leaves) {
-      const m = new THREE.Mesh(ringGeo, o.trim);
+      const m = new THREE.Mesh(ensureColor(ringGeo), o.trim);
       m.name = 'door.handle';
       m.position.set(-l.sign * W * 0.30, (H + (W + JW) * 0.30) * 0.42, 0.20);
       m.castShadow = true;

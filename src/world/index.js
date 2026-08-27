@@ -14,6 +14,7 @@ export { World, World as default } from './chamber.js';
 export { Kit, Batcher, Parts, mergeGeos, faceted, lathe, taperedTube, catenary,
          prism, flutedShaft, acanthusLeaf, volute, meanderPeriod, meanderRail,
          eggAndDartUnit, beadAndReelUnit, dentilUnit, clothGeo, foldify,
+         reliefShade, chamferedPrism, ensureColor,
          columnDrumGeo, rubbleChunkGeo, slabGeo, amphoraGeo, bonePileGeo,
          brokenCapitalGeo, TAU, DEG } from './kit.js';
 export { Doors, REWARDS, REWARD_KINDS } from './doors.js';

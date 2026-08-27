@@ -645,8 +645,22 @@ export class World {
       // away into the frame's dark foreground, and the far half recedes toward
       // the ink ramp. The character stands just inside the lit island, so the
       // subject still has a stage under their feet and a contact shadow on it.
-      const isle = 1 - Math.abs(dep - 0.50) / 0.36;
-      v *= 0.20 + 1.72 * sstep(0.0, 1.0, clamp01(isle));
+      // ── ROUND-3 (relief pass): the hump was SYMMETRIC, so the near apron
+      // and the far apron fell away at the same rate and the frame's bottom
+      // third measured 0.088 against a top third of 0.204 — a 0.116 spread
+      // against §9.4's 0.18 floor. A stage-lighting designer does not light
+      // the front of the stage and the back of it identically: the near apron
+      // is the audience's side of the proscenium and it is DARK. The hump is
+      // now pushed a little past centre and its near flank is twice as steep
+      // as its far flank, so the foreground drops into the ink ramp while the
+      // island itself and the far arc keep every scrap of value they had.
+      const isle = dep < 0.54
+        ? 1 - (0.54 - dep) / 0.24
+        : 1 - (dep - 0.54) / 0.42;
+      v *= 0.10 + 1.80 * sstep(0.0, 1.0, clamp01(isle));
+      // and an explicit repoussoir crush on the nearest apron, where the frame
+      // wants a dark shape to look past rather than readable masonry (§1.8)
+      v *= 1 - 0.72 * sstep(0.58, 1.0, dep) * sstep(0.34, 0.98, t);
       // hand-glazed mottle so the ground plane is never one unmodulated slab
       const n = vnoise(x * 0.11, z * 0.11) * 0.62 + vnoise(x * 0.31, z * 0.31) * 0.26 + vnoise(x * 0.9, z * 0.9) * 0.12;
       v *= 0.86 + 0.30 * n;
@@ -880,7 +894,8 @@ export class World {
       // near apron the value law needs dark, so it is allowed a specular arris
       // and nothing else.
       const bandMat = this._M(B.mats.leaf, {
-        emissiveIntensity: 0.18, tint: '#f2c14e', litGain: 0.34, ambGain: 0.30, specGain: 2.10,
+        emissiveIntensity: 0.14, vertexColors: true, tint: '#d9b552',
+        litGain: 0.34, ambGain: 0.26, specGain: 2.30,
       });
       const stoneMat = this._M(B.mats.bay, { litGain: 0.36, ambGain: 0.58, variation: 0.20 });
       const N = Math.max(24, Math.round((TAU * bandR) / (bh * 1.06)));
@@ -1242,7 +1257,24 @@ export class World {
     // which is where §9.5 wants the light anyway.
     const wallMat = this._M(B.mats.wall, { variation: 0.20, litGain: 0.36, ambGain: 0.62, specGain: 0.70, tint: '#8d7192' });
     const bayMat = this._M(B.mats.bay, { variation: 0.26, litGain: 0.30, ambGain: 0.54, specGain: 0.60, tint: '#7c6288' });
-    const leaf = this._M(B.mats.leaf, { emissiveIntensity: 0.06 });
+    // ── ORNAMENT MUST READ AS RELIEF, NOT AS PRINT (§9.5, relief pass) ────
+    // At 0.06 emissive and full gains against a wall running litGain 0.36, the
+    // gold and the masonry were separated by ALBEDO ALONE — measured as flat
+    // near-white shapes on near-black stone, which at gameplay distance is
+    // line-art, not carving. The three corrections work together:
+    //   tint      pulls the raw albedo down to a MID gold so the fret no longer
+    //             out-values the wall before a photon arrives;
+    //   ambGain   stops the hemisphere fill from lifting the undercuts, so the
+    //             chamfers actually have a dark side to be lit against;
+    //   specGain  gives the chamfered arris a real specular hit, so the
+    //             CONTRAST IS MADE BY LIGHT — which is the whole point.
+    // vertexColors switches on the hand-baked contact occlusion every moulding
+    // unit now carries (kit.js reliefShade): dark at the root where it meets
+    // the wall, dark on the undercut, light on the crown.
+    const leaf = this._M(B.mats.leaf, {
+      emissiveIntensity: 0.04, vertexColors: true, tint: '#f4ece0',
+      litGain: 1.02, ambGain: 0.60, specGain: 1.95,
+    });
     const metal = this._M(B.mats.metal);
 
     const [a0, a1] = G.wallArc;
@@ -1386,7 +1418,7 @@ export class World {
       const per = kit.geo(`meander:${h.toFixed(3)}:${depth.toFixed(3)}`, () => {
         return meanderPeriod(h, depth);
       });
-      const railG = kit.geo(`mrail:${h.toFixed(3)}`, () => faceted(new THREE.BoxGeometry(h * 1.03, h / 8, depth * h)));
+      const railG = kit.geo(`mrail:${h.toFixed(3)}:${depth.toFixed(3)}`, () => meanderRail(h, h * 1.03, depth));
       const n = Math.round((a1 - a0) * R / h);
       const perIM = kit.instancer(per, leaf, n + 2, { name: 'wall.meander', recv: false });
       const railIM = kit.instancer(railG, leaf, n + 2, { name: 'wall.meander.rail', recv: false });

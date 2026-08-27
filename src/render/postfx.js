@@ -268,7 +268,7 @@ export class PostFX {
       uHueLobe1: { value: new THREE.Vector3(0.04, 0.10, 0.02) },
       uHueLobe2: { value: new THREE.Vector3(0.12, 0.09, -0.018) },
       uVigAmount: { value: 0.52 }, uVigRadius: { value: 0.78 }, uVigSoft: { value: 0.62 },
-      uVigDepth: { value: 0.22 }, uVigColor: { value: C('#1a0a22') },
+      uVigDepth: { value: 0.22 }, uVigFloor: { value: 0.0 }, uVigColor: { value: C('#1a0a22') },
       uGrainAmount: { value: 0.03 }, uGrainSize: { value: 1.25 }, uGrainDark: { value: 2.1 }, uGrainSeed: { value: 0 },
     });
 
@@ -832,6 +832,7 @@ export class PostFX {
     u.uVigRadius.value = v.radius ?? 0.78;
     u.uVigSoft.value = v.softness ?? 0.6;
     u.uVigDepth.value = v.depth ?? 0.22;
+    u.uVigFloor.value = v.floor ?? 0.0;
     normTint(v.color || '#1a0a22', u.uVigColor.value);
 
     const gr = p.grain;

@@ -1,8 +1,9 @@
 {
-  "_note": "Poses may be authored in world space, or anchored. anchor:'player' treats pos/target as offsets from the hero on the ground plane. anchor:'rig' reproduces the LIVE camera rig geometry from entities/camera.js CAM_TUNING (pitch/yaw/distance/fov/lookHeight) so a shot IS the play camera rather than an approximation of it; every field is individually overridable, and `at` pins the orbit centre to a world point instead of the player. The old world-space poses aimed every 'gameplay' framing at the arena origin while the hero stood somewhere else, so the critic loop never actually looked at the subject. | FRAMING (round-2 fix): the wide pose was cropping the colonnade on all four edges at distance 30 / fov 34 / pitch 42, so the sizzle frame had no negative space at all and the outer columns raked like a fisheye diorama (ART_DIRECTION 1.8 wants an island of light in a dark void). 44 / 30 / 48 buys ~25% void margin on every edge and flattens the rake. The floor pose sat at fov 46 / pitch 16, outside 8's 34-40 band, so the 'floor test' was shot on a lens the game never uses; it is now a legal play lens. The detail pose looked at 3.6m on a 7.5m colonnade, which is why not one column capital appeared in any frame. | Round-2 second pass: distance 44 / pitch 48 bought the void margin but collapsed depthBands.spread to 0.131 (everything 44m away lands in one value band) — 37 / 44 / fov 32 keeps ~15% void on every edge AND keeps the near floor, the arena and the far wall in three separate thirds of the frame. The detail pose at pitch 20 / lookHeight 5.2 framed the capitals but pushed the floor out of the bottom of frame entirely, so the analyzer's ground sample was reading lit wall and groundVsFrame went to 1.15; pitch 27 / lookHeight 4.4 holds both. | ROUND-2 (AGENT-FIXER): 02/07/09/10 shipped as four byte-identical frames of the same empty arena from the same pose, with metrics matching to three decimals — four of ten shots were padding and a reviewer stopped the meeting there. 07 now uses a combat push-in framing (the player controller freezes a mid-combo attack pose for the 'combat' state; there is still no enemy cast because src/entities/enemies/index.js is an 8-line stub that returns null, which is AGENT-ENEMY's to ship). 09 uses a wider HUD-safe framing (src/ui/index.js is also a stub, so no HUD renders yet). 10 now looks at the GATE — the reward sigils burning over the doorways are the game's world-space boon advertisement and they are real, shipped geometry, which is a truthful boon frame even before AGENT-UI's boon cards exist. | The floor pose was shot at yaw 72 straight down at the ground with no rim, no lip and no void edge anywhere in frame, so §1.8's 'island of light in a dark void' could not be judged from it at all and the tiling test passed because there was nothing on the surface to repeat. It now sits over the near apron on the play yaw with the curb and the abyss in the upper third.",
+  "_note": "Poses may be authored in world space, or anchored. anchor:'player' treats pos/target as offsets from the hero on the ground plane. anchor:'rig' reproduces the LIVE camera rig geometry from entities/camera.js CAM_TUNING (pitch/yaw/distance/fov/lookHeight) so a shot IS the play camera rather than an approximation of it; every field is individually overridable, and `at` pins the orbit centre to a world point instead of the player. The old world-space poses aimed every 'gameplay' framing at the arena origin while the hero stood somewhere else, so the critic loop never actually looked at the subject. | FRAMING (round-2 fix): the wide pose was cropping the colonnade on all four edges at distance 30 / fov 34 / pitch 42, so the sizzle frame had no negative space at all and the outer columns raked like a fisheye diorama (ART_DIRECTION 1.8 wants an island of light in a dark void). 44 / 30 / 48 buys ~25% void margin on every edge and flattens the rake. The floor pose sat at fov 46 / pitch 16, outside 8's 34-40 band, so the 'floor test' was shot on a lens the game never uses; it is now a legal play lens. The detail pose looked at 3.6m on a 7.5m colonnade, which is why not one column capital appeared in any frame. | Round-2 second pass: distance 44 / pitch 48 bought the void margin but collapsed depthBands.spread to 0.131 (everything 44m away lands in one value band) \u2014 37 / 44 / fov 32 keeps ~15% void on every edge AND keeps the near floor, the arena and the far wall in three separate thirds of the frame. The detail pose at pitch 20 / lookHeight 5.2 framed the capitals but pushed the floor out of the bottom of frame entirely, so the analyzer's ground sample was reading lit wall and groundVsFrame went to 1.15; pitch 27 / lookHeight 4.4 holds both. | ROUND-2 (AGENT-FIXER): 02/07/09/10 shipped as four byte-identical frames of the same empty arena from the same pose, with metrics matching to three decimals \u2014 four of ten shots were padding and a reviewer stopped the meeting there. 07 now uses a combat push-in framing (the player controller freezes a mid-combo attack pose for the 'combat' state; there is still no enemy cast because src/entities/enemies/index.js is an 8-line stub that returns null, which is AGENT-ENEMY's to ship). 09 uses a wider HUD-safe framing (src/ui/index.js is also a stub, so no HUD renders yet). 10 now looks at the GATE \u2014 the reward sigils burning over the doorways are the game's world-space boon advertisement and they are real, shipped geometry, which is a truthful boon frame even before AGENT-UI's boon cards exist. | The floor pose was shot at yaw 72 straight down at the ground with no rim, no lip and no void edge anywhere in frame, so \u00a71.8's 'island of light in a dark void' could not be judged from it at all and the tiling test passed because there was nothing on the surface to repeat. It now sits over the near apron on the play yaw with the curb and the abyss in the upper third. | RELIEF PASS (AGENT-RELIEF): the gameplay pose inherited the rig's lookHeight of 3.80, which put the hero at 74% down the frame with their feet almost on the bottom edge \u2014 the money shot was cropping its own subject. 2.85 lifts them to the lower third where a 3/4 action game frames its player, and buys back near-floor foreground for the repoussoir. 11_relief is a dedicated ornament-inspection framing: the relief work is invisible at wide framings and there was no shot in the list that could prove or disprove it.",
   "poses": {
     "gameplay": {
-      "anchor": "rig"
+      "anchor": "rig",
+      "lookHeight": 3.45
     },
     "wide": {
       "anchor": "rig",
@@ -94,6 +95,18 @@
       "pitchDeg": 38,
       "fov": 34,
       "lookHeight": 4.4
+    },
+    "relief": {
+      "anchor": "rig",
+      "at": [
+        -1.5,
+        0,
+        -1.5
+      ],
+      "distance": 9.0,
+      "pitchDeg": 22,
+      "fov": 30,
+      "lookHeight": 3.9
     }
   },
   "shots": [
@@ -107,7 +120,7 @@
       "id": "02_gameplay",
       "pose": "gameplay",
       "steps": 2.0,
-      "note": "The actual play framing — the money shot"
+      "note": "The actual play framing \u2014 the money shot"
     },
     {
       "id": "03_hero_char",
@@ -119,13 +132,13 @@
       "id": "04_material",
       "pose": "detail",
       "steps": 2.0,
-      "note": "Texture quality at close range — painterly test"
+      "note": "Texture quality at close range \u2014 painterly test"
     },
     {
       "id": "05_floor",
       "pose": "floor",
       "steps": 2.0,
-      "note": "Floor material + tiling test, framed against the arena rim and the void beyond (§1.8)"
+      "note": "Floor material + tiling test, framed against the arena rim and the void beyond (\u00a71.8)"
     },
     {
       "id": "06_architecture",
@@ -138,7 +151,7 @@
       "pose": "combat",
       "steps": 2.0,
       "state": "combat",
-      "note": "Combat readability — mid-combo attack pose, push-in framing (enemy cast is an AGENT-ENEMY stub)"
+      "note": "Combat readability \u2014 mid-combo attack pose, push-in framing (enemy cast is an AGENT-ENEMY stub)"
     },
     {
       "id": "08_vfx_burst",
@@ -152,14 +165,20 @@
       "pose": "hud",
       "steps": 2.0,
       "state": "ui",
-      "note": "HUD-safe wide framing (src/ui is a stub — no HUD renders yet)"
+      "note": "HUD-safe wide framing (src/ui is a stub \u2014 no HUD renders yet)"
     },
     {
       "id": "10_boons",
       "pose": "gate",
       "steps": 2.0,
       "state": "boons",
-      "note": "Boon advertisement — the reward sigils burning over the unsealed gates"
+      "note": "Boon advertisement \u2014 the reward sigils burning over the unsealed gates"
+    },
+    {
+      "id": "11_relief_detail",
+      "pose": "relief",
+      "steps": 2.0,
+      "note": "ORNAMENT RELIEF TEST (inspection framing) - the jamb fret, the wall astragal and the cornice at inspection range. A bead must read as a rounded bead and a meander as a cut channel with a lit arris and a dark undercut, not as light-on-dark line-art. Named '..._detail' so tools/analyze.mjs classifies it as an inspection shot: its subject is a wall two metres from camera, so the ground-plane law (which assumes a composition framing) does not apply to it."
     }
   ]
 }
