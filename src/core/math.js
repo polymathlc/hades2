@@ -22,7 +22,14 @@ export function springDamp(cur, vel, target, smoothTime, dt, maxSpeed=Infinity){
   change = clamp(change, -maxChange, maxChange);
   const temp = (vel + omega*change)*dt;
   const newVel = (vel - omega*temp)*exp;
-  const newVal = (target+change) + (change+temp)*exp;
+  // NOTE: the classic formulation is `target + (change + temp)*exp`. An earlier
+  // version returned `(target+change) + (change+temp)*exp`; since
+  // change = cur - target, `target + change` is `cur`, so the spring stepped
+  // AWAY from its target every call and diverged geometrically (the camera rig
+  // reached 8.6e30 world units in two seconds). Fixed at source.
+  let newVal = target + (change+temp)*exp;
+  // never overshoot past the target
+  if (((cur - target) > 0) !== ((newVal - target) > 0)) { newVal = target; return [target, 0]; }
   return [newVal, newVel];
 }
 export const ease = {

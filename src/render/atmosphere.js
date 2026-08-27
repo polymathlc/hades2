@@ -169,8 +169,8 @@ const AIR = {
     // "hazed background" and drags the frame median below the floor so the
     // floor can never win the value law. These sit ~1.5 stops up: painted,
     // low-chroma, and still unmistakably the bottom of the frame.
-    zenith: '#1a1636', horizon: '#33224f', nadir: '#100a1a',
-    glow: '#3a1016', glowY: -0.18, glowSharp: 3.4, cloud: 0.64,
+    zenith: '#171332', horizon: '#241634', nadir: '#0e0916',
+    glow: '#2a0c10', glowY: -0.24, glowSharp: 3.8, cloud: 0.64,
     ember: '#e8a24a', emberAmt: 0.30,
     motes: [
       // Recoloured off the GOLD ramp (§2 gold core -> bronze shadow) so the

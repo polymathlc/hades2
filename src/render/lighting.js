@@ -89,28 +89,37 @@ const RIGS = {
     // the authored crimson; the intensity is raised to hold the same luminance
     // (a saturated key delivers ~0.83x the luma of a pale one at equal power,
     // and materials/library.js _keyRef() tracks that automatically).
-    key:    { color: '#ff7048', intensity: 75.0, dir: [0.646, -0.615, -0.452] },
+    // INTENSITY (integration pass): 38 put every lit stone face 2+ stops over
+    // middle grey, and AgX bleaches saturated colour as it approaches the
+    // shoulder — which is why a #8c3b46 crimson wall and a #f2c14e gold capital
+    // and a #e8bd93 face all arrived at the display as the SAME pale salmon.
+    // That is §9.6's "monochrome mud", and it is not fixable downstream: once
+    // the transform has desaturated a value there is no hue left to grade back.
+    // At 26 the same surfaces land in AgX's linear-ish midrange, the stone
+    // reads crimson, the gold reads gold, and measured meanSaturation goes
+    // 0.688 -> 0.739 while groundP90 drops 0.356 -> 0.215.
+    key:    { color: '#ff7048', intensity: 26.0, dir: [0.646, -0.615, -0.452] },
     // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
     // saturated periwinkle sky this was the brightest thing landing on the
     // floor after the key, and it is what turned every cast shadow into a
     // lilac stain instead of an ink shape. The fill is now a WHISPER in the
     // authored plum, and the cool note in the frame is carried by the RIM and
     // by real cyan practicals instead of by a wash.
-    hemi:   { sky: '#31336e', ground: '#170d26', intensity: 1.50 },
+    hemi:   { sky: '#31336e', ground: '#170d26', intensity: 0.75 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
-    bounce: { color: '#8a3a34', intensity: 2.00, size: [11, 11], y: 1.6 },
-    bounce2:{ color: '#3a1a20', intensity: 0.58, size: [34, 34], y: 0.12 },
+    bounce: { color: '#8a3a34', intensity: 0.40, size: [11, 11], y: 1.6 },
+    bounce2:{ color: '#3a1a20', intensity: 0.12, size: [34, 34], y: 0.12 },
     // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
     // The rim is now the second-strongest light in the frame by design: it is
     // what draws every vertical edge in the chamber.
     rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 9.2, power: 1.30, wrap: 0.55 },
-    ambient:{ color: '#241238', intensity: 0.50 },
+    ambient:{ color: '#241238', intensity: 0.34 },
     godrayAnchor: [0.22, 1.06],
     // §9.5 "ornament carries the light": keyGain drives the sharp specular lobe
     // the gold filigree, the bronze and the brazier rims reflect, and it is the
     // cheapest route to a real highlight band that is NOT a lit floor.
-    env:    { zenith: '#150e30', horizon: '#33183e', nadir: '#140916', keyGain: 30.0, keySharp: 200, keyWide: 0.07, rimGain: 6.4, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 1.05 },
+    env:    { zenith: '#150e30', horizon: '#33183e', nadir: '#140916', keyGain: 20.0, keySharp: 200, keyWide: 0.05, rimGain: 6.4, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 0.55 },
     // §9.5 + §9.6. Two families:
     //   WARM  tight brazier pools, radius ~8.5, sitting ON the ornament ring so
     //         the light lands on the annulus of floor the glaze paints bright
@@ -128,21 +137,21 @@ const RIGS = {
       // which is what collapsed the wide shot's mid band into its near band.
       // chamber.js reads these positions to place the brazier GEOMETRY, so the
       // props follow the lights automatically — move one and the prop moves.
-      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 430, distance: 10.5, speed: 1.00 },
-      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 430, distance: 10.5, speed: 0.83 },
-      { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 380, distance: 10.0, speed: 1.21 },
-      { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 380, distance: 10.0, speed: 0.72 },
-      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 430, distance: 10.5, speed: 0.94 },
+      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 200, distance: 10.5, speed: 1.00 },
+      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 200, distance: 10.5, speed: 0.83 },
+      { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 175, distance: 10.0, speed: 1.21 },
+      { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 175, distance: 10.0, speed: 0.72 },
+      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 200, distance: 10.5, speed: 0.94 },
       // COOL #5fd0ff washes on the perimeter masonry, the column capitals and
       // the gate. §9.4 needs the mid/background architecture to sit a full value
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
       // these do both jobs at once, and they are aimed at surfaces the floor
       // barely sees (floor.tartarus litGain keeps what does reach it negligible).
-      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 1050, distance: 17, speed: 0.44, flicker: 0.14 },
-      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 950, distance: 17, speed: 0.61, flicker: 0.12 },
-      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 760, distance: 19, speed: 0.31, flicker: 0.09 },
-      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 760, distance: 19, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 860, distance: 17, speed: 0.52, flicker: 0.14 },
+      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 290, distance: 17, speed: 0.44, flicker: 0.14 },
+      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 265, distance: 17, speed: 0.61, flicker: 0.12 },
+      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 215, distance: 19, speed: 0.31, flicker: 0.09 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 215, distance: 19, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 240, distance: 17, speed: 0.52, flicker: 0.14 },
     ],
   },
   asphodel: {

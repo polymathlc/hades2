@@ -476,7 +476,7 @@ const RECIPES = {
         // the columns, capitals, gold trim and brazier rims keep the full rig.
         // Do not "fix" a dark floor by raising the key — raise these instead,
         // and only if the measured groundLuma stays under 0.18.
-        litGain: 0.55, ambGain: 0.30, specGain: 0.16,
+        litGain: 1.00, ambGain: 0.58, specGain: 0.16,
         // TILING (§7). Measured autocorrelation was 0.535-0.592 at the ashlar
         // pitch. Plate size alone cannot answer a REGULAR JOINT LATTICE — the
         // seams repeat even when the stones do not. A much stronger macro layer
@@ -679,7 +679,7 @@ const RECIPES = {
     // floor value and read only by hue. A modest emissive floor in the AUTHORED
     // gold mid (#c98f2b) self-lights the filigree to the top band even where the
     // key does not reach it, without pushing it over the bloom gate.
-    return { rgb, height: h, rough, metal, normalScale: 0.85, emissive, emissiveIntensity: 0.34,
+    return { rgb, height: h, rough, metal, normalScale: 0.85, emissive, emissiveIntensity: 0.05,
       params: { envMapIntensity: 0.38 },
       // §9.2 THE CHARACTER OUT-VALUES THE FLOOR. The rosette is the ornament the
       // hero stands ON, so it is allowed to be the brightest thing in the play
@@ -690,7 +690,7 @@ const RECIPES = {
       // wall, and the specular cut is what stops a near-white sheen on a 3/4
       // camera from re-inflating it.
       paint: { triplanar: false, macroStrength: 0.16, macroTint: '#7a4f58',
-        litGain: 0.46, ambGain: 0.30, specGain: 0.26 } };
+        litGain: 0.22, ambGain: 0.16, specGain: 0.10 } };
   } },
 
   // ======================================================================
@@ -1153,7 +1153,7 @@ const RECIPES = {
         emissive[j] *= g; emissive[j + 1] *= g * 0.95; emissive[j + 2] *= g * 0.78;
       }
     }
-    return { rgb, height: h, rough, metal, normalScale: 1.5, emissive, emissiveIntensity: 0.62,
+    return { rgb, height: h, rough, metal, normalScale: 1.5, emissive, emissiveIntensity: 0.50,
       params: { envMapIntensity: 0.75 },
       paint: { triplanar: false, macroStrength: 0.28, macroTint: GOLD.mid, rimStrength: 0.55 } };
   } },
@@ -1195,7 +1195,7 @@ const RECIPES = {
     // collapsed to one flat orange, so the bronze crevice, the body and the
     // #ffe9a8 highlight were all the same pixel. Emissive down, IBL up: the
     // specular now carries the read and the ramp survives to the display.
-    return { rgb, height: h, rough, metal, normalScale: 0.9, emissive, emissiveIntensity: 0.80,
+    return { rgb, height: h, rough, metal, normalScale: 0.9, emissive, emissiveIntensity: 0.60,
       params: { envMapIntensity: 0.70 },
       paint: { projection: 'triplanar', triScale: 0.55, triSharp: 5.0, macroStrength: 0.14, macroTint: GOLD.mid, rimStrength: 0.6 } };
   } },
@@ -1268,7 +1268,7 @@ const RECIPES = {
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.01), 5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6);
     const rough = TG.artisticRoughness(n, { base: 0.62, height: h, cavity: cav, edge, polish: 0.2, dry: 0.3, variation: 0.2, seed: seed + 5, min: 0.18, max: 0.95 });
-    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 5.8, normalScale: 0.9,
+    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 8.0, normalScale: 0.9,
       animate: { scroll: [0.010, 0.006], pulse: 0.22 },
       paint: { triplanar: false, rimStrength: 0.12 } };
   } },
@@ -1345,7 +1345,7 @@ const RECIPES = {
       emissive[j] *= k; emissive[j + 1] *= k; emissive[j + 2] *= k;
     }
     const rough = TG.artisticRoughness(n, { base: 0.16, height: h, cavity: cav, edge, polish: 0.12, dry: 0.5, variation: 0.1, seed: seed + 5, min: 0.03, max: 0.7 });
-    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 3.9, normalScale: 1.35,
+    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 20.0, normalScale: 1.35,
       params: { envMapIntensity: 1.4 },
       animate: { pulse: 0.3 },
       paint: { triplanar: false, rimStrength: 1.05, rimColor: '#c99cf2' } };

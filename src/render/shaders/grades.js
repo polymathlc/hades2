@@ -142,7 +142,24 @@ export const GRADES = {
     // actually measures as. A high threshold with a tight radius puts the same
     // energy into small, genuinely white cores — which is what fills the top
     // luma band without touching the mid-tones.
-    bloom:    { threshold: 3.40, knee: 0.42, intensity: 1.05, tint: H('#ffe0b8'), radius: 0.82, clamp: 8.0 },
+        // RADIUS IS THE LEVER, NOT INTENSITY. The same energy spread wide is a
+    // pedestal (§7 "bloom fog across the entire frame", and it is what the p90
+    // ground check measures as a blazing floor); the same energy concentrated
+    // is a HIGHLIGHT — more pixels genuinely over the top-band threshold, far
+    // fewer pixels loitering in the 0.42-0.68 mid-bright range where they look
+    // like haze. Tighten the radius before touching the threshold.
+    // CLAMP IS THE LEVER (integration pass). radius and intensity control how
+    // far and how hard the halo spreads, but `clamp` is what decides how much
+    // energy a single blazing texel is allowed to inject into the mip chain at
+    // all. At clamp 7.0 a brazier core (emissive ~8) put SEVEN units into mip0,
+    // six mips of tent-blur then smeared that over a fifth of the frame and
+    // every brazier in the chamber became a featureless orange lozenge that
+    // swallowed the architecture behind it — ART_DIRECTION §7's "bloom fog
+    // across the entire frame", and §1.7's "bloom must never wash out the ink
+    // shadows". At clamp 3.0 the same core keeps a genuinely white centre and
+    // a halo you can see the brazier rim through, which is what §5's core /
+    // body / glow construction actually asks for.
+    bloom:    { threshold: 1.85, knee: 0.42, intensity: 1.70, tint: H('#ffe0b8'), radius: 0.34, clamp: 3.0 },
     // §9.7 contact. A 1.75u radius on a 3/4 camera is a soft dirt halo, not an
     // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
     // the ink goes several stops darker so the base of a column reads planted
@@ -209,7 +226,7 @@ export const GRADES = {
     vignette: { amount: 0.58, radius: 0.64, softness: 0.86, depth: 0.18, color: H('#0d0b18') },
     grain:    { amount: 0.0075, size: 1.0, darkBoost: 1.9 },
     chroma:   1.7,
-    bloom:    { threshold: 1.10, knee: 0.5, intensity: 0.76, tint: H('#ffa03c'), radius: 1.08, clamp: 6.0 },
+    bloom:    { threshold: 1.10, knee: 0.5, intensity: 0.76, tint: H('#ffa03c'), radius: 0.60, clamp: 3.2 },
     ao:       { intensity: 0.95, radius: 1.65, power: 2.0, bias: 0.04, ink: H('#161a3a') },
     godrays:  { intensity: 0.34, color: H('#ff8c1a'), decay: 0.962, density: 0.80, weight: 0.55 },
     fog:      { color: H('#3a1408'), far: H('#0d0b18'), density: 0.026, height: 0.18, haze: H('#150f26'), hazeStart: 32, hazeEnd: 124, hazeDesat: 0.54 },
@@ -246,7 +263,7 @@ export const GRADES = {
     vignette: { amount: 0.48, radius: 0.70, softness: 0.88, depth: 0.24, color: H('#241a3a') },
     grain:    { amount: 0.0060, size: 1.0, darkBoost: 1.5 },
     chroma:   1.1,
-    bloom:    { threshold: 1.05, knee: 0.45, intensity: 0.62, tint: H('#ffe6a3'), radius: 0.95, clamp: 6.0 },
+    bloom:    { threshold: 1.05, knee: 0.45, intensity: 0.62, tint: H('#ffe6a3'), radius: 0.58, clamp: 3.2 },
     ao:       { intensity: 0.88, radius: 1.85, power: 1.9, bias: 0.04, ink: H('#3d3560') },
     godrays:  { intensity: 0.28, color: H('#ffe6a3'), decay: 0.958, density: 0.76, weight: 0.52 },
     fog:      { color: H('#3c3a56'), far: H('#191a2e'), density: 0.020, height: 0.13, haze: H('#3a3654'), hazeStart: 38, hazeEnd: 145, hazeDesat: 0.60 },

@@ -202,7 +202,13 @@ void main(){
     // it saturates, which is what stops a camera that tilts up from turning the
     // underworld into a lavender daytime sky. Do not flatten this: it is the
     // only thing separating the top and bottom thirds of the establishing shot.
-    vec3 sky = uHaze * (0.05 + 1.08 * smoothstep(0.08, 0.40, up)) * (0.90 + 0.24 * horizon);
+        // The second term is a DARK LID over the band a low camera looks through.
+    // Without it the void sits above mid-grey wherever the horizon crosses the
+    // lower half of frame (the architecture pose), which reads as daylight and
+    // measures as "the ground is blazing" — §9.1's p90 check counts everything
+    // in the bottom of frame, void included.
+    vec3 sky = uHaze * (0.05 + 1.08 * smoothstep(0.08, 0.40, up)
+                             - 0.55 * smoothstep(0.38, 0.55, up)) * (0.90 + 0.24 * horizon);
     col += sky * uVoidSky;
   }
   gl_FragColor = vec4(col, 1.0);

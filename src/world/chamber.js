@@ -1,187 +1,261 @@
-// OWNER: AGENT-WORLD — STUB (integrator pass, wave 1).
+// OWNER: AGENT-WORLD
+// ---------------------------------------------------------------------------
+// THE CHAMBER — arena generation, architecture assembly, collision, void.
 //
-// This is still a stub: no chamber graph, no room transitions, no prop kit.
-// It exists so the material library and the light rig have real architecture to
-// act on — a floor, an ashlar perimeter, columns, a gate, braziers that sit
-// exactly where the light rig authored its practicals, and void shards that
-// frame the arena as an island of light (ART_DIRECTION §1.8).
+// THE COMPOSITION THIS FILE EXISTS TO PRODUCE (ART_DIRECTION §1.8 / §9):
 //
-// AGENT-WORLD: replace wholesale. The only things other systems depend on are
-// `bounds`, `center`, `clampToArena`, `heightAt`, `biome` and `setBiome`.
+//      ┌─ sky / haze ────────────────────────────────────────┐  value band 3
+//      │   ▓▓▓ upper storey, arcade, crowning cornice ▓▓▓    │  value band 2
+//      │   ▒▒ colonnade, statues, banners, braziers ▒▒       │  <- lit EDGES
+//      │      · · · · dark stage floor · · · ·               │  value band 1
+//      └────── abyss ───────────────────────────────────────┘  ink
+//
+// The floor is the DARKEST large surface in the frame. Every highlight is on an
+// arris: a capital, a cornice lip, a brazier rim, a gold inlay, a door sigil.
+// The arena is an ISLAND: past the parapet there is nothing but a fall.
+//
+// Room shape is a RADIAL PROFILE R(theta) sampled at 256 angles. Every archetype
+// in biomes.js is star-shaped about the origin, which makes the profile enough
+// to drive the floor mesh, the swept rim mouldings, the skirt, the scatter mask
+// AND collision — one representation, no duplication, and clampToArena stays a
+// two-line lookup.
+//
+// CONTRACT (other systems depend on these — extend, never rename):
+//   world.bounds.r                     max arena radius
+//   world.center                       THREE.Vector3
+//   world.biome / world.archetype
+//   world.clampToArena(v3, radius)     -> v3, clamped inside the boundary
+//   world.heightAt(x, z)               -> floor height (dais aware)
+//   world.collide(pos, radius)         -> pos, pushed out of solids + boundary
+//   world.raycastWalk(from, to, r)     -> {hit, t, point, normal}
+//   world.build(biome, archetype, seed)
+//   world.setBiome(name, ctx)
+//   world.doors                        -> Doors (getChoices/onEnter/promptAnchor)
+// ---------------------------------------------------------------------------
 import * as THREE from 'three';
+import { Kit, Parts, Batcher, lathe, faceted, mergeGeos, meanderPeriod, meanderRail, eggAndDartUnit,
+         beadAndReelUnit, columnDrumGeo, rubbleChunkGeo, brokenCapitalGeo, taperedTube, catenary,
+         Field, TAU, DEG } from './kit.js';
+import { BIOMES, ARCHETYPES, ARCHETYPE_IDS, getBiome, getArchetype, DEFAULT_BIOME } from './biomes.js';
+import { Doors } from './doors.js';
+import { Props } from './props.js';
 
-const KIT = {
-  // §1.5 MATERIAL HIERARCHY: the wall, the column drums and the gate voussoirs
-  // are three different stones. One `wall` entry handed to all of them is what
-  // made the arch, the columns, the frieze and the perimeter read as the same
-  // brown-violet substance in the same finish.
-  tartarus: { floor: 'floor.tartarus', wall: 'stone.tartarus', bay: 'stone.tartarus.bay', trim: 'gold.filigree',
-    column: 'stone.tartarus.column', arch: 'stone.tartarus.arch',
-    metal: 'bronze.verdigris', ember: 'lava', rock: 'obsidian', accent: 'crystal.violet',
-    medallion: 'medallion.tartarus' },
-  asphodel: { floor: 'floor.asphodel', wall: 'stone.asphodel', trim: 'gold.filigree',
-    metal: 'bronze.verdigris', ember: 'lava', rock: 'obsidian', accent: 'crystal.violet' },
-  elysium: { floor: 'floor.elysium', wall: 'marble.elysium', trim: 'gold.filigree',
-    metal: 'bronze.verdigris', ember: 'lava', rock: 'obsidian', accent: 'crystal.violet' },
-};
+const NA = 256;                    // profile angular resolution
 
-// Fallback practical layout if the light rig has not published one.
-const FALLBACK_PRACTICALS = [
-  { pos: [11.0, 1.7, -6.0], color: '#ffa257' },
-  { pos: [-11.0, 1.7, 6.0], color: '#ffa257' },
-  { pos: [6.0, 1.7, 11.0], color: '#ff8a3e' },
-  { pos: [-6.0, 1.7, -11.0], color: '#ff8a3e' },
-];
+// FACING CONVENTION. Rotating by -a + PI/2 about Y maps local +Z to (cos a,
+// sin a) — i.e. RADIALLY OUTWARD, away from the arena. Almost everything in a
+// chamber has a front (a statue's face, a fluted pilaster, a sconce's bowl, a
+// door's sigil) and that front must look INWARD. Getting this backwards is
+// invisible in code review and glaring in a screenshot, so it is named.
+const faceIn = (a) => -a - Math.PI / 2;    // local +Z looks at the arena centre
 
-const DEG = Math.PI / 180;
+// The art-directed rim direction for EVERYTHING in the chamber. See _M() below
+// for the derivation; entities/rig.js carries the matching constant for the
+// character. Screen-right at the §8 camera (yaw 45 / pitch 50), wN.y low enough
+// that painterly.js's ground-plane veto stays open on a standing form.
+const ENV_RIM_DIR = [0.68, 0.28, -0.68];
+const faceOut = (a) => -a + Math.PI / 2;   // local +Z looks away into the void
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const sstep = (a, b, x) => { const u = clamp01((x - a) / (b - a || 1)); return u * u * (3 - 2 * u); };
+const lerp = (a, b, t) => a + (b - a) * t;
 
-// ---------------------------------------------------------------------------
-// Authored prop geometry. ART_DIRECTION §7 bans "untextured programmer-art
-// boxes/cylinders left visible", and a raw CylinderGeometry reads as a barrel
-// no matter what is painted on it. These four masses each carry a deliberate
-// silhouette decision: flutes, a flat fracture face, a chipped rim, a neck and
-// handles. All are authored so their local +Y is up and their bottom is flat,
-// which is what lets the placer snap them to the floor plane.
-// ---------------------------------------------------------------------------
+/**
+ * A colour, renormalised so its LUMINANCE is 1. This is the single most
+ * important helper in the glaze: a vertex colour multiplies albedo, so painting
+ * with a raw palette colour (whose linear components are all well under 1)
+ * silently multiplies the ground plane by ~0.15 and the floor disappears into
+ * the void. Split the decision in two — `v` carries VALUE, the tint carries
+ * HUE ONLY — and the painted structure becomes readable and tunable.
+ */
+function hueOf(c) {
+  const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  return l > 1e-4 ? [c.r / l, c.g / l, c.b / l] : [1, 1, 1];
+}
 
-/** A toppled fluted column drum: 16 flutes, a bevelled rim, one flat break. */
-function columnDrum(rng, o = {}) {
-  // MAGNITUDE. At the §8 camera (34-40deg FOV, ~26m, 52deg pitch) a 7.7% radius
-  // modulation is sub-pixel, so 16 shallow flutes read on screen as a plain
-  // capped cylinder. 10 flutes at 21% of the radius each cast a shadow wide
-  // enough to survive the resolve.
-  const R = o.r ?? 0.52, H = o.h ?? 1.15, FL = o.flutes ?? 10, DEPTH = o.depth ?? 0.115;
-  const g = new THREE.CylinderGeometry(R, R, H, FL * 2, 5, false);
-  const pos = g.attributes.position;
-  const v = new THREE.Vector3();
-  // a single tilted fracture plane through the drum, and a chipped rim
-  const tilt = 0.17 + rng() * 0.16, tiltA = rng() * Math.PI * 2;
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const rad = Math.hypot(v.x, v.z);
-    if (rad > 1e-4) {
-      const a = Math.atan2(v.z, v.x);
-      // flutes: a scalloped radius, deeper in the middle of the drum
-      const band = 1 - Math.pow(Math.abs(v.y) / (H * 0.5), 3.0);
-      const flute = (0.5 - 0.5 * Math.cos(a * FL)) * DEPTH * band;
-      // rim bevel so the ends are not razor discs
-      const rim = 1 - 0.28 * Math.pow(Math.abs(v.y) / (H * 0.5), 6.0);
-      const k = ((rad - flute) * rim) / rad;
-      v.x *= k; v.z *= k;
-      // chipped upper rim
-      if (v.y > H * 0.42) {
-        const chip = Math.sin(a * 5 + tiltA * 2) * Math.sin(a * 3 - tiltA);
-        v.y -= Math.max(0, chip) * 0.11;
+// cheap deterministic value noise for the floor mottle
+function h2(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  return lerp(lerp(h2(xi, yi), h2(xi + 1, yi), u), lerp(h2(xi, yi + 1), h2(xi + 1, yi + 1), u), v);
+}
+
+// ===========================================================================
+// SHAPES — every archetype's plan, as a radial profile
+// ===========================================================================
+function buildProfile(arch, f) {
+  const P = new Float32Array(NA);
+  const R = arch.radius;
+  const asp = arch.aspect ?? 1;
+  const phase = f() * TAU;
+  for (let i = 0; i < NA; i++) {
+    const a = (i / NA) * TAU;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    let r = R;
+    switch (arch.shape) {
+      case 'oblong': {
+        const A = R, B = R * asp;
+        r = (A * B) / Math.sqrt((B * ca) * (B * ca) + (A * sa) * (A * sa));
+        break;
       }
+      case 'cruciform': {
+        const armL = R, armW = R * 0.44;
+        const rect = (hx, hz) => Math.min(
+          Math.abs(ca) > 1e-4 ? hx / Math.abs(ca) : 1e6,
+          Math.abs(sa) > 1e-4 ? hz / Math.abs(sa) : 1e6);
+        r = Math.max(rect(armL, armW), rect(armW, armL));
+        break;
+      }
+      case 'rounded-square': {
+        const n = 4.6;
+        r = R / Math.pow(Math.pow(Math.abs(ca), n) + Math.pow(Math.abs(sa), n), 1 / n);
+        break;
+      }
+      case 'causeway': {
+        // two round platforms joined by a bridge — the classic Hades causeway
+        const half = R * 0.30, bridgeW = R * 0.30, d = R * 0.66;
+        const rect = Math.min(
+          Math.abs(ca) > 1e-4 ? (d + half) / Math.abs(ca) : 1e6,
+          Math.abs(sa) > 1e-4 ? bridgeW / Math.abs(sa) : 1e6);
+        let best = rect;
+        for (const sgn of [-1, 1]) {
+          const cx = sgn * d, cz = 0;
+          const b = cx * ca + cz * sa;
+          const c = cx * cx + cz * cz - half * half * 3.2;
+          const disc = b * b - c;
+          if (disc > 0) best = Math.max(best, b + Math.sqrt(disc));
+        }
+        r = best;
+        break;
+      }
+      case 'lobed': {
+        r = R * (1 + 0.11 * Math.sin(a * 3 + phase) + 0.055 * Math.sin(a * 7 - phase * 1.7));
+        break;
+      }
+      default: r = R;
     }
-    // flat fracture face across the top
-    const cut = H * 0.5 - tilt * (Math.cos(tiltA) * v.x + Math.sin(tiltA) * v.z);
-    if (v.y > cut) v.y = cut;
-    pos.setXYZ(i, v.x, v.y, v.z);
+    // Every arena edge is BROKEN stone, never a drawn circle: a low-amplitude
+    // irregularity plus a few deliberate bites out of the near rim.
+    r *= 1 + 0.020 * Math.sin(a * 5 + phase * 2.1) + 0.013 * Math.sin(a * 11 - phase);
+    P[i] = Math.max(3.0, r);
+  }
+  // one smoothing pass so the collision normal never spikes
+  const S = new Float32Array(NA);
+  for (let i = 0; i < NA; i++) S[i] = (P[(i - 1 + NA) % NA] + 2 * P[i] + P[(i + 1) % NA]) * 0.25;
+  return S;
+}
+
+// ===========================================================================
+// SWEEP — a cross-section run around (part of) the arena boundary.
+// This is how the curb, the skirt, the parapet rail and the abyss funnel are
+// built: one mesh each, following ANY room shape.
+// ===========================================================================
+function sweep(profile, section, opts = {}) {
+  const a0 = opts.a0 ?? 0, a1 = opts.a1 ?? TAU;
+  const closed = opts.closed ?? (Math.abs(a1 - a0 - TAU) < 1e-6);
+  const steps = opts.steps ?? Math.max(24, Math.round(NA * Math.abs(a1 - a0) / TAU));
+  const M = section.length;
+  const nSeg = closed ? steps : steps + 1;
+  const P = new Float32Array(nSeg * M * 3);
+  const U = new Float32Array(nSeg * M * 2);
+  const C = opts.shade ? new Float32Array(nSeg * M * 3) : null;
+  const idx = [];
+  const rAt = (a) => {
+    const t = ((a % TAU) + TAU) % TAU / TAU * NA;
+    const i0 = Math.floor(t) % NA, i1 = (i0 + 1) % NA, ft = t - Math.floor(t);
+    return profile[i0] * (1 - ft) + profile[i1] * ft;
+  };
+  for (let s = 0; s < nSeg; s++) {
+    const a = a0 + (a1 - a0) * (closed ? s / steps : s / steps);
+    const r0 = rAt(a) * (opts.radiusScale ?? 1) + (opts.radiusOffset ?? 0);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    for (let m = 0; m < M; m++) {
+      const [dr, dy] = section[m];
+      const rr = r0 + dr;
+      const w = (s * M + m);
+      P[w * 3] = ca * rr; P[w * 3 + 1] = dy; P[w * 3 + 2] = sa * rr;
+      U[w * 2] = (a - a0) * r0 * 0.22; U[w * 2 + 1] = m / (M - 1);
+      if (C) { const c = opts.shade(ca * rr, sa * rr, m / (M - 1), a); C[w * 3] = c[0]; C[w * 3 + 1] = c[1]; C[w * 3 + 2] = c[2]; }
+    }
+  }
+  for (let s = 0; s < (closed ? steps : steps); s++) {
+    const s1 = closed ? (s + 1) % steps : s + 1;
+    for (let m = 0; m < M - 1; m++) {
+      const a = s * M + m, b = s1 * M + m;
+      idx.push(a, b, a + 1, a + 1, b, b + 1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+  if (C) g.setAttribute('color', new THREE.BufferAttribute(C, 3));
+  g.setIndex(idx);
+  // A moulding is CARVED: it has to read by its facets. Smooth-shading a swept
+  // section averages the normals across every step in the profile and the whole
+  // run turns into one soft tube — which is exactly what a rim moulding must
+  // never look like.
+  if (opts.flat) {
+    const nonIdx = g.toNonIndexed();
+    nonIdx.computeVertexNormals();
+    nonIdx.computeBoundingBox();
+    nonIdx.computeBoundingSphere();
+    g.dispose();
+    return nonIdx;
   }
   g.computeVertexNormals();
-  // lay it on its side — the placer only ever spins it about world Y
-  g.rotateZ(Math.PI / 2);
-  g.rotateX(rng() * 0.25 - 0.125);
   g.computeBoundingBox();
+  g.computeBoundingSphere();
   return g;
 }
 
-/** Broken masonry: a chipped block with one flat bed and sheared corners. */
-function rubbleChunk(rng, o = {}) {
-  const g = new THREE.BoxGeometry(o.w ?? 0.62, o.h ?? 0.40, o.d ?? 0.52, 2, 2, 2).toNonIndexed();
-  const pos = g.attributes.position;
-  const v = new THREE.Vector3();
-  const n1 = rng() * 6.28, n2 = rng() * 6.28, n3 = rng() * 6.28;
-  const minY = -(o.h ?? 0.40) * 0.5;
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const d = Math.sin(v.x * 7 + n1) * Math.sin(v.y * 6 + n2) * Math.sin(v.z * 8 + n3);
-    v.x += d * 0.085; v.z += d * 0.075;
-    v.y += Math.sin(v.x * 9 + n3) * 0.05;
-    // shear one corner off entirely — a fracture, not erosion
-    const sh = v.x * 0.8 + v.z * 0.6 + v.y * 0.5;
-    if (sh > 0.42) { v.x -= (sh - 0.42) * 0.5; v.z -= (sh - 0.42) * 0.4; }
-    // the bed stays flat so it sits on the ground instead of hovering
-    if (v.y < minY + 0.02) v.y = minY;
-    pos.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  g.computeBoundingBox();
-  return g;
-}
-
-/** A cracked amphora — neck, shoulder, two handles: a NON-convex silhouette. */
-function amphora(rng) {
-  const prof = [];
-  const H = 1.30;
-  const shape = [
-    [0.02, 0.00], [0.13, 0.02], [0.17, 0.06], [0.26, 0.18], [0.33, 0.34],
-    [0.35, 0.48], [0.32, 0.62], [0.24, 0.74], [0.15, 0.82], [0.126, 0.90],
-    [0.14, 0.965], [0.185, 1.00],
-  ];
-  for (const [r, t] of shape) prof.push(new THREE.Vector2(Math.max(0.012, r * (1 + (rng() - 0.5) * 0.05)), t * H));
-  const body = new THREE.LatheGeometry(prof, 28);
-  const parts = [body];
-  for (const sgn of [-1, 1]) {
-    const h = new THREE.TorusGeometry(0.135, 0.075, 8, 16, Math.PI * 1.15);
-    h.rotateY(Math.PI / 2);
-    h.rotateZ(-Math.PI * 0.12);
-    h.translate(sgn * 0.20, H * 0.80, 0);
-    if (sgn < 0) h.scale(-1, 1, 1);
-    parts.push(h);
-  }
-  const g = mergeGeos(parts);
-  // topple it: the neck must break the vertical, not stand to attention
-  g.rotateX(Math.PI * 0.46 + rng() * 0.1);
-  g.rotateY(rng() * 0.6);
-  g.computeVertexNormals();
-  g.computeBoundingBox();
-  return g;
-}
-
-
-// ---------------------------------------------------------------------------
-// A radial floor disc carrying an AUTHORED value gradient in its vertex colour.
-// ART_DIRECTION §1.1: the ground plane must sit DOWN in the value structure so
-// the character reads as the brightest object on screen. A flat CircleGeometry
-// lit by a uniform hemisphere is one unmodulated slab from centre to skirt —
-// which is precisely what made the floor the second-brightest large surface in
-// the frame. The ramp here is PAINTED: a radial falloff, a directional gradient
-// away from the key, and a warm pool under every brazier, exactly the way a
-// background artist would glaze a floor plate.
-// ---------------------------------------------------------------------------
-function paintedFloorDisc(R, rings, seg, shade) {
+// ===========================================================================
+// FLOOR — a radial mesh following the profile, carrying the painted glaze
+// ===========================================================================
+function radialFloor(profile, rings, shade, opts = {}) {
+  const seg = opts.seg ?? 128;
   const nv = 1 + rings * seg;
   const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3);
   const U = new Float32Array(nv * 2), C = new Float32Array(nv * 3);
   const idx = [];
   let w = 0;
-  const put = (x, z, r) => {
-    P[w * 3] = x; P[w * 3 + 1] = z; P[w * 3 + 2] = 0;      // authored in XY, mesh spins it flat
-    N[w * 3 + 2] = 1;
-    U[w * 2] = 0.5 + x / (2 * R); U[w * 2 + 1] = 0.5 + z / (2 * R);
-    const c = shade(x, z, r / R);
+  const rAt = (a) => {
+    const t = ((a % TAU) + TAU) % TAU / TAU * NA;
+    const i0 = Math.floor(t) % NA, i1 = (i0 + 1) % NA, ft = t - Math.floor(t);
+    return profile[i0] * (1 - ft) + profile[i1] * ft;
+  };
+  // UV mode. A world-scaled unwrap is right for a floor whose material is
+  // triplanar/world-projected; an emblem whose texture is authored as a polar
+  // rosette across 0..1 needs a disc-local unwrap or it samples a corner of
+  // its own artwork.
+  const uvR = opts.uvRadius || 0;
+  const put = (x, z, t) => {
+    P[w * 3] = x; P[w * 3 + 1] = 0; P[w * 3 + 2] = z;
+    N[w * 3 + 1] = 1;
+    if (uvR) { U[w * 2] = 0.5 + x / (2 * uvR); U[w * 2 + 1] = 0.5 + z / (2 * uvR); }
+    else { U[w * 2] = x * 0.05; U[w * 2 + 1] = z * 0.05; }
+    const c = shade(x, z, t);
     C[w * 3] = c[0]; C[w * 3 + 1] = c[1]; C[w * 3 + 2] = c[2];
     w++;
   };
   put(0, 0, 0);
   for (let k = 1; k <= rings; k++) {
-    // radii biased outward: the medallion zone needs the vertex density, the
-    // skirt only needs enough to carry the falloff
-    const r = R * Math.pow(k / rings, 0.86);
+    const tk = Math.pow(k / rings, 0.88);
     for (let i = 0; i < seg; i++) {
-      const a = (i / seg) * Math.PI * 2;
-      put(Math.cos(a) * r, Math.sin(a) * r, r);
+      const a = (i / seg) * TAU;
+      const r = rAt(a) * tk;
+      put(Math.cos(a) * r, Math.sin(a) * r, tk);
     }
   }
-  for (let i = 0; i < seg; i++) idx.push(0, 1 + i, 1 + ((i + 1) % seg));
+  // WINDING. Authored in the XZ plane with +Y up, a fan that runs from +X
+  // toward +Z is CLOCKWISE seen from above, so the naive order produces a
+  // downward normal and the whole ground plane back-face culls away. Every
+  // triangle below is wound the other way on purpose.
+  for (let i = 0; i < seg; i++) idx.push(0, 1 + ((i + 1) % seg), 1 + i);
   for (let k = 0; k < rings - 1; k++) {
-    const a0 = 1 + k * seg, a1 = 1 + (k + 1) * seg;
+    const b0 = 1 + k * seg, b1 = 1 + (k + 1) * seg;
     for (let i = 0; i < seg; i++) {
       const j = (i + 1) % seg;
-      idx.push(a0 + i, a1 + i, a1 + j);
-      idx.push(a0 + i, a1 + j, a0 + j);
+      idx.push(b0 + i, b1 + j, b1 + i, b0 + i, b0 + j, b1 + j);
     }
   }
   const g = new THREE.BufferGeometry();
@@ -190,1022 +264,2228 @@ function paintedFloorDisc(R, rings, seg, shade) {
   g.setAttribute('uv', new THREE.BufferAttribute(U, 2));
   g.setAttribute('color', new THREE.BufferAttribute(C, 3));
   g.setIndex(idx);
-  return g;
-}
-
-// ---------------------------------------------------------------------------
-// A fluted, entasis-tapered Doric shaft. A raw cylinder with a box capital is a
-// painted tube (§7); real flutes give the shaft an ink-dark crevice and a
-// gold-caught arris, which is what separates two columns standing side by side.
-// ---------------------------------------------------------------------------
-function flutedShaft(rBase, rTop, H, flutes, depth, seg) {
-  const g = new THREE.CylinderGeometry(1, 1, H, flutes * (seg || 3), 8, false);
-  const pos = g.attributes.position;
-  const v = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    const rad = Math.hypot(v.x, v.z);
-    // clamp: the float32 cap vertices land a few ULPs outside [0,1] and a
-    // fractional pow() of a negative is NaN, which poisons the bounding sphere
-    const t = Math.min(1, Math.max(0, v.y / H + 0.5));    // 0 at base, 1 at top
-    // ENTASIS: a real Greek shaft swells slightly below the middle and tapers
-    // to the neck. A straight linear taper reads as a traffic cone.
-    const swell = 1 + 0.035 * Math.sin(Math.PI * Math.min(1, t * 1.15));
-    const r = (rBase + (rTop - rBase) * Math.pow(t, 0.92)) * swell;
-    if (rad > 1e-5) {
-      const a = Math.atan2(v.z, v.x);
-      // scalloped flutes, dying into the plain necking band at either end
-      const band = Math.min(1, Math.min(t, 1 - t) * 9.0);
-      const flute = (0.5 - 0.5 * Math.cos(a * flutes)) * depth * band;
-      const k = (r - flute) / rad;
-      v.x *= k; v.z *= k;
-    } else { v.x *= r; v.z *= r; }
-    pos.setXYZ(i, v.x, v.y, v.z);
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-// ---------------------------------------------------------------------------
-// A SENTINEL — a bronze funerary effigy standing guard at the gate.
-//
-// §1.2 demands the art-directed rim on "every character, enemy and hero prop",
-// and §1.1 demands a mid-ground value band; a chamber whose tallest silhouettes
-// are all cylinders gives the rim nothing human-shaped to draw. These are
-// architecture, not actors: helmet crest, shoulder line, cloak wedge and a
-// spear, authored so the silhouette survives the 1/8-resolution read.
-// ---------------------------------------------------------------------------
-function sentinel(rng) {
-  const parts = [];
-  const R = () => rng();
-  // --- legs under a pleated kilt -----------------------------------------
-  for (const sgn of [-1, 1]) {
-    const leg = new THREE.CylinderGeometry(0.088, 0.13, 1.02, 10, 1);
-    leg.translate(sgn * 0.115, 0.51, sgn * 0.03);
-    parts.push(leg);
-  }
-  const kiltPts = [];
-  for (let i = 0; i <= 7; i++) { const t = i / 7; kiltPts.push(new THREE.Vector2(0.19 + 0.20 * Math.pow(t, 1.5), 1.52 - 0.60 * t)); }
-  const kilt = new THREE.LatheGeometry(kiltPts, 14);
-  parts.push(kilt);
-  // --- torso: a cuirass that flares to a hard shoulder line ---------------
-  const torsoPts = [];
-  const prof = [[0.19, 0.00], [0.235, 0.10], [0.255, 0.26], [0.243, 0.44],
-                [0.262, 0.60], [0.300, 0.74], [0.315, 0.86], [0.245, 0.93], [0.16, 0.97]];
-  for (const [r, t] of prof) torsoPts.push(new THREE.Vector2(r, 1.50 + t * 0.86));
-  const torso = new THREE.LatheGeometry(torsoPts, 16);
-  torso.scale(1.28, 1, 0.72);                            // a chest is not a can
-  parts.push(torso);
-  // --- shoulders + arms ---------------------------------------------------
-  for (const sgn of [-1, 1]) {
-    const pauldron = new THREE.SphereGeometry(0.155, 12, 8);
-    pauldron.scale(1, 0.72, 0.92);
-    pauldron.translate(sgn * 0.375, 2.30, 0);
-    parts.push(pauldron);
-    const arm = new THREE.CylinderGeometry(0.072, 0.095, 0.92, 8, 1);
-    arm.rotateZ(sgn * 0.14);
-    arm.translate(sgn * 0.405, 1.86, 0.02);
-    parts.push(arm);
-  }
-  // --- neck + helmeted head + crest --------------------------------------
-  const neck = new THREE.CylinderGeometry(0.085, 0.11, 0.14, 8, 1);
-  neck.translate(0, 2.42, 0);
-  parts.push(neck);
-  const head = new THREE.SphereGeometry(0.185, 14, 10);
-  head.scale(0.94, 1.12, 1.0);
-  head.translate(0, 2.63, 0.01);
-  parts.push(head);
-  // the crest is the whole point: it is what makes the silhouette read as a
-  // helmeted figure and not as a lollipop at 1/8 resolution
-  const crest = new THREE.CylinderGeometry(0.035, 0.035, 0.44, 6, 1, false);
-  crest.scale(1, 1, 3.0);
-  crest.translate(0, 2.92, -0.02);
-  parts.push(crest);
-  const crestArc = new THREE.TorusGeometry(0.20, 0.045, 6, 14, Math.PI * 0.95);
-  crestArc.rotateY(Math.PI / 2);
-  crestArc.translate(0, 2.86, 0.0);
-  parts.push(crestArc);
-  // --- cloak: a wedge hanging off the shoulders, the widest mass in the
-  //     silhouette and the thing that stops the figure reading as a stick ---
-  const cloak = new THREE.CylinderGeometry(0.62, 0.30, 1.78, 16, 4, true, Math.PI * 0.72, Math.PI * 1.56);
-  const cp = cloak.attributes.position, cv = new THREE.Vector3();
-  for (let i = 0; i < cp.count; i++) {
-    cv.fromBufferAttribute(cp, i);
-    const t = cv.y / 1.78 + 0.5;
-    const a = Math.atan2(cv.z, cv.x);
-    // folds: a scalloped hem so the cloak's bottom edge is drawn, not cut
-    const fold = Math.sin(a * 7.0) * 0.035 * (1 - t);
-    const k = 1 + fold / Math.max(0.05, Math.hypot(cv.x, cv.z));
-    cv.x *= k; cv.z *= k;
-    cv.y -= (1 - t) * (1 - t) * 0.10;
-    cp.setXYZ(i, cv.x, cv.y, cv.z);
-  }
-  cloak.computeVertexNormals();
-  cloak.translate(0, 1.52, -0.10);
-  parts.push(cloak);
-  // --- spear: a hard vertical that breaks the lintel line -----------------
-  const haft = new THREE.CylinderGeometry(0.036, 0.040, 3.55, 8, 1);
-  haft.translate(0.60, 1.72, 0.06);
-  parts.push(haft);
-  const blade = new THREE.ConeGeometry(0.105, 0.52, 8, 1);
-  blade.translate(0.60, 3.68, 0.06);
-  parts.push(blade);
-  const butt = new THREE.ConeGeometry(0.055, 0.20, 6, 1);
-  butt.rotateX(Math.PI);
-  butt.translate(0.60, -0.04, 0.06);
-  parts.push(butt);
-
-  const g = mergeGeos(parts);
-  g.computeVertexNormals();
   g.computeBoundingBox();
+  g.computeBoundingSphere();
   return g;
 }
 
-/** Minimal position/normal/uv merge — no BufferGeometryUtils dependency. */
-function mergeGeos(list) {
-  const src = list.map((g) => (g.index ? g.toNonIndexed() : g));
-  let n = 0;
-  for (const g of src) n += g.attributes.position.count;
-  const P = new Float32Array(n * 3), N = new Float32Array(n * 3), U = new Float32Array(n * 2);
-  let o = 0;
-  for (let k = 0; k < src.length; k++) {
-    const g = src[k], c = g.attributes.position.count;
-    P.set(g.attributes.position.array.subarray(0, c * 3), o * 3);
-    if (g.attributes.normal) N.set(g.attributes.normal.array.subarray(0, c * 3), o * 3);
-    if (g.attributes.uv) U.set(g.attributes.uv.array.subarray(0, c * 2), o * 2);
-    o += c;
-    g.dispose();
-    if (src[k] !== list[k]) list[k].dispose();
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(P, 3));
-  out.setAttribute('normal', new THREE.BufferAttribute(N, 3));
-  out.setAttribute('uv', new THREE.BufferAttribute(U, 2));
-  return out;
-}
-
-/** Flat-shaded copy of a geometry — carved stone reads by its facets. */
-function faceted(geo) {
-  if (!geo.index) { geo.computeVertexNormals(); return geo; }   // already non-indexed
-  const g = geo.toNonIndexed();
-  g.computeVertexNormals();
-  geo.dispose();
-  return g;
-}
-
+// ===========================================================================
 export class World {
   constructor() {
     this.root = new THREE.Group();
     this.root.name = 'world';
     this.colliders = [];
-    this.bounds = { r: 16 };
+    this.bounds = { r: 17 };
     this.center = new THREE.Vector3(0, 0, 0);
-    this.biome = 'tartarus';
-    this.props = [];
+    this.biome = DEFAULT_BIOME;
+    this.archetype = 'rotunda';
+    this.seed = 1;
+    this.profile = new Float32Array(NA).fill(17);
+    this.dais = null;
+    this.doors = new Doors();
+    this.props = new Props();
     this._geo = [];
+    this._mats = [];
+    this._built = false;
   }
 
+  // ------------------------------------------------------------------ init
   async init(ctx) {
     this.ctx = ctx;
-    this.rng = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('world') : ctx.rng;
+    this.rngRoot = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('world') : ctx.rng;
     ctx.scene.add(this.root);
+
     const q = (typeof location !== 'undefined') ? new URLSearchParams(location.search) : null;
-    const want = (q && q.get('biome')) || (ctx.run && ctx.run.biome) || this.biome;
-    this.biome = KIT[want] ? want : 'tartarus';
-    this.build(ctx);
-    ctx.events?.on?.('capture.state', ({ name }) => {
-      if (typeof name === 'string' && name.startsWith('biome:')) this.setBiome(name.slice(6), ctx);
+    const wantB = (q && q.get('biome')) || (ctx.run && ctx.run.biome) || this.biome;
+    const wantA = (q && q.get('room')) || null;
+    this.build(BIOMES[wantB] ? wantB : DEFAULT_BIOME, wantA || 'rotunda', 1337);
+
+    ctx.events?.on?.('capture.state', ({ name, args }) => {
+      if (typeof name !== 'string') return;
+      if (name.startsWith('biome:')) this.setBiome(name.slice(6), ctx);
+      else if (name.startsWith('room:')) this.build(this.biome, name.slice(5), (args && args.seed) || this.seed);
+      else if (name === 'cleared') this.setCleared(true);
     });
+    ctx.events?.on?.('room.cleared', () => this.setCleared(true));
+    // The capture harness never fights an enemy, so the shot sheet would only
+    // ever see sealed, dark doors. Open them once the room has settled.
+    if (ctx.CAPTURE || ctx.capture) this.setCleared(true);
   }
 
-  // ─────────────────────────────────────────────────────────────── build ──
-  build(ctx) {
-    const mats = ctx.mats;
-    const kit = KIT[this.biome] || KIT.tartarus;
-    const M = (n, opts) => (mats && mats.get ? mats.get(n, opts) : new THREE.MeshStandardMaterial({ color: 0x5a2331 }));
-    const R = this.bounds.r;
-    const rng = this.rng;
-    const f = () => (rng && rng.f ? rng.f() : 0.5);
-
-    const add = (mesh, name) => { mesh.name = name; this.root.add(mesh); return mesh; };
-    const keep = (g) => { this._geo.push(g); return g; };
-    const m4 = new THREE.Matrix4(), qt = new THREE.Quaternion(), eu = new THREE.Euler();
-    const pos = new THREE.Vector3(), scl = new THREE.Vector3();
-
-    // ── floor ──────────────────────────────────────────────────────────────
-    // The practical layout has to be read BEFORE the floor is built: the light
-    // pools are glazed into the floor's vertex colour, which is how a painted
-    // background gets a lit ground plane instead of a uniform slab (§1.1).
-    const rigDef = ctx.lighting && ctx.lighting.rigDef;
-    const practicalList = (rigDef && rigDef.practicals) || FALLBACK_PRACTICALS;
-    const warmPools = practicalList
-      .filter((p) => { const c = new THREE.Color(p.color || '#ffa257'); return c.r >= c.b * 1.15; })
-      .map((p) => [p.pos[0], p.pos[2]]);
-    // the key's horizontal SOURCE direction (dir is the direction it travels)
-    const kdir = (rigDef && rigDef.key && rigDef.key.dir) || [0.73, -0.42, -0.53];
-    let sx = -kdir[0], sz = -kdir[2];
-    { const l = Math.hypot(sx, sz) || 1; sx /= l; sz /= l; }
-
-    const sstep = (a, b, x0) => { const u = Math.min(1, Math.max(0, (x0 - a) / (b - a))); return u * u * (3 - 2 * u); };
-    const floorShade = (x, z, t) => {
-      // ── §9 THE VALUE LAW, painted into the ground plane ──────────────────
-      // Review round 1: the floor was the BRIGHTEST large surface in the frame
-      // (groundLuma 0.31 vs a frame median of 0.19) and the glaze here was a
-      // direct cause — its depth term multiplied the NEAR floor by 2.35x, and
-      // the near floor is exactly the band a 3/4 camera puts in the bottom of
-      // frame. Hades composes the opposite way, and so do we now:
-      //
-      //   DARK PLINTH   t < 0.40   the stone the character stands on. It has to
-      //                            be the darkest thing near the character or
-      //                            the silhouette has nothing to read against.
-      //   LIT ANNULUS   t ~ 0.66   the braziers stand on the ornament ring, so
-      //                            the glaze paints light where the practicals
-      //                            actually put it.
-      //   DARK APRON    dep > 0.55 the near half of the arena — the frame's
-      //                            foreground — falls away to near-ink so the
-      //                            bottom of frame is a dark repoussoir.
-      //   FAR RECESSION dep < 0.20 the far skirt dims into the distance haze.
-      //
-      // NOTE for other agents: `dep` is a WORLD-FIXED gradient along +X+Z. §8
-      // pins the camera yaw at 45deg and it never rotates during play, so this
-      // is a painted composition decision, not a view-dependent cheat. If the
-      // camera ever gains yaw, this whole function has to be re-derived.
-      // The annulus sits at t 0.74 — the radius the braziers stand on — and it
-      // is NARROW, because the measured failure was a broad lit plate reaching
-      // all the way in to the medallion. Inside 0.5 the stone is a dark plinth.
-      // The annulus has a STEEP INNER EDGE, not a Gaussian: the mid-ground band
-      // of a composed frame has to start somewhere, and a soft bell put lit
-      // stone right where the character stands. Inside t 0.42 the floor is a
-      // dark plinth; the lit ring runs from 0.56 out to the ornament ring and
-      // then dies into the skirt.
-      const ring = sstep(0.38, 0.55, t) * (1 - 0.70 * sstep(0.76, 1.00, t));
-      // The plinth is DARK, not empty: at 0.07 it read as a hole cut in the
-      // floor rather than as unlit stone, and a hole is not a stage. 0.125 is
-      // the level at which the ashlar bed and the ichor staining are still
-      // legible in the shadow while the ground plane stays a full band under
-      // the architecture.
-      let v = 0.125 + 1.45 * ring;
-      const dep = Math.min(1, Math.max(0, 0.5 + 0.5 * ((x + z) * 0.70711 / (R + 0.9))));
-      // The apron edge is SHARP on purpose and its position is load-bearing:
-      // at the shipping camera it falls between the mid-ground band (dep < 0.57)
-      // and the bottom-of-frame foreground (dep > 0.62), which is exactly the
-      // boundary tools/analyze.mjs measures as depthBands. Softening it merges
-      // the two bands back into one and the value law fails again.
-      v *= 1 - 0.972 * sstep(0.53, 0.63, dep);         // the foreground apron
-      v *= 1 - 0.30 * sstep(0.62, 1.00, dep);          // ...and it keeps falling
-      v *= 0.74 + 0.26 * sstep(0.04, 0.30, dep);       // far skirt recedes
-      // a whisper of the key's own azimuth so the glaze is not purely 1-D
-      const g = 0.5 + 0.5 * ((x * sx + z * sz) / (R + 0.9));
-      v *= 0.92 + 0.16 * g;
-      // warm pools under the braziers — now a HUE cue on top of the annulus,
-      // not a second brightness term (the practicals carry the luminance)
-      let warm = 0;
-      for (const [px, pz] of warmPools) {
-        const d = Math.hypot(x - px, z - pz);
-        warm += Math.max(0, 1 - d / 5.8) ** 2;
-      }
-      warm = Math.min(1.15, warm);
-      v *= 1 + warm * 0.20;
-      // §9.6 TWO HUES FROM THE GROUND UP. Lit stone drifts warm crimson, dark
-      // stone drifts toward the #5fd0ff accent axis, so the floor's own value
-      // structure carries the complement instead of relying on a fill light.
-      const lit = Math.min(1, Math.max(0, (v - 0.16) / 1.40));
-      const r  = v * (0.88 + 0.20 * lit) * (1 + warm * 0.14);
-      const gg = v * (0.90 + 0.12 * lit);
-      const b  = v * (1.26 - 0.36 * lit) * (1 - warm * 0.14);
-      return [r, gg, b];
-    };
-    const floor = add(new THREE.Mesh(
-      keep(paintedFloorDisc(R + 0.9, 22, 128, floorShade)),
-      M(kit.floor, { vertexColors: true })), 'floor');
-    floor.rotation.x = -Math.PI / 2;
-    floor.receiveShadow = true;
-
-    // Gold inlay rings. The mid ring at 11.2 clipped out of frame on three
-    // sides in the play shot and read as a lens artifact rather than as
-    // architecture — three concentric rings around the player is a bullseye,
-    // and §1.5 says ornament belongs on the PERIPHERY so the eye can find the
-    // character on a quiet floor.
-    const trim = M(kit.trim);
-    // long/thin members get plain hammered leaf: the composed filigree BAND
-    // squashed on to a bar is a stripe generator, and stripes at this scale are
-    // the aliasing the critique called "crawling white pixel strings".
-    const leaf = M('gold.leaf');
-    for (const [rad, thick] of [[7.9, 0.062], [R + 0.85, 0.16]]) {
-      const ring = add(new THREE.Mesh(keep(new THREE.TorusGeometry(rad, thick, 10, 160)), leaf), 'inlay.' + rad);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.y = 0.02;
-      ring.castShadow = false; ring.receiveShadow = true;
-    }
-
-    // ── central medallion ─────────────────────────────────────────────────
-    // A floor of nothing but ashlar reads as wallpaper from above; the medallion
-    // breaks the grid and gives the composition a bullseye to sit the player in.
-    // The rosette is an AUTHORED texture (concentric polar meander, sixteen
-    // anthemion petals on the spoke axes, a solid emblem in the middle) — not
-    // the generic rock material with a Worley field showing through it.
-    // 5.05 put the player at the exact centre of the brightest, busiest, highest
-    // -chroma element in the shot — inverted hierarchy. At 3.5 the ornament is a
-    // BASE under the character rather than a halo around them.
-    const MEDR = 3.5, MK = MEDR / 5.05;
-    const medallion = add(new THREE.Mesh(keep(new THREE.CircleGeometry(MEDR, 96)),
-      M(kit.medallion || kit.rock)), 'medallion');
-    medallion.rotation.x = -Math.PI / 2;
-    medallion.position.y = 0.012;
-    medallion.receiveShadow = true;
-    const SPOKES = 16;
-    // 13cm is sub-pixel at 26m and the bar is emissive gold, so it aliased into
-    // a string of crawling white dashes that lives in HDR before AA ever sees
-    // it. 26cm keeps every spoke above 2px at the play camera (§7).
-    const spokeGeo = keep(new THREE.BoxGeometry(2.9 * MK, 0.05, 0.26));
-    const spokes = new THREE.InstancedMesh(spokeGeo, leaf, SPOKES);
-    spokes.name = 'medallion.rays';
-    spokes.receiveShadow = true;
-    for (let i = 0; i < SPOKES; i++) {
-      const a = (i / SPOKES) * Math.PI * 2;
-      const rr = 3.35 * MK;
-      const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -a, 0));
-      spokes.setMatrixAt(i, m4.compose(pos.set(Math.cos(a) * rr, 0.026, Math.sin(a) * rr), q,
-        scl.set(1, 1, i % 2 ? 0.7 : 1)));
-    }
-    spokes.instanceMatrix.needsUpdate = true;
-    this.root.add(spokes);
-    for (const [rad, thick] of [[1.15 * MK, 0.06], [4.85 * MK, 0.075]]) {
-      const r2 = add(new THREE.Mesh(keep(new THREE.TorusGeometry(rad, thick, 8, 96)), leaf), 'medallion.ring');
-      r2.rotation.x = -Math.PI / 2;
-      r2.position.y = 0.03;
-    }
-
-    // ── the island's edge: a stone skirt so the arena has thickness ────────
-    const wallMat = M(kit.wall);
-    const skirt = add(new THREE.Mesh(keep(new THREE.CylinderGeometry(R + 0.9, R + 0.2, 2.6, 128, 1, true)), wallMat), 'skirt');
-    skirt.position.y = -1.3;
-    skirt.receiveShadow = true;
-    const underside = add(new THREE.Mesh(keep(new THREE.CircleGeometry(R + 0.25, 64)), M(kit.rock)), 'underside');
-    underside.rotation.x = Math.PI / 2;
-    underside.position.y = -2.6;
-
-    // ── ashlar perimeter wall (instanced) ─────────────────────────────────
-    // Arc across the far half of the arena with a gap for the gate at 270°.
-    // The arc's two ends are the only places the wall can be seen from behind,
-    // so they are kept well away from the 45-degree camera azimuth.
-    const A0 = 132 * DEG, A1 = 340 * DEG;
-    const COURSES = 4, COURSE_H = 0.82, BLOCK_W = 1.62;
-    const wallR = R + 1.05;
-    const gateA = 270 * DEG, gateHalf = 13 * DEG;
-    const blocks = [];
-    for (let c = 0; c < COURSES; c++) {
-      const y = 0.06 + COURSE_H * (c + 0.5);
-      const stagger = (c % 2) * 0.5;
-      const span = A1 - A0;
-      const n = Math.max(6, Math.round(span * wallR / BLOCK_W));
-      for (let i = 0; i < n; i++) {
-        const a = A0 + span * ((i + 0.5 + stagger) / n);
-        if (Math.abs(((a - gateA + Math.PI) % (Math.PI * 2)) - Math.PI) < gateHalf) continue;
-        // The arc has to END somewhere, and a full-height terminus seen edge-on
-        // reads as a stack of lit slabs. Crumble the last few metres instead:
-        // the courses step down and the wall dies into the void as a ruin.
-        const edgeT = Math.min(Math.abs(a - A0), Math.abs(a - A1)) / (22 * DEG);
-        if (c >= 1 && edgeT < 1 && f() > edgeT * 0.55 + 0.12 * c) continue;
-        const jr = (f() - 0.5) * 0.07;
-        const jh = (f() - 0.5) * 0.10;
-        // blocks must OVERLAP their spacing: a gap between two blocks lets the
-        // key light through and the wall reads as a picket fence
-        const w = BLOCK_W * (1.03 + f() * 0.14);
-        blocks.push({ a, y: y + jh, r: wallR + jr, w, h: COURSE_H * 0.94, d: 1.05 + f() * 0.22, tilt: (f() - 0.5) * 0.05 });
-      }
-    }
-    // §1.5: the ashlar splits into two bays. Within 58 degrees of the door axis
-    // the blocks wear the full gold meander; everything else wears a plain
-    // two-rail fillet, so the ornament is a WAYFINDER instead of wallpaper.
-    const bayMat = M(kit.bay || kit.wall);
-    const blockGeo = keep(faceted(new THREE.BoxGeometry(1, 1, 1)));
-    const gateDist = (a) => Math.abs(((a - gateA + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
-    const focalBlocks = blocks.filter((b) => gateDist(b.a) <= 58 * DEG);
-    const plainBlocks = blocks.filter((b) => gateDist(b.a) > 58 * DEG);
-    for (const [list, mat, nm] of [[focalBlocks, wallMat, 'wall.ashlar'], [plainBlocks, bayMat, 'wall.ashlar.plain']]) {
-      if (!list.length) continue;
-      const im = new THREE.InstancedMesh(blockGeo, mat, list.length);
-      im.name = nm;
-      im.castShadow = true; im.receiveShadow = true;
-      list.forEach((b, i) => {
-        pos.set(Math.cos(b.a) * b.r, b.y, Math.sin(b.a) * b.r);
-        eu.set(b.tilt, -b.a, b.tilt * 0.6);
-        qt.setFromEuler(eu);
-        scl.set(b.d, b.h, b.w);
-        im.setMatrixAt(i, m4.compose(pos, qt, scl));
-      });
-      im.instanceMatrix.needsUpdate = true;
-      this.root.add(im);
-    }
-
-    // solid backing behind the ashlar — mass, and no light leaks through seams.
-    // Its own material instance: mutating `side` on the shared one would make
-    // every stone surface in the game double-sided.
-    const wallBackMat = M(kit.wall, { side: THREE.DoubleSide });
-    for (const [s0, e0] of [[A0 + 15 * DEG, gateA - gateHalf], [gateA + gateHalf, A1 - 15 * DEG]]) {
-      const back = add(new THREE.Mesh(
-        keep(new THREE.CylinderGeometry(wallR + 0.62, wallR + 0.62, COURSES * COURSE_H + 0.2, 96, 1, true, s0, e0 - s0)),
-        wallBackMat), 'wall.back');
-      back.position.y = (COURSES * COURSE_H) * 0.5;
-      back.castShadow = true; back.receiveShadow = true;
-    }
-
-    // End piers. Without them the arc simply stops, and at a grazing camera the
-    // last few blocks read as a picket fence of lit slabs instead of a wall.
-    const pierGeo = keep(faceted(new THREE.BoxGeometry(1.9, COURSES * COURSE_H + 0.55, 1.75)));
-    for (const pa of [gateA - gateHalf - 0.02, gateA + gateHalf + 0.02]) {
-      const pier = add(new THREE.Mesh(pierGeo, wallMat), 'wall.pier');
-      pier.position.set(Math.cos(pa) * (wallR + 0.18), (COURSES * COURSE_H + 0.55) * 0.5, Math.sin(pa) * (wallR + 0.18));
-      pier.rotation.y = -pa;
-      pier.castShadow = true; pier.receiveShadow = true;
-    }
-
-    // A gold meander band capping the wall. §1.5: ornament is CONCENTRATED on
-    // focal architecture and never uniformly spammed — a band at one intensity
-    // around the whole circumference is wallpaper and it destroys the eye path.
-    // So the band is cut into segments, its emissive falls off with angular
-    // distance from the door axis, and the rear arc carries none at all.
-    {
-      const SEG = 7 * DEG;
-      const arcs = [[A0, gateA - gateHalf], [gateA + gateHalf, A1]];
-      const runs = [];
-      for (const [s0, e0] of arcs) {
-        for (let a = s0; a < e0 - SEG * 0.5; a += SEG) {
-          const mid = a + SEG * 0.5;
-          const dA = Math.abs(((mid - gateA + Math.PI * 3) % (Math.PI * 2)) - Math.PI) / DEG;
-          if (dA > 104) continue;                       // rear arc: no ornament
-          const w = dA <= 30 ? 1.0 : Math.max(0.15, 1.0 - (dA - 30) / 90 * 0.85);
-          runs.push({ a, w });
-        }
-      }
-      // bucket the falloff so the whole band is 4 materials, not 25
-      const bucket = (w) => Math.round(w * 4) / 4;
-      const groups = new Map();
-      for (const r of runs) {
-        const b = bucket(r.w);
-        if (!groups.has(b)) groups.set(b, []);
-        groups.get(b).push(r.a);
-      }
-      // 0.15 tube radius put the band at ~2px on the far wall, which is where
-      // it broke into a dashed line no amount of AA could hold (§7). 0.24 keeps
-      // every segment above 2.5px at the play camera.
-      const bandGeo = keep(new THREE.TorusGeometry(wallR, 0.24, 8, 12, SEG));
-      for (const [b, list] of groups) {
-        // let the metal REFLECT: emissive gold is a neon tube, not filigree
-        const im = new THREE.InstancedMesh(bandGeo, M('gold.leaf', { emissiveIntensity: 0.07 + b * 0.26 }), list.length);
-        im.name = 'wall.band';
-        im.castShadow = true;
-        list.forEach((a, i) => {
-          eu.set(Math.PI / 2, 0, a, 'ZYX');
-          qt.setFromEuler(eu);
-          im.setMatrixAt(i, m4.compose(pos.set(0, COURSES * COURSE_H + 0.12, 0), qt, scl.set(1, 1, 1)));
-        });
-        im.instanceMatrix.needsUpdate = true;
-        this.root.add(im);
-      }
-    }
-
-    // ── columns ───────────────────────────────────────────────────────────
-    const COLS = 8;
-    const colR = R - 1.35, colH = 5.4;
-    // §7: a raw cylinder with a box capital is a painted tube. 20 real flutes at
-    // 9% of the shaft radius carve an ink crevice and a lit arris into every
-    // column, and the entasis stops the shaft reading as a traffic cone.
-    const shaftGeo = keep(flutedShaft(0.56, 0.455, colH, 20, 0.052, 3));
-    const baseGeo = keep(faceted(new THREE.CylinderGeometry(0.68, 0.8, 0.46, 20, 1)));
-    const capGeo = keep(faceted(new THREE.CylinderGeometry(0.84, 0.52, 0.5, 20, 1)));
-    const abacusGeo = keep(faceted(new THREE.BoxGeometry(1.72, 0.24, 1.72)));
-    // per-instance colour + world-projection offset: the shafts are triplanar,
-    // so a per-instance YAW alone already re-registers the texture on each one,
-    // and `variation` re-tones them so no two share a streak pattern.
-    const colMat = M(kit.column || kit.wall, { variation: 0.22 });
-    const shafts = new THREE.InstancedMesh(shaftGeo, colMat, COLS);
-    const bases = new THREE.InstancedMesh(baseGeo, colMat, COLS);
-    // §1.5 ORNAMENT HIERARCHY: only the pair flanking the door gets the bronze
-    // echinus and the gold abacus. Every other column terminates in plain
-    // stone, so the eye is told where the room's focus is.
-    const plainCaps = new THREE.InstancedMesh(capGeo, colMat, COLS - 2);
-    const caps = new THREE.InstancedMesh(capGeo, M(kit.metal), 2);
-    const abaci = new THREE.InstancedMesh(abacusGeo, trim, 2);
-    for (const im of [shafts, bases, caps, abaci, plainCaps]) { im.castShadow = true; im.receiveShadow = true; }
-    shafts.name = 'column.shaft'; bases.name = 'column.base'; caps.name = 'column.cap';
-    abaci.name = 'column.abacus'; plainCaps.name = 'column.cap.plain';
-    const colAngles = [];
-    for (let i = 0; i < COLS; i++) {
-      const a = A0 + (A1 - A0) * ((i + 0.5) / COLS);
-      // never plant a column in the doorway — flank it
-      const d = ((a - gateA + Math.PI) % (Math.PI * 2)) - Math.PI;
-      if (Math.abs(d) < gateHalf + 9 * DEG) { colAngles.push(gateA + Math.sign(d || 1) * (gateHalf + 11 * DEG)); continue; }
-      colAngles.push(a);
-    }
-    // rank the columns by how close they are to the door axis
-    const dGate = colAngles.map((a) => Math.abs(((a - gateA + Math.PI * 3) % (Math.PI * 2)) - Math.PI));
-    const order = colAngles.map((_, i) => i).sort((p, q) => dGate[p] - dGate[q]);
-    const focal = new Set(order.slice(0, 2));
-    let fi = 0, pi = 0;
-    for (let i = 0; i < COLS; i++) {
-      const a = colAngles[i];
-      const x = Math.cos(a) * colR, z = Math.sin(a) * colR;
-      // full-circle random yaw, not a +-2deg nudge: the shafts are world-space
-      // triplanar, so spinning an instance genuinely re-registers its texture.
-      const yaw = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, f() * Math.PI * 2, 0));
-      bases.setMatrixAt(i, m4.compose(pos.set(x, 0.23, z), yaw, scl.set(1, 1, 1)));
-      shafts.setMatrixAt(i, m4.compose(pos.set(x, 0.46 + colH * 0.5, z), yaw, scl.set(1, 1, 1)));
-      if (focal.has(i)) {
-        caps.setMatrixAt(fi, m4.compose(pos.set(x, 0.46 + colH + 0.25, z), yaw, scl.set(1, 1, 1)));
-        abaci.setMatrixAt(fi, m4.compose(pos.set(x, 0.46 + colH + 0.60, z), yaw, scl.set(1, 1, 1)));
-        fi++;
-      } else {
-        plainCaps.setMatrixAt(pi, m4.compose(pos.set(x, 0.46 + colH + 0.25, z), yaw, scl.set(0.94, 0.88, 0.94)));
-        pi++;
-      }
-    }
-    for (const im of [shafts, bases, caps, abaci, plainCaps]) { im.instanceMatrix.needsUpdate = true; this.root.add(im); }
-
-    // ── the gate (focal architecture, the 'arch' shot looks straight at it) ─
-    const gate = new THREE.Group();
-    gate.name = 'gate';
-    gate.position.set(Math.cos(gateA) * (wallR + 0.1), 0, Math.sin(gateA) * (wallR + 0.1));
-    gate.rotation.y = -gateA + Math.PI / 2;
-    const jamb = keep(faceted(new THREE.BoxGeometry(1.35, 7.0, 1.5)));
-    for (const s of [-1, 1]) {
-      const p = new THREE.Mesh(jamb, wallMat);
-      p.position.set(s * 3.1, 3.5, 0);
-      p.castShadow = true; p.receiveShadow = true;
-      gate.add(p);
-    }
-    const lintel = new THREE.Mesh(keep(faceted(new THREE.BoxGeometry(8.4, 1.0, 1.9))), wallMat);
-    lintel.position.y = 7.45; lintel.castShadow = true; lintel.receiveShadow = true;
-    gate.add(lintel);
-    const band = new THREE.Mesh(keep(new THREE.BoxGeometry(8.5, 0.42, 2.02)), trim);
-    band.position.y = 6.72; band.castShadow = true;
-    gate.add(band);
-    // the torus UV runs ALONG the arc, so the voussoir stone lays real radial
-    // wedges across it instead of the wall's 3x2 bed smeared round a curve
-    const arch = new THREE.Mesh(keep(new THREE.TorusGeometry(3.1, 0.52, 12, 40, Math.PI)), M(kit.arch || kit.wall));
-    arch.position.y = 7.95; arch.castShadow = true; arch.receiveShadow = true;
-    gate.add(arch);
-    const keystone = new THREE.Mesh(keep(faceted(new THREE.BoxGeometry(1.0, 1.3, 2.1))), leaf);
-    keystone.position.y = 11.1; keystone.castShadow = true;
-    gate.add(keystone);
-    // The doorway must not be a hole: without a backing you look straight
-    // through it at the hazed backdrop and it reads as a blank grey panel.
-    // Instead it is a dark corridor with one cold light deep inside — the only
-    // full-chroma complement note in a warm frame (ART_DIRECTION §1.2).
-    const rimC = (ctx.lighting && ctx.lighting.rim && ctx.lighting.rim.color)
-      ? ctx.lighting.rim.color.clone() : new THREE.Color('#5fd0ff');
-    this.doorMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uCore: { value: new THREE.Color('#8fe4ff') },   // pale cyan core, TINY
-        uBody: { value: new THREE.Color('#2ec6e8') },   // authored teal; AgX lands it on Poseidon cyan
-        uMid:  { value: new THREE.Color('#8ef0d0') },   // Hecate witch-teal band
-        uInk:  { value: new THREE.Color('#04070c') },
-        uRim:  { value: rimC },
-        uTime: { value: 0 },
-      },
-      vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: `
-        varying vec2 vUv; uniform vec3 uCore, uBody, uMid, uInk, uRim; uniform float uTime;
-        float h12(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
-        float vn(vec2 p){
-          vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
-          return mix(mix(h12(i), h12(i + vec2(1,0)), f.x), mix(h12(i + vec2(0,1)), h12(i + vec2(1,1)), f.x), f.y);
-        }
-        float fbm3(vec2 p){ float a = 0.5, s = 0.0; for(int i = 0; i < 3; i++){ s += a * vn(p); p *= 2.03; a *= 0.5; } return s / 0.875; }
-        // ridged: the fold gives the threshold FILAMENTS instead of a soft blur
-        float ridged3(vec2 p){ return 1.0 - abs(fbm3(p) * 2.0 - 1.0); }
-        void main(){
-          // §6 BOLD FLAT SHAPES, and §1.5 says this is the room's focal element:
-          // the whole composition points at it, so it cannot be an airbrushed
-          // gradient. Polar coordinates + a radius-dependent angular drag give a
-          // real VORTEX; three octaves of ridged fbm read in (swirl, radius) give
-          // it filaments; a hard lip at 0.94 gives it an EDGE; and six slow
-          // orbiting arcs give it motion that is legible at a glance.
-          vec2 p = vec2((vUv.x - 0.5) * 1.42, (vUv.y - 0.46) * 1.04);
-          float r = length(p * vec2(1.0, 0.78)) * 2.0;
-          float a = atan(p.y, p.x);
-
-          float sw = a + 2.30 / (r + 0.38) - uTime * 0.20;
-          float n1 = ridged3(vec2(sw * 1.5, r * 3.0 - uTime * 0.26));
-          float n2 = ridged3(vec2(sw * 3.0 + 11.0, r * 6.1 - uTime * 0.44));
-          float n3 = vn(vec2(sw * 6.1 + 31.0, r * 10.5 - uTime * 0.72));
-          float fieldN = n1 * 0.52 + n2 * 0.32 + n3 * 0.16;
-
-          // 6 orbiting arcs, each on its own radius and its own slow rate
-          float arcs = 0.0;
-          for(int i = 0; i < 6; i++){
-            float fi = float(i);
-            float ang = a - uTime * (0.13 + fi * 0.031) - fi * 1.047;
-            ang = mod(ang + 3.14159265, 6.28318531) - 3.14159265;
-            float rr = 0.30 + 0.115 * fi;
-            float d = (r - rr) * 13.0;
-            arcs += exp(-d * d) * exp(-ang * ang * 1.7);
-          }
-
-          float rd = r + (fieldN - 0.5) * 0.22;
-          float body = pow(max(0.0, 1.0 - rd * 0.90), 1.7);
-          float core = pow(max(0.0, 1.0 - rd * 2.15), 2.2);
-          // a HARD thin lip at 0.94 of the aperture: a threshold needs an edge,
-          // otherwise it is a gradient and a gradient reads as a light leak
-          float lip  = smoothstep(0.99, 0.935, rd) - smoothstep(0.935, 0.875, rd);
-          float glow = pow(max(0.0, 1.0 - rd * 0.58), 3.0) * 0.30;
-
-          // two-stop field (#5fd0ff core -> #241238 outer) with the filaments
-          // carrying the value, then the accent notes laid over it
-          vec3 c = mix(uInk, uBody, clamp(body * (0.22 + 1.30 * fieldN), 0.0, 1.0));
-          c += uMid  * (lip * 1.85 + arcs * 0.62);
-          c += uCore * core * (0.30 + 0.34 * fieldN);
-          c += uRim  * glow * 0.42;
-
-          // EMISSIVE GATED TO THE INNER 70% so the arch stone stays unblown
-          c *= mix(0.10, 1.0, smoothstep(1.02, 0.70, rd));
-
-          float breathe = 0.90 + 0.10 * sin(uTime * 0.7) * sin(uTime * 0.29 + 1.1);
-          c *= breathe * 0.60;
-
-          // the stone lintel occludes the top third: the threshold sits INSIDE
-          // the architecture instead of floating in front of it
-          c *= mix(0.16, 1.0, smoothstep(0.015, 0.33, 1.0 - vUv.y));
-          // and the sill takes a bite out of the very bottom
-          c *= mix(0.42, 1.0, smoothstep(0.0, 0.075, vUv.y));
-
-          // Rolloff on the MAX CHANNEL, not per channel. A per-channel Reinhard
-          // compresses the bright channels harder than the dark ones, which
-          // pulls every ratio toward 1 — i.e. it desaturates exactly the element
-          // that is supposed to be the only saturated cool note in the frame.
-          float pk = max(c.r, max(c.g, c.b));
-          c *= (pk / (1.0 + pk * 0.42)) / max(pk, 1e-4);
-          // AgX's inset rotates saturated blue toward violet; the red channel is
-          // held right down so the cyan survives the tonemap and the grade.
-          c.r = min(c.r, 0.072);
-          gl_FragColor = vec4(c, 1.0);
-        }`,
-      side: THREE.FrontSide, toneMapped: false,
-    });
-    const doorGlow = new THREE.Mesh(keep(new THREE.PlaneGeometry(5.4, 7.0)), this.doorMat);
-    doorGlow.name = 'gate.light';
-    doorGlow.position.set(0, 3.5, 0.42);
-    doorGlow.rotation.y = Math.PI;
-    gate.add(doorGlow);
-
-    // §1.5: the doorway is the room's focal architecture, so it carries the
-    // heaviest ornament in the chamber — a gold archivolt with rosettes.
-    const archivolt = new THREE.Mesh(keep(new THREE.TorusGeometry(3.06, 0.19, 8, 44, Math.PI)),
-      M('gold.leaf', { emissiveIntensity: 0.30 }));
-    archivolt.position.y = 7.95;
-    archivolt.position.z = 0.86;
-    archivolt.castShadow = true;
-    gate.add(archivolt);
-    const rosGeo = keep(new THREE.TorusGeometry(0.30, 0.085, 8, 18));
-    const rosettes = new THREE.InstancedMesh(rosGeo, M('gold.leaf', { emissiveIntensity: 0.30 }), 5);
-    rosettes.name = 'gate.rosettes';
-    for (let i = 0; i < 5; i++) {
-      const a = Math.PI * (0.14 + 0.72 * (i / 4));
-      const q2 = new THREE.Quaternion();
-      rosettes.setMatrixAt(i, m4.compose(pos.set(Math.cos(a) * 3.06, 7.95 + Math.sin(a) * 3.06, 0.99), q2, scl.set(1, 1, 1)));
-    }
-    rosettes.instanceMatrix.needsUpdate = true;
-    gate.add(rosettes);
-
-    // ── sentinels: two bronze effigies flanking the threshold ─────────────
-    // §1.1 the mid-ground had no value band of its own and §1.2's rim had
-    // nothing human-shaped to draw on. These are the chamber's only figures:
-    // helmet crest, shoulder line, cloak wedge, spear — a silhouette that still
-    // reads at 1/8 resolution, standing between the arena and the void so the
-    // architecture finally sits ABOVE the floor and BELOW the ornament.
-    {
-      const plinthGeo = keep(faceted(new THREE.BoxGeometry(1.5, 0.86, 1.5)));
-      const capGeoS = keep(faceted(new THREE.BoxGeometry(1.74, 0.20, 1.74)));
-      const figGeo = keep(sentinel(f));
-      const bronze = M(kit.metal);
-      this.statues = [];
-      for (const sgn of [-1, 1]) {
-        const g2 = new THREE.Group();
-        g2.name = 'sentinel';
-        const aa = gateA + sgn * (gateHalf + 26 * DEG);
-        const rr = wallR - 3.4;
-        g2.position.set(Math.cos(aa) * rr, 0, Math.sin(aa) * rr);
-        // face the arena centre, with a slight contrapposto turn
-        g2.rotation.y = -aa + Math.PI / 2 + sgn * 0.22;
-        const pl = new THREE.Mesh(plinthGeo, wallMat);
-        pl.position.y = 0.43; pl.castShadow = true; pl.receiveShadow = true;
-        const plc = new THREE.Mesh(capGeoS, wallMat);
-        plc.position.y = 0.96; plc.castShadow = true; plc.receiveShadow = true;
-        const fig = new THREE.Mesh(figGeo, bronze);
-        fig.position.y = 1.06;
-        fig.scale.setScalar(1.16);
-        fig.castShadow = true; fig.receiveShadow = true;
-        if (sgn < 0) fig.scale.x *= -1;             // mirrored pair, not clones
-        g2.add(pl, plc, fig);
-        this.root.add(g2);
-        this.statues.push(g2);
-      }
-    }
-
-    this.root.add(gate);
-    this.gate = gate;
-
-    // ── braziers, planted on the light rig's own practical positions ──────
-    const practicals = practicalList;
-    const warm = [], cool = [];
-    for (const p of practicals) {
-      const c = new THREE.Color(p.color || '#ffa257');
-      (c.r >= c.b * 1.15 ? warm : cool).push(p);
-    }
-    if (warm.length) {
-      const stemGeo = keep(faceted(new THREE.CylinderGeometry(0.28, 0.46, 1.35, 12, 1)));
-      const bowlPts = [];
-      for (let i = 0; i <= 9; i++) { const t = i / 9; bowlPts.push(new THREE.Vector2(0.20 + 0.52 * Math.pow(t, 0.72), 0.02 + 0.44 * t)); }
-      const bowlGeo = keep(new THREE.LatheGeometry(bowlPts, 20));
-      const coalGeo = keep(new THREE.IcosahedronGeometry(0.46, 1));
-      const stems = new THREE.InstancedMesh(stemGeo, wallMat, warm.length);
-      const bowls = new THREE.InstancedMesh(bowlGeo, M(kit.metal), warm.length);
-      const coals = new THREE.InstancedMesh(coalGeo, M(kit.ember), warm.length);
-      stems.name = 'brazier.stem'; bowls.name = 'brazier.bowl'; coals.name = 'brazier.coals';
-      stems.castShadow = bowls.castShadow = true;
-      stems.receiveShadow = bowls.receiveShadow = true;
-      warm.forEach((p, i) => {
-        const px = p.pos[0], pz = p.pos[2];
-        const y = Math.max(0.9, p.pos[1]) - 0.85;
-        const yaw = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, f() * Math.PI, 0));
-        stems.setMatrixAt(i, m4.compose(pos.set(px, y * 0.5 + 0.34, pz), yaw, scl.set(1, 1, 1)));
-        bowls.setMatrixAt(i, m4.compose(pos.set(px, y + 0.34, pz), yaw, scl.set(1, 1, 1)));
-        coals.setMatrixAt(i, m4.compose(pos.set(px, y + 0.60, pz), yaw, scl.set(1.05, 0.62, 1.05)));
-      });
-      for (const im of [stems, bowls, coals]) { im.instanceMatrix.needsUpdate = true; this.root.add(im); }
-      this.coals = coals;
-
-      // ── flames ────────────────────────────────────────────────────────
-      // Y-axis billboards, 3-layer construction (core / body / glow) per
-      // ART_DIRECTION §5. They are the brightest thing in the frame and the
-      // visible source of the light pools the practicals cast.
-      // §5 THREE-LAYER CONSTRUCTION, and the layers are real geometry, not one
-      // gradient cone: a near-white CORE, a saturated BODY, and a wide low-alpha
-      // additive GLOW, each drifting on its own smoothed-noise flicker (never a
-      // sine). A single soft orange cone is the "flat 2D gradient" the critique
-      // called out, and it has no shape language at all.
-      const FLAME_FRAG = /* glsl */`
-          varying vec2 vUv; uniform float uTime, uSeed; uniform vec3 uCore, uBody, uGlow;
-          uniform float uLayer, uWidth, uAlpha;
-          // smoothed value noise — the flicker must not be periodic
-          float h11(float p){ p = fract(p * 0.1031); p *= p + 33.33; p *= p + p; return fract(p); }
-          float n11(float x){ float i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
-                              return mix(h11(i), h11(i+1.0), f); }
-          float flick(float t, float sp){
-            return n11(t*0.9*sp) * 0.55 + n11(t*4.7*sp + 31.7) * 0.30 + n11(t*13.3*sp + 71.3) * 0.15;
-          }
-          void main(){
-            float y = vUv.y;
-            float fl = flick(uTime + uSeed * 7.3, 1.0 + uLayer * 0.55);
-            float fl2 = flick(uTime * 1.7 + uSeed * 3.1 + 11.0, 0.8);
-            // lateral sway grows with height and is driven by NOISE
-            float sway = (fl - 0.5) * 0.30 * y * y + (fl2 - 0.5) * 0.10 * y;
-            vec2 p = vec2(vUv.x - 0.5 - sway, y);
-            // the tongue: a teardrop that pinches to a lick at the top
-            float top = 0.62 + 0.38 * fl;                       // guttering height
-            float w = uWidth * pow(max(0.0, 1.0 - y / top), 0.58) * smoothstep(0.0, 0.09, y);
-            float d = abs(p.x) / max(w, 1e-3);
-            // a second, thinner lick offset in phase so the flame has INTERNAL
-            // structure instead of one smooth falloff
-            float d2 = abs(p.x + (fl2 - 0.5) * 0.16 * y) / max(w * 0.42, 1e-3);
-            float shape = smoothstep(1.06, 0.22, d);
-            float lick  = smoothstep(1.0, 0.0, d2) * smoothstep(top, top * 0.22, y);
-            float a = shape * smoothstep(top * 1.02, top * 0.52, y);
-            vec3 c;
-            if (uLayer < 0.5) {
-              // CORE — near-white, tiny, low in the bowl
-              c = uCore * (lick * 2.9 + a * 0.55) * smoothstep(0.55, 0.0, y);
-            } else if (uLayer < 1.5) {
-              // BODY — the saturated hue that carries the read
-              c = uBody * (a * 1.30 + lick * 0.55);
-            } else {
-              // GLOW — wide, soft, low alpha, dying long before the tip
-              float g = pow(max(0.0, 1.0 - length(vec2(p.x * 1.05, (y - 0.20) * 0.72))), 2.4);
-              c = uGlow * g * 0.62;
-            }
-            gl_FragColor = vec4(c * uAlpha, 1.0);
-          }`;
-      const flameLayer = (layer, core, body, glow, width, alpha) => new THREE.ShaderMaterial({
-        uniforms: {
-          uTime: { value: 0 }, uSeed: { value: 0 },
-          uCore: { value: new THREE.Color(core) },
-          uBody: { value: new THREE.Color(body) },
-          uGlow: { value: new THREE.Color(glow) },
-          uLayer: { value: layer }, uWidth: { value: width }, uAlpha: { value: alpha },
-        },
-        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-        fragmentShader: FLAME_FRAG,
-        transparent: true, blending: THREE.AdditiveBlending,
-        depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
-      });
-      // §2 palette: near-white core, Lava-hot body, Lava-deep glow
-      // The alphas are SCENE-REFERRED (toneMapped:false writes straight into the
-      // HDR buffer), so they carry the same 2.42x the light rig does now that
-      // grades.js no longer runs an exposure of 2.90. They are also the frame's
-      // designated top value band (§1.1) and the only thing that should be
-      // over the bloom threshold, so the core is pushed a further half stop.
-      const flameMats = [
-        flameLayer(2, '#fff0b0', '#ff8c1a', '#c22a06', 0.62, 1.05),   // glow, back
-        flameLayer(1, '#fff0b0', '#ff8c1a', '#c22a06', 0.36, 4.60),   // body
-        flameLayer(0, '#fff0b0', '#ffc24a', '#c22a06', 0.24, 6.20),   // core, front
-      ];
-      const flameMat = flameMats[1];
-      this.flameMat = flameMat;
-      this.flameMats = flameMats;
-      this.flames = [];
-      const flameGeos = [keep(new THREE.PlaneGeometry(2.55, 2.5)),
-                         keep(new THREE.PlaneGeometry(1.45, 2.25)),
-                         keep(new THREE.PlaneGeometry(0.95, 1.75))];
-      warm.forEach((p, i) => {
-        const y = Math.max(0.9, p.pos[1]) - 0.85;
-        const grp = new THREE.Group();
-        grp.name = 'brazier.flame.' + i;
-        grp.position.set(p.pos[0], y + 0.42, p.pos[2]);
-        for (let L = 0; L < 3; L++) {
-          const fl = new THREE.Mesh(flameGeos[L], flameMats[L]);
-          // each layer sits on its own plane depth so the core is never
-          // occluded by the glow, and each has its own vertical anchor
-          fl.position.set(0, flameGeos[L].parameters.height * 0.5 + (L === 0 ? 0.10 : 0.16), L * 0.012);
-          fl.renderOrder = 6 + L;
-          grp.add(fl);
-        }
-        grp.userData.seed = i * 1.7 + 0.31;
-        this.root.add(grp);
-        this.flames.push(grp);
-      });
-    }
-    // The cool practicals become crystal glyph shards — the accent hue. Any
-    // that fall inside the doorway belong to the gate slab instead, and if that
-    // leaves none we never ask for the crystal material at all (a texture set
-    // nobody can see is ~0.3s of synthesis for nothing).
-    const visibleCool = cool.filter((p) => {
-      const ang = Math.atan2(p.pos[2], p.pos[0]);
-      return Math.abs(((ang - gateA + Math.PI * 3) % (Math.PI * 2)) - Math.PI) >= gateHalf + 10 * DEG;
-    });
-    if (visibleCool.length) {
-      const shardGeo = keep(faceted(new THREE.OctahedronGeometry(0.85, 1)));
-      // §5: flat facets sharing one emissive read as purple origami. Give each
-      // facet its own value from facet-normal-dot-key (a hard 3-band ramp, no
-      // blending across the arris) plus a Hecate-teal fresnel so the facets
-      // separate from one another instead of fusing into a flat plane.
-      const crystalMat = M(kit.accent, { tint: '#57c8f0' });
-      this.crystalMat = null;                       // owned by the library, not us
-      const keyD = new THREE.Vector3().fromArray(kdir).normalize();
-      if (crystalMat.userData && crystalMat.userData.paint) {
-        const prev = crystalMat.onBeforeCompile;
-        crystalMat.onBeforeCompile = (sh, rend) => {
-          if (prev) { try { prev(sh, rend); } catch (e) { /* peer patches */ } }
-          sh.uniforms.uCrKey = { value: keyD };
-          sh.uniforms.uCrEdge = { value: new THREE.Color('#8ef0d0') };
-          sh.fragmentShader = sh.fragmentShader
-            .replace('#include <common>', `#include <common>
-              uniform vec3 uCrKey; uniform vec3 uCrEdge;`)
-            .replace('#include <opaque_fragment>', `
-              {
-                vec3 cn = normalize( inverseTransformDirection( normal, viewMatrix ) );
-                float kd = dot( cn, -uCrKey );
-                // HARD three-band facet ramp: 0.25 / 0.55 / 0.95, no soft falloff
-                float band = kd < 0.05 ? 0.25 : ( kd < 0.46 ? 0.55 : 0.95 );
-                outgoingLight *= band * 1.35;
-                vec3 cv = normalize( cameraPosition - vPaintWPos );
-                float fr = pow( clamp( 1.0 - abs( dot( cn, cv ) ), 0.0, 1.0 ), 2.2 );
-                outgoingLight += uCrEdge * fr * 1.45;   // scene-referred: carries the 2.42x
-              }
-              #include <opaque_fragment>`);
-        };
-        crystalMat.customProgramCacheKey = () => 'crystal.facet';
-        crystalMat.needsUpdate = true;
-      }
-      const shards = new THREE.InstancedMesh(shardGeo, crystalMat, visibleCool.length);
-      shards.name = 'glyph.shard';
-      shards.castShadow = true;
-      visibleCool.forEach((p, i) => {
-        const yaw = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.2, f() * Math.PI, 0.14));
-        shards.setMatrixAt(i, m4.compose(pos.set(p.pos[0], Math.max(1.2, p.pos[1]), p.pos[2]), yaw, scl.set(0.8, 1.5, 0.8)));
-      });
-      shards.instanceMatrix.needsUpdate = true;
-      this.root.add(shards);
-    }
-
-    // ── floor dressing ────────────────────────────────────────────────────
-    // Four AUTHORED masses (fluted drum, amphora, two broken blocks), ten
-    // instances total, each snapped so its lowest vertex sits 0.02 below the
-    // floor plane and each spun to its own yaw so no two share a silhouette.
-    // They cluster against the wall base and the column feet — evenly scattered
-    // debris is just another isotropic-noise tell.
-    {
-      // §7: a 0.6m broken block wearing 3m wall features is a decal. Its own
-      // recipe, authored at prop scale, plus a second slot for the fresh
-      // fracture face so a break reads as newly exposed stone.
-      const propMat = M('rubble.tartarus');
-      const freshMat = M('rubble.tartarus', { tint: '#c3a094' });
-      const kinds = [
-        { geo: keep(columnDrum(f, { r: 0.54, h: 1.22 })), n: 3, s: [0.92, 1.20], mat: propMat },
-        { geo: keep(columnDrum(f, { r: 0.44, h: 0.86, flutes: 8, depth: 0.10 })), n: 2, s: [0.85, 1.05], mat: propMat },
-        { geo: keep(amphora(f)), n: 2, s: [0.80, 1.05], mat: propMat },
-        // a freshly sheared block is NEWLY exposed stone: it must not be as
-        // weathered as the wall it fell out of
-        { geo: keep(rubbleChunk(f, { w: 0.68, h: 0.44, d: 0.56 })), n: 3, s: [0.70, 1.35], mat: freshMat },
-      ];
-      // anchors: the foot of a column, or the wall base — never mid-floor
-      const anchors = [];
-      for (const a of colAngles) anchors.push({ a, r: colR - 0.95 - f() * 0.7 });
-      for (let i = 0; i < 6; i++) {
-        const a = A0 + (A1 - A0) * ((i + 0.5) / 6) + (f() - 0.5) * 0.16;
-        anchors.push({ a, r: R - 1.9 - f() * 1.5 });
-      }
-      let ai = Math.floor(f() * anchors.length);
-      for (const kind of kinds) {
-        const im = new THREE.InstancedMesh(kind.geo, kind.mat || propMat, kind.n);
-        im.name = 'prop.debris';
-        im.castShadow = true; im.receiveShadow = true;
-        const bbMin = (kind.geo.boundingBox && kind.geo.boundingBox.min.y) || 0;
-        for (let i = 0; i < kind.n; i++) {
-          ai = (ai + 3 + Math.floor(f() * 3)) % anchors.length;
-          const an = anchors[ai];
-          const jitter = (f() - 0.5) * 0.9;
-          const aa = an.a + jitter * 0.06;
-          const rr = an.r + jitter;
-          const sc = kind.s[0] + f() * (kind.s[1] - kind.s[0]);
-          const yaw = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, f() * Math.PI * 2, 0));
-          // snap: lowest vertex 0.02 UNDER the floor, so nothing floats and
-          // nothing intersects at an impossible angle
-          const y = -bbMin * sc - 0.02;
-          im.setMatrixAt(i, m4.compose(pos.set(Math.cos(aa) * rr, y, Math.sin(aa) * rr), yaw, scl.set(sc, sc, sc)));
-        }
-        im.instanceMatrix.needsUpdate = true;
-        this.root.add(im);
-      }
-    }
-
-    // ── void shards: broken masonry falling away from the island ──────────
-    const SHARDS = 30;
-    const shardGeo = keep(faceted(new THREE.IcosahedronGeometry(1, 0)));
-    const voidIM = new THREE.InstancedMesh(shardGeo, M(kit.rock, { tint: '#241238' }), SHARDS);
-    voidIM.name = 'void.shards';
-    for (let i = 0; i < SHARDS; i++) {
-      const a = f() * Math.PI * 2;
-      const rad = R + 3.5 + f() * 16;
-      const y = -1.5 - f() * 9;
-      const s = 0.5 + f() * 2.1;
-      const qq = new THREE.Quaternion().setFromEuler(new THREE.Euler(f() * 3, f() * 3, f() * 3));
-      voidIM.setMatrixAt(i, m4.compose(pos.set(Math.cos(a) * rad, y, Math.sin(a) * rad), qq, scl.set(s, s * (0.5 + f() * 0.7), s)));
-    }
-    voidIM.instanceMatrix.needsUpdate = true;
-    this.root.add(voidIM);
-
-    this.colliders = [{ kind: 'circle', r: R, x: 0, z: 0, inside: true }];
-  }
-
-  // ─────────────────────────────────────────────────────────────── biome ──
-  setBiome(name, ctx = this.ctx) {
-    if (!KIT[name] || name === this.biome) return this;
-    this.biome = name;
-    // Announce FIRST: the light rig retunes itself, hands the new rim constant
-    // and the new prefiltered sky to the material system, and re-authors its
-    // practicals — all of which build() then reads while placing the chamber.
-    ctx?.events?.emit?.('biome.changed', { name });
+  // ----------------------------------------------------------------- build
+  /**
+   * build(biome, archetype, seed) — fully re-runnable. Disposes everything the
+   * previous chamber owned first, so a room transition leaks nothing.
+   */
+  build(biomeName, archetypeName, seed) {
+    const ctx = this.ctx;
+    if (!ctx) return this;
     this.clear();
-    this.build(ctx);
+
+    this.biome = BIOMES[biomeName] ? biomeName : this.biome;
+    const B = getBiome(this.biome);
+    this.seed = seed ?? this.seed;
+
+    const rng = (this.rngRoot && this.rngRoot.fork)
+      ? this.rngRoot.fork('chamber:' + this.biome + ':' + this.seed)
+      : this.rngRoot;
+    this.rng = rng;
+    const f = (rng && rng.f) ? () => rng.f() : () => 0.5;
+
+    // archetype: authored choice, or a deterministic weighted draw
+    let aName = archetypeName;
+    if (!aName || !ARCHETYPES[aName]) {
+      const ids = ARCHETYPE_IDS;
+      let tot = 0; for (const id of ids) tot += ARCHETYPES[id].weight;
+      let r = f() * tot; aName = ids[0];
+      for (const id of ids) { r -= ARCHETYPES[id].weight; if (r <= 0) { aName = id; break; } }
+    }
+    this.archetype = aName;
+    const A = getArchetype(aName);
+
+    const kit = new Kit(ctx, B.mats, rng);
+    // §9.5: architecture is lit on its EDGES. Large faces (shafts, wall beds,
+    // voussoirs) give back some diffuse and take more specular, so the arrises,
+    // fillets and mouldings are what carry the highlight band instead of the
+    // broad planes between them.
+    // EXPOSURE. The rig's key runs at 26.0 and AgX bleaches saturated colour as
+    // it approaches the shoulder, so at litGain ~0.94 a #8c3b46 crimson wall, a
+    // #f2c14e gold capital and a bone statue all arrive at the display as the
+    // SAME pale salmon — the "monochrome mud" §9.6 names, and the reason
+    // measured highlightTint sat on hue 20-26 across ten frames while §2 puts
+    // gold at 43. Backing the architecture off the shoulder is the only lever
+    // this file has on that; the real fix is render/lighting.js (see report).
+    // The mid-ground still sits a full band above the ground plane (§9.4): the
+    // floor's own litGain is 0.60 on top of a 0.62 albedo glaze.
+    kit.roleOpts = {
+      // THE COLONNADE IS THE ROOM'S IDENTITY and it was reading as Roman
+      // coursed ashlar. The shaft geometry IS fluted (kit.flutedShaft, now at
+      // R*0.235 over 16 flutes), but stone.tartarus.column tiles a 6-row ashlar
+      // bed at triScale 0.42 / circScale 4.0 — that is ~13 horizontal courses
+      // and 4 vertical joints on a 5.4m shaft, i.e. a brick grid laid straight
+      // over the flutes, and the grid wins. A Greek column IS built of drums,
+      // so the answer is not to delete the joints but to make them DRUM-sized:
+      // ~4 courses and 1.6 wraps puts a joint every ~1.2m and lets the flute
+      // arrises be the dominant vertical rhythm.
+      // rimPower is raised because a cylinder shows a wide fresnel band from
+      // every angle: at the environment default (1.6) the cool edge washed the
+      // whole shaft blue instead of drawing its arris.
+      // ── ROUND-2: THE DEPTH GRADIENT RAN BACKWARDS (§1.1, §9.4) ─────────────
+      // Measured depthBands were top 0.381 / mid 0.153 / bottom 0.031 — the
+      // BACKGROUND colonnade was the brightest, most saturated and most
+      // detailed surface in every composition frame, which is §1.1 exactly
+      // reversed. Round 1's "the floor is too bright" was not fixed, it was
+      // relocated to the back wall. The architecture is mid-ground: it is a
+      // FRAME around the subject, not the subject. Its diffuse comes down hard
+      // and its specular stays up, so the arrises, fillets and mouldings keep
+      // carrying the highlight band (§9.5) while the broad faces recede.
+      column: { litGain: 0.50, ambGain: 0.84, specGain: 1.55, rimDir: ENV_RIM_DIR, rimStrength: 1.25,
+                rimPower: 2.7, triScale: 0.155, circScale: 1.6 },
+      wall:   { litGain: 0.46, ambGain: 0.62, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
+      bay:    { litGain: 0.44, ambGain: 0.58, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
+      arch:   { litGain: 0.52, ambGain: 0.62, specGain: 1.20, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+      metal:  { specGain: 1.25, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+      // GOLD LIVES OR DIES ON SATURATION. §2 puts the gold core at #f2c14e
+      // (hue 43); measured highlightTint across ten frames was hue 20-26 at
+      // sat 0.87, i.e. salmon-white. Gold pushed past AgX's shoulder is not
+      // gold any more, it is a bleached highlight — so the diffuse comes DOWN
+      // and the sharp specular lobe (§4 "a small, bright, sharp glint") comes
+      // up. A darker, saturated leaf with a hot arris reads more like metal
+      // than a bright flat one ever does.
+      // §2 calls gold "the ornament spine of the whole game" and §9.5 puts the
+      // highlight band on it. Measured at 3x, the meander, dentils and fillets
+      // were the SAME value as the wall carrying them, so they vanished at 1x.
+      // Now that the stone has dropped a full band the leaf keeps its diffuse
+      // and gets a much hotter sharp lobe: gold reads as gold-on-dark at any
+      // zoom, which is the single most Hades-like thing this kit can do.
+      leaf:   { specGain: 3.10, litGain: 0.82, ambGain: 0.78, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+    };
+    this.kit = kit;
+
+    // ---- plan ------------------------------------------------------------
+    this.profile = buildProfile(A, f);
+    let maxR = 0, minR = 1e9;
+    for (let i = 0; i < NA; i++) { maxR = Math.max(maxR, this.profile[i]); minR = Math.min(minR, this.profile[i]); }
+    this.bounds.r = maxR;
+    this.bounds.rMin = minR;
+    this.dais = A.dais ? { ...A.dais } : null;
+
+    // Doors live in the FAR arc so they are always in the upper half of the
+    // 45deg camera — the band §9 wants carrying the highlight, never behind us.
+    const nDoors = A.doors ?? 3;
+    const doorAngles = [];
+    const spanA = 150 * DEG, spanB = 300 * DEG;
+    for (let i = 0; i < nDoors; i++) {
+      const t = nDoors === 1 ? 0.5 : i / (nDoors - 1);
+      doorAngles.push(spanA + (spanB - spanA) * t + (f() - 0.5) * 8 * DEG);
+    }
+    this.doorAngles = doorAngles;
+
+    // The plan's skeleton, resolved before any geometry is built so every
+    // section agrees on it: where the back wall runs, which bays it leaves
+    // between the doorways, and which of those bays is the room's focal axis.
+    // (An earlier version derived the focal angle twice, in two different ways,
+    // and the floor's light pool ended up 37 degrees from the thing it lit.)
+    const WA = [128 * DEG, 322 * DEG];
+    const marks = [WA[0] + 6 * DEG, ...doorAngles.slice().sort((p, q) => p - q), WA[1] - 6 * DEG];
+    const bays = [];
+    for (let i = 0; i < marks.length - 1; i++) {
+      const w = marks[i + 1] - marks[i];
+      if (w > 16 * DEG) bays.push({ a: (marks[i] + marks[i + 1]) * 0.5, w });
+    }
+    bays.sort((p, q) => q.w - p.w);
+    this.wallArc = WA;
+    this.focalAngle = bays.length ? bays[0].a : Math.PI * 1.25;
+
+    // ---- assemble --------------------------------------------------------
+    const G = {};                    // shared build state between sections
+    G.A = A; G.B = B; G.kit = kit; G.f = f; G.rng = rng;
+    G.wallArc = WA; G.bays = bays; G.focalAngle = this.focalAngle;
+    G.keepOut = [];
+    G.flamePoints = [];
+    G.slots = [];
+
+    this._buildVoid(ctx, G);
+    this._buildFloor(ctx, G);
+    this._buildRim(ctx, G);
+    this._buildBackWall(ctx, G);
+    this._buildColonnade(ctx, G);
+    this._buildFocal(ctx, G);
+    this._buildBraziers(ctx, G);
+    this._buildHangings(ctx, G);
+    this._buildDoors(ctx, G);
+    this._buildScatter(ctx, G);
+    this._finishColliders(ctx, G);
+
+    this.root.add(this.props.root);
+    this.root.add(this.doors.root);
+
+    // flames + their pooled practicals, and the void ember field
+    if (G.flamePoints.length) {
+      this.props.flameField(ctx, G.flamePoints, {
+        core: '#fff0b0', body: B.id === 'elysium' ? '#ffcf6a' : '#ff8c1a', glow: '#c22a06',
+        scale: 1.0,
+      });
+    }
+    // Water weeping out of the vault and falling through the chamber. It is
+    // the only genuinely COOL moving element in a room full of fire, and it
+    // occupies the upper band of the frame where §9.6 wants the complement.
+    this.props.emberField(ctx, {
+      // §9.6 needs the complement at frame scale and this is the only COOL
+      // moving element in a room lit entirely by fire. Measured whole-frame
+      // cyan on the gameplay framing was 5.8% against the 8% floor, so the
+      // fall is doubled in count and pulled in over the play space rather than
+      // hugging the wall.
+      rng, count: 72, name: 'vault.drips', streak: true,
+      color: B.accent, accent: B.accent, rise: false,
+      rIn: maxR * 0.30, rOut: maxR * 0.96, yBase: (G.wallTop || 13) - 1.2, spread: 3.0, span: 12,
+    });
+    this.props.emberField(ctx, {
+      rng, count: Math.round(B.ember.count * (ctx.quality?.render?.motes ? 1 : 0.5)),
+      color: B.ember.color, accent: B.ember.accent, rise: B.ember.rise,
+      // OVER THE VOID, which is what this field is for: at rIn 0.55R more than
+      // half the population spawned UNDER the arena plate, where it can only
+      // ever be depth-rejected or leak through a seam in the floor as a
+      // stripe of warm dots. Starting outside the rim also stops the ember
+      // haze from competing with the play space for the eye.
+      rIn: maxR * 1.12, rOut: maxR * 2.2, yBase: -1.0, spread: 13, span: 18,
+    });
+    this.props.ctx = ctx;
+
+    this._built = true;
+    ctx.events?.emit?.('room.built', { biome: this.biome, archetype: this.archetype, seed: this.seed });
+    ctx.lighting?.fitShadows?.(ctx);
     return this;
   }
 
-  clear() {
-    for (const c of this.root.children.slice()) this.root.remove(c);
-    for (const g of this._geo) g.dispose?.();
-    this._geo.length = 0;
-    this.doorMat?.dispose?.();
-    if (this.flameMats) for (const m of this.flameMats) m.dispose?.();
-    else this.flameMat?.dispose?.();
-    this.crystalMat?.dispose?.();
-    this.gate = null; this.coals = null;
-    this.flames = null; this.doorMat = null; this.flameMat = null;
-    this.flameMats = null; this.crystalMat = null; this.statues = null;
+  // =========================================================================
+  // VOID — the island framing (§1.8). Built FIRST so everything else sits on it.
+  // =========================================================================
+  _buildVoid(ctx, G) {
+    const { kit, B, f } = G;
+    const R = this.bounds.r;
+
+    // ---- the abyss floor: a huge, near-ink plate far below --------------
+    // From the 52deg camera this fills everything beyond the arena rim, which
+    // is what turns a floating plate into an island in a void. It carries its
+    // own radial gradient so it is not a flat fill (§7).
+    const voidC = hueOf(new THREE.Color(B.voidColor));
+    const rimC = hueOf(new THREE.Color(B.voidRim));
+    const lava = B.voidKind === 'lava';
+    const abyssGeo = this._keep(radialFloor(new Float32Array(NA).fill(170), 14, (x, z, t) => {
+      // brighter directly under the island (light spills over the rim), dying
+      // to true ink at the horizon
+      // The abyss must be DARK but never a hole: at zero it reads as a bug in
+      // the frame rather than as depth. 0.05-0.13 display luma is a floor you
+      // can just make out the shape of, which is what sells the fall.
+      const d = Math.hypot(x, z);
+      const k = Math.exp(-Math.max(0, d - R * 0.7) / (R * 1.7));
+      const n = vnoise(x * 0.035, z * 0.035) * 0.5 + vnoise(x * 0.09, z * 0.09) * 0.28
+        + vnoise(x * 0.22, z * 0.22) * 0.16;
+      const v = (lava ? 0.13 : 0.042) + k * (lava ? 0.62 : 0.055);
+      const m = (0.70 + 0.60 * n);
+      const hk = clamp01(k * 1.4);
+      return [
+        v * m * lerp(voidC[0], rimC[0], hk),
+        v * m * lerp(voidC[1], rimC[1], hk),
+        v * m * lerp(voidC[2], rimC[2], hk),
+      ];
+    }, { seg: 72 }));
+    const abyssMat = this._M(B.voidKind === 'lava' ? B.mats.ember : B.mats.rock, {
+      vertexColors: true, litGain: B.voidKind === 'lava' ? 0.5 : 0.22, ambGain: 0.30, specGain: 0.05,
+      triplanar: true, triScale: 0.02, rimStrength: 0.0,
+      emissiveIntensity: B.voidKind === 'lava' ? 0.55 : 0,
+    });
+    const abyss = new THREE.Mesh(abyssGeo, abyssMat);
+    abyss.name = 'void.abyss';
+    abyss.position.y = B.voidKind === 'lava' ? -22 : -34;
+    abyss.receiveShadow = false;
+    abyss.frustumCulled = false;
+    this.root.add(abyss);
+
+    // ---- the island's underside: a mass falling into the dark ------------
+    const skirtShade = (x, z, t) => {
+      // dark at the top (contact ink under the curb), a touch of bounce in the
+      // middle, ink again as it falls away
+      const v = (0.085 + 0.26 * Math.exp(-Math.pow((t - 0.30) * 3.0, 2))) * (1 - 0.55 * t);
+      const n = 0.78 + 0.52 * vnoise(x * 0.22, z * 0.22);
+      return [v * n * 1.10, v * n * 0.90, v * n * 1.34];
+    };
+    const skirt = new THREE.Mesh(this._keep(sweep(this.profile, [
+      [0.35, 0.02], [0.25, -0.55], [-0.10, -1.6], [-0.55, -3.4],
+      [-1.5, -6.2], [-3.2, -9.6], [-5.6, -13.0],
+    ], { shade: skirtShade })), this._M(B.mats.rock, {
+      vertexColors: true, litGain: 0.55, ambGain: 0.45, specGain: 0.1, triplanar: true, triScale: 0.055,
+    }));
+    skirt.name = 'void.skirt';
+    skirt.castShadow = false; skirt.receiveShadow = true;
+    this.root.add(skirt);
+
+    // ---- broken masonry adrift around the island -------------------------
+    const S = B.shards;
+    const shardGeos = [0, 1, 2].map((v) => this._keep(kit.rubbleGeo('chunk', 40 + v, { w: 2.2, h: 1.5, d: 1.9 })));
+    const shardMat = this._M(B.mats.rock, { tint: '#1d1226', litGain: 0.22, ambGain: 0.30, specGain: 0.10, variation: 0.3, rimStrength: 0.22 });
+    const im = kit.instancer(shardGeos[0], shardMat, S.count, { name: 'void.shards', recv: false });
+    const im2 = kit.instancer(shardGeos[1], shardMat, S.count, { name: 'void.shards', recv: false });
+    const im3 = kit.instancer(shardGeos[2], shardMat, S.count, { name: 'void.shards', recv: false });
+    const ims = [im, im2, im3];
+    for (let i = 0; i < S.count; i++) {
+      const a = f() * TAU;
+      const rr = R + S.spread[0] + f() * (S.spread[1] - S.spread[0]);
+      const y = -S.drop[0] - f() * (S.drop[1] - S.drop[0]);
+      const s = 0.5 + f() * 1.7;
+      ims[i % 3].userData.push(Math.cos(a) * rr, y, Math.sin(a) * rr, f() * TAU, [s, s * (0.4 + f() * 0.8), s], f() * 3, f() * 3);
+    }
+    for (const m of ims) if (m.count) { m.userData.finish(); this.root.add(m); }
   }
 
-  // ───────────────────────────────────────────────────────── world query ──
+  // =========================================================================
+  // FLOOR — the dark stage (§9.1)
+  // =========================================================================
+  _buildFloor(ctx, G) {
+    const { B, A, kit, f } = G;
+    const R = this.bounds.r;
+    const gz = B.floorGlaze;
+    const warmC = hueOf(new THREE.Color(gz.warm));
+    const coolC = hueOf(new THREE.Color(gz.cool));
+
+    // The brazier ring is decided here so the glaze can paint the light pools
+    // exactly where the practicals will stand.
+    // The HEARTH: a low, wide ceremonial bowl standing at the head of the
+    // arena on the focal axis. Three jobs — it gives the middle distance of the
+    // floor a landmark instead of ten metres of nothing, it puts a warm pool
+    // and a real cast shadow into the play space, and it is a fire the camera
+    // can see from a low angle (the rim braziers are all at the perimeter).
+    const hearthA = this.focalAngle;
+    const hearthR = R * 0.44;
+    G.hearth = { x: Math.cos(hearthA) * hearthR, z: Math.sin(hearthA) * hearthR };
+
+    const pools = this._brazierAnchors(G);
+    // the hanging bowl over the arena — see _buildHangings. Its pool is wide
+    // and gentle: it models the play space without lighting it like a stage.
+    const fa0 = G.focalAngle;
+    G.pools = pools;
+    const glazePools = pools.concat([
+      { x: Math.cos(fa0) * R * 0.26, z: Math.sin(fa0) * R * 0.26, rad: R * 0.44 },
+      { x: G.hearth.x, z: G.hearth.z, rad: R * 0.32 },
+    ]);
+
+    const shade = (x, z, t) => {
+      // ── §9.1 THE FLOOR IS A DARK STAGE ────────────────────────────────
+      // base is unlit stone. It is deliberately NOT near-zero: a black hole in
+      // the middle of the arena is not a stage, it is a pit, and the review
+      // that produced that frame called it exactly that. The number that
+      // matters is the RATIO to the architecture, not the absolute darkness.
+      let v = gz.base;
+      // warm pools under the braziers
+      let warm = 0;
+      for (const p of glazePools) {
+        const d = Math.hypot(x - p.x, z - p.z);
+        warm += Math.pow(Math.max(0, 1 - d / (p.rad || 6.2)), 2.0);
+      }
+      warm = Math.min(1.25, warm);
+      v = lerp(v, gz.pool, Math.min(1, warm));
+      // the skirt of the island falls away into the rim ink
+      v *= 1 - gz.rimFall * sstep(0.62, 1.0, t);
+      // ── COMPOSED DEPTH (§1.1 three value bands, §9.4 measurable) ────────
+      // §8 pins the camera yaw at 45deg and it never rotates in play, so +X+Z
+      // is always the NEAR half of the arena and -X-Z is always the far half.
+      // The near half is the frame's foreground repoussoir and falls away; the
+      // far half carries the brazier arc and the lit wall behind it. This is a
+      // painted composition decision, not a view-dependent cheat — but if the
+      // camera ever gains yaw it has to be re-derived.
+      const dep = clamp01(0.5 + 0.5 * ((x + z) * 0.70711 / (R + 1.5)));
+      // ── THE STAGE IS AN ISLAND OF LIGHT (§1.8), NOT A RAMP ────────────────
+      // A monotonic near-bright / far-dark glaze cannot give the frame three
+      // separated value bands: it puts the brightest floor in the bottom third,
+      // which is exactly where §1.8 wants a dark repoussoir, and it collapses
+      // the measured depth spread (0.101-0.179 against the 0.18 §9.4 demands).
+      // A HUMP does what a stage-lighting designer does instead — the play
+      // space in the middle distance is the lit island, the near apron falls
+      // away into the frame's dark foreground, and the far half recedes toward
+      // the ink ramp. The character stands just inside the lit island, so the
+      // subject still has a stage under their feet and a contact shadow on it.
+      const isle = 1 - Math.abs(dep - 0.50) / 0.36;
+      v *= 0.20 + 1.72 * sstep(0.0, 1.0, clamp01(isle));
+      // hand-glazed mottle so the ground plane is never one unmodulated slab
+      const n = vnoise(x * 0.11, z * 0.11) * 0.62 + vnoise(x * 0.31, z * 0.31) * 0.26 + vnoise(x * 0.9, z * 0.9) * 0.12;
+      v *= 0.86 + 0.30 * n;
+      // §9.6 TWO HUES FROM THE GROUND UP: lit stone drifts to the biome warm,
+      // unlit stone drifts to the complement, so the floor itself carries the
+      // opposition instead of relying on a fill light.
+      const lit = clamp01(warm * 1.1);
+      // hue only — `v` above is the entire value decision
+      // ROUND-2: 0.55 left the unlit floor sitting in the ambient's own plum,
+      // so the ground plane carried no opposition at all and every frame
+      // measured as one salmon hue over one violet one (§9.6's named failure).
+      // hueOf() normalises to luminance, so pushing this changes HUE ONLY —
+      // the value structure the law cares about is untouched.
+      const k = 0.88;                              // how far the hue is pushed
+      const r = v * lerp(1 + (coolC[0] - 1) * k, 1 + (warmC[0] - 1) * k, lit);
+      const g = v * lerp(1 + (coolC[1] - 1) * k, 1 + (warmC[1] - 1) * k, lit);
+      const b = v * lerp(1 + (coolC[2] - 1) * k, 1 + (warmC[2] - 1) * k, lit);
+      return [r, g, b];
+    };
+
+    const floorMat = this._M(B.mats.floor, {
+      vertexColors: true,
+      // §9.1 asks for the floor to keep a small share of the KEY (so the stage
+      // never out-values the actors) — but this chamber is an interior lit by
+      // fire, and most of the ground plane sits in the architecture's shadow
+      // where the key contributes nothing at all. Cutting lit and RAISING amb
+      // is the split that gives a dark, readable stone floor instead of a hole:
+      // the sunlit strips stay under the architecture, the shadowed ones stay
+      // above zero and keep their masonry.
+      // ── ROUND-2 ────────────────────────────────────────────────────────
+      // ambGain 1.85 was the number that made this a vinyl sheet: a hemisphere
+      // is a uniform wash, and at 1.85x it out-ran the key everywhere, so the
+      // whole ground plane arrived as one smooth violet gradient with soft
+      // cloud mottle and no direction in it at all. Meanwhile the measured
+      // floor local median under the hero was 0.003 — round 1's "the floor is
+      // too bright" had been answered by deleting the floor, and with no floor
+      // value there is no contact shadow, no scale cue and no stage.
+      // Key UP, wash DOWN: same average value, but now it is modelled — lit
+      // strips where the braziers rake, ink where the architecture shadows.
+      // AMBIENT IS WHAT MAKES A DARK FLOOR READABLE. The braziers are all on
+      // the far arc and the key is blocked by the colonnade, so the NEAR apron
+      // — the bottom third of every gameplay frame — receives essentially no
+      // direct light at all: it measured 0.028 display, i.e. a hole. Lifting
+      // the indirect share (which is uniform, and therefore cannot create a
+      // hot spot) puts the ashlar back without touching the lit pools, and
+      // groundLuma still lands ~0.10 against §9.1's 0.18 ceiling.
+      litGain: 1.02, ambGain: 1.35, specGain: 0.26,
+      // §1.4 "painted texture": floor.tartarus authors an 11x8 ashlar bond with
+      // real seam ink, chipping, ichor stains and bone dust — and then projects
+      // it at triScale 0.035, i.e. ONE 28.6m period across a 25m arena. Every
+      // plate came out ~3m across and 36px/m, which is why the dedicated tiling
+      // shot passed for the wrong reason: there was nothing there to repeat.
+      // 0.072 = a 13.9m period, so a plate is ~1.3m and the joints, bevels and
+      // per-stone tone all exist at play distance. The stochastic de-tiler in
+      // painterly.js is already on for this projection and holds the lattice.
+      // 0.072 (a 13.9m period) put the ashlar back at a readable world size but
+      // the dedicated floor test then measured a 146px periodic peak at 0.62
+      // against §7's ban on visible floor repetition. 0.050 = a 20m period,
+      // still ~1.8m plates, and the macro layer is pushed hard enough to put
+      // a low-frequency value drift across whole GROUPS of stones, which is
+      // what actually decorrelates the joint lattice the metric samples.
+      triScale: 0.050, macroStrength: 0.34,
+      rimStrength: 0.06,
+    });
+    const floor = new THREE.Mesh(this._keep(radialFloor(this.profile, 26, shade, { seg: 144 })), floorMat);
+    floor.name = 'floor';
+    floor.receiveShadow = true;
+    this.root.add(floor);
+
+    // ---- the central inlay -----------------------------------------------
+    // A rosette, but a DARK one. The previous chamber put a high-chroma, high-
+    // value bullseye directly under the player: inverted hierarchy, and the
+    // character had nothing to read against. Here the emblem is a shadow in the
+    // stone with only its raised gold rails catching the key.
+    // A PERFECT disc of perfectly periodic ornament is two problems at once:
+    // it reads as a decal rather than as inlay, and a regular polar fret is a
+    // genuine periodic signal on the ground plane (§7 bans visible repetition
+    // on floors and tools/analyze.mjs measures it). This emblem is BROKEN: an
+    // irregular edge where the stone has spalled away, and gold rails that are
+    // arcs with pieces missing rather than closed rings.
+    // Off-centre on purpose. A concentric emblem under the player's feet is a
+    // bullseye: it makes the character the centre of a target rather than the
+    // subject of a composition, and a perfectly regular polar fret centred in
+    // frame is also the strongest periodic signal a floor can carry (§7).
+    const MEDR = Math.min(4.8, R * 0.30);
+    // Off-axis, but only just: far enough that the player is not standing in
+    // the dead centre of a target, close enough that the emblem is still the
+    // arena's centrepiece and the middle of the room is not empty.
+    const medOff = new THREE.Vector2(Math.cos(G.focalAngle) * R * 0.115, Math.sin(G.focalAngle) * R * 0.115);
+    const medProfile = new Float32Array(NA);
+    const mph = f() * TAU;
+    for (let i = 0; i < NA; i++) {
+      const a = (i / NA) * TAU;
+      let r = MEDR * (1 + 0.045 * Math.sin(a * 3 + mph) + 0.028 * Math.sin(a * 7 - mph * 1.7));
+      // three bites out of the edge
+      for (let k = 0; k < 3; k++) {
+        const ba = mph * 1.7 + k * 2.31;
+        const d = Math.abs(((a - ba + Math.PI * 3) % TAU) - Math.PI);
+        r -= MEDR * 0.16 * Math.exp(-(d * 3.4) * (d * 3.4));
+      }
+      medProfile[i] = r;
+    }
+    // ANGULAR WEAR. The emblem's edge is already irregular, but its FRET is a
+    // perfectly concentric band, and a concentric band sampled along any
+    // horizontal scanline gives two mirror-image bright crossings — a genuine
+    // periodic signal in the middle of the play space (tools/analyze.mjs
+    // measured a 435px "period" that is exactly the left/right ring spacing,
+    // and §7 bans visible repetition on floors). Burning a few soot wedges
+    // through it kills the mirror AND is what a fire-lit floor in a ruin should
+    // look like: worn where the traffic and the flame have been.
+    // ROUND-2 CORRECTION. The wedges above were authored at up to 0.68 depth
+    // over an angular support as narrow as 0.30rad, which on an already-dark
+    // medallion drove a quarter of the emblem to near-zero across a near-hard
+    // boundary: at gameplay distance it read as a HOLE punched through the
+    // floor, cutting the outer meander ring in half. That is ornament degraded
+    // to move a metric, which §10.3 forbids by name — the 435px "period" the
+    // wedges existed to kill was a closed concentric ring, i.e. correct Greek
+    // ornament, and the metric was the thing that was wrong. Soot is now wide
+    // and shallow: it reads as soot.
+    const wedges = [];
+    for (let i = 0; i < 4; i++) wedges.push([f() * TAU, 0.85 + f() * 0.70, 0.10 + f() * 0.14]);
+    const med = new THREE.Mesh(
+      this._keep(radialFloor(medProfile, 6, (x, z) => {
+        const n = vnoise(x * 0.5, z * 0.5) * 0.6 + vnoise(x * 1.4, z * 1.4) * 0.3;
+        let g2 = 0.80 + 0.42 * n;
+        const a2 = Math.atan2(z, x);
+        for (const [wa, ww, wd] of wedges) {
+          const d = Math.abs(((a2 - wa + Math.PI * 3) % TAU) - Math.PI) / ww;
+          g2 *= 1 - wd * Math.exp(-d * d);
+        }
+        return [g2 * 1.02, g2 * 0.96, g2 * 1.10];
+      }, { seg: 96, uvRadius: MEDR })),
+      this._M(B.mats.medallion, {
+        // The emblem is DARK INLAY with gold rails standing proud of it — that
+        // is what the comment above says was intended and it is not what
+        // shipped: at 0.72/0.62 the field was a flat mid plate and the rails
+        // had nothing to stand out from.
+        vertexColors: true, tint: '#7a606c',
+        litGain: 0.56, ambGain: 0.44, specGain: 0.28, rimStrength: 0.05,
+      }));
+    med.name = 'floor.medallion';
+    med.position.set(medOff.x, 0.014, medOff.y);
+    med.receiveShadow = true;
+    this.root.add(med);
+
+    // §9.5 wants the ornament to carry light — but a rail this close to the
+    // player must stay a LINE, never a lit plate, so it is hammered leaf with
+    // no emissive, catching only a specular streak.
+    // ROUND-2: with the emblem field cut to 0.40/0.30 the rails are the only
+    // thing on it allowed to reach a value, and §2 wants them GOLD (#f2c14e),
+    // not the same salmon as everything else. A hot sharp lobe on a saturated
+    // tint is what makes metal read as metal (§4).
+    // GOLD MUST READ AS GOLD (§2 "the ornament spine of the whole game").
+    // Diffuse gold under a #ff7048 key is ORANGE by construction: the key's own
+    // hue multiplies the albedo, so every rail measured at hue 20 while §2 puts
+    // gold at 43. gold.leaf ships an authored emissive ramp (near-white core ->
+    // #ffe9a8 -> #c98f2b) and an emissive is NOT multiplied by the key, so a
+    // small amount of it is the only thing that can carry the hue home. Kept
+    // low: this is a lit edge, not a lamp.
+    const leaf = this._M(B.mats.leaf, { emissiveIntensity: 0.26, tint: '#f2c14e', litGain: 0.52, ambGain: 0.42, specGain: 2.40 });
+    {
+      // two shared arc geometries, placed by rotation — eight broken rails for
+      // two draw calls instead of eight
+      const ib = new Batcher(this.root);
+      const im4 = new THREE.Matrix4(), iq = new THREE.Quaternion(), ione = new THREE.Vector3(1, 1, 1);
+      // MEDR*0.99 / MEDR*0.44 are the emblem's own rails; the wide one at
+      // 0.66R is the arena's orbit — the ring that gives the empty middle
+      // distance of the floor something to describe its size with, exactly the
+      // way a Hades arena is banded. All broken, none closed.
+      // FLAT inlay, not a tube. A torus lying on the floor is a polished rod:
+      // under a grazing key it catches a single fat specular line and the ring
+      // reads as a comet trail scratched across the stone. A flat band with a
+      // tiny proud lip reads as metal set INTO the floor, which is what it is.
+      for (const [rad, thick, nSeg] of [[MEDR * 0.99, 0.075, 5], [MEDR * 0.44, 0.050, 3],
+                                        [R * 0.665, 0.105, 6]]) {
+        const span = (TAU / nSeg) * 0.70;
+        const g2 = kit.geo(`inlay:${rad.toFixed(3)}:${nSeg}`, () => {
+          const seg = Math.max(12, Math.round(span * 34));
+          const ring = new THREE.RingGeometry(rad - thick, rad + thick, seg, 1, 0, span);
+          const lip = new THREE.RingGeometry(rad - thick * 0.32, rad + thick * 0.32, seg, 1, 0, span);
+          lip.translate(0, 0, 0.014);
+          return mergeGeos([ring, lip]);
+        });
+        // The R*0.665 orbit is a hoop drawn AROUND the play space and it runs
+        // straight through the foreground apron the value law needs dark, so it
+        // is set down a stop from the emblem's own rails.
+        // §1.1 wants the FOREGROUND high-value / high-chroma. The orbit rail is
+        // the one piece of drawn ornament that crosses the near apron, so it is
+        // the cheapest legitimate way to put a bright, saturated, hand-placed
+        // note in the bottom band without lighting the floor itself.
+        const railMat = rad > R * 0.5
+          ? this._M(B.mats.leaf, { emissiveIntensity: 0.20, tint: '#f2c14e', litGain: 0.48, ambGain: 0.38, specGain: 2.10 })
+          : leaf;
+        let a = f() * TAU;
+        for (let k = 0; k < nSeg; k++) {
+          // default XYZ order applies Z first: spin the ring in its own plane,
+          // THEN lay it flat. 'ZYX' would tip the flat ring out of horizontal.
+          iq.setFromEuler(new THREE.Euler(-Math.PI / 2, 0, -a));
+          im4.compose(new THREE.Vector3(rad < R * 0.5 ? medOff.x : 0, 0.030, rad < R * 0.5 ? medOff.y : 0), iq, ione);
+          ib.add(g2, railMat, im4, { name: 'floor.inlay', cast: false });
+          a += TAU / nSeg + (f() - 0.5) * 0.12;
+        }
+      }
+      ib.build();
+    }
+
+    // ---- THE OUTER MEANDER BAND (§9.7 / §1.5) ------------------------------
+    // The play framing measured the LEAST detailed shot in the package
+    // (detailDensity 0.024-0.027 against 0.048 at close range): everything
+    // drawn on the ground plane lived inside r < 0.30R, so the outer two thirds
+    // of the arena was a smooth violet gradient with soft blobs on it — exactly
+    // the "huge soft purple blobs across the floor" §9.7 bans. A real Greek key
+    // laid into the outer floor gives that annulus drawn ornament, a directional
+    // arris for the brazier pools to rake across, and a second concentric
+    // reading of the room's size. It is REAL geometry (the same meanderPeriod
+    // the cornices use) so it carves and catches light instead of decalling.
+    {
+      const bandR = R * 0.775;
+      const bh = 0.62;                                    // pattern height
+      const per = kit.geo(`floor.meander:${bh.toFixed(2)}`, () => {
+        const g2 = meanderPeriod(bh, 0.16);
+        g2.rotateX(-Math.PI / 2);                          // lay the fret flat
+        return g2;
+      });
+      const rail = kit.geo(`floor.meanderRail:${bh.toFixed(2)}`, () => {
+        const g2 = meanderRail(bh, (TAU * bandR) / 96 + 0.03, 0.16);
+        g2.rotateX(-Math.PI / 2);
+        return g2;
+      });
+      // hammered leaf, no emissive: at this radius the band runs through the
+      // near apron the value law needs dark, so it is allowed a specular arris
+      // and nothing else.
+      const bandMat = this._M(B.mats.leaf, {
+        emissiveIntensity: 0.18, tint: '#f2c14e', litGain: 0.34, ambGain: 0.30, specGain: 2.10,
+      });
+      const stoneMat = this._M(B.mats.bay, { litGain: 0.36, ambGain: 0.58, variation: 0.20 });
+      const N = Math.max(24, Math.round((TAU * bandR) / (bh * 1.06)));
+      // A CLOSED ring of perfectly periodic fret is the one thing §7 bans on a
+      // floor, so the band is broken into four runs with worn gaps between
+      // them and each run starts on a different phase.
+      const runs = [[0.06, 0.30], [0.34, 0.28], [0.66, 0.14], [0.83, 0.13]];
+      const fret = kit.instancer(per, bandMat, N + 8, { name: 'floor.meander', cast: false });
+      const bed = kit.instancer(rail, stoneMat, N + 8, { name: 'floor.meander.bed', cast: false });
+      for (const [t0, tl] of runs) {
+        const i0 = Math.floor(t0 * N), i1 = Math.floor((t0 + tl) * N);
+        for (let i = i0; i < i1; i++) {
+          const a = (i / N) * TAU;
+          const rr = bandR * (1 + 0.006 * Math.sin(a * 5.0 + 1.3));
+          fret.userData.push(Math.cos(a) * rr, 0.030, Math.sin(a) * rr, faceIn(a), 1);
+          bed.userData.push(Math.cos(a) * (rr + bh * 0.60), 0.020, Math.sin(a) * (rr + bh * 0.60), faceIn(a), 1);
+        }
+      }
+      if (fret.count) { fret.userData.finish(); this.root.add(fret); }
+      if (bed.count) { bed.userData.finish(); this.root.add(bed); }
+    }
+
+    // ---- COLD SIGILS IN THE PLAY AREA (§9.6 two hues, §9.3 highlight band) --
+    // Measured cyan occupancy across the whole shot sheet was 3.8-6.5% against
+    // §9.6's 8% floor, and every cool source in the room was on the FAR
+    // perimeter where the vignette eats it: ten frames of salmon-on-plum with
+    // no cool note anywhere a player actually stands. §9.3 also asks for the
+    // highlight band to come from "emissives (flame, lava, GLYPHS)" and never
+    // from a lit floor — a small saturated glyph burning in the dark stage does
+    // both jobs at once and costs the ground plane no value at all.
+    {
+      const accent = B.accent || '#5fd0ff';
+      const sigil = kit.geo('floor.sigil', () => {
+        const p2 = new Parts();
+        // an eight-point star of thin bars set into the stone, with a lozenge
+        // eye — a drawn shape, not a glowing disc (§5 silhouette first)
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * TAU;
+          const L = i % 2 ? 0.30 : 0.52;
+          p2.add(new THREE.BoxGeometry(L, 0.030, 0.055),
+            { p: [Math.cos(a) * (0.16 + L * 0.5), 0, Math.sin(a) * (0.16 + L * 0.5)], r: [0, -a, 0] });
+        }
+        p2.add(new THREE.OctahedronGeometry(0.135, 0), { p: [0, 0.045, 0], s: [1, 0.55, 1] });
+        p2.add(new THREE.TorusGeometry(0.175, 0.028, 5, 18), { p: [0, 0.012, 0], r: [Math.PI / 2, 0, 0] });
+        return faceted(p2.merge());
+      });
+      const sigilMat = this._M(B.mats.crystal, {
+        // 2.1 clipped every sigil to a white core: eight white starbursts
+        // scattered across the play floor out-read the protagonist and looked
+        // like pickups, not architecture (§1.5 bans uniformly spammed ornament,
+        // §9.2 says the hero is the brightest thing in the play area). At 0.62
+        // they stay SATURATED cyan instead of blowing to white.
+        tint: accent, emissive: accent, emissiveIntensity: 0.62,
+        litGain: 0.30, ambGain: 0.35, specGain: 1.5, rimStrength: 0.9, rimColor: accent,
+      });
+      // a stubby crystal cluster: the same accent standing UP, so the cool note
+      // also appears on a silhouette rather than only flat on the floor
+      const shard = kit.geo('floor.shard', () => {
+        const p2 = new Parts();
+        p2.add(new THREE.OctahedronGeometry(0.34, 0), { p: [0, 0.30, 0], s: [0.46, 1.55, 0.46], r: [0.10, 0.4, 0.06] });
+        p2.add(new THREE.OctahedronGeometry(0.21, 0), { p: [0.19, 0.17, 0.07], s: [0.46, 1.25, 0.46], r: [0.24, 1.1, 0.30] });
+        p2.add(new THREE.OctahedronGeometry(0.16, 0), { p: [-0.17, 0.13, -0.09], s: [0.48, 1.15, 0.48], r: [-0.20, 2.0, -0.28] });
+        return faceted(p2.merge());
+      });
+      const NS2 = 7;
+      const sIM = kit.instancer(sigil, sigilMat, NS2, { name: 'floor.sigil', cast: false, recv: false });
+      const cIM = kit.instancer(shard, sigilMat, NS2, { name: 'floor.shard', cast: false, recv: false });
+      for (let i = 0; i < NS2; i++) {
+        // golden-angle spacing so nothing lines up with the brazier arc or with
+        // the meander runs, and two radii so the accent reads at two depths
+        // Pushed OUT to the apron between the meander runs. A cool note in the
+        // near-dark ring is what §9.6 is actually asking for; the same glyph at
+        // r 0.4R sat under the player's feet and turned the play space into a
+        // field of markers.
+        const a = i * 2.39996 + 0.7;
+        const rr = R * (i % 2 ? 0.70 : 0.87) * (0.97 + 0.06 * Math.sin(i * 1.7));
+        const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+        if (!this.insideXZ(x, z, 1.4)) continue;
+        sIM.userData.push(x, this.heightAt(x, z) + 0.035, z, a * 0.7, 0.74 + 0.20 * Math.sin(i * 2.3));
+        if (i % 2 === 0) {
+          const sa = a + 0.30, sr = rr - 2.6;
+          const sx = Math.cos(sa) * sr, sz = Math.sin(sa) * sr;
+          if (this.insideXZ(sx, sz, 1.0)) cIM.userData.push(sx, this.heightAt(sx, sz), sz, sa, 0.85 + 0.3 * Math.sin(i));
+        }
+      }
+      if (sIM.count) { sIM.userData.finish(); this.root.add(sIM); }
+      if (cIM.count) { cIM.userData.finish(); this.root.add(cIM); }
+    }
+
+    // A raised bronze BOSS at the emblem's centre. §9.5 says ornament carries
+    // the light: this is the one place on the ground plane that is allowed a
+    // real specular hit, and it is what stops a floor close-up from being a
+    // frame with no top value band at all.
+    {
+      // an OMPHALOS: the navel stone at the middle of the chamber. Wide and
+      // LOW — a bronze disc you walk over, not an obstacle you walk round, and
+      // emphatically not a pale boulder sitting where the hero stands. It is
+      // built in TWO materials on purpose: a dark bronze dome (so it never
+      // out-values the character, §9.2) set in a burst of gold rays (so the
+      // ground plane still gets the one genuine specular hit §9.5 asks for).
+      const br = MEDR * 0.27;
+      const domeGeo = kit.geo(`floor.boss:${MEDR.toFixed(2)}`, () => lathe(
+        [[br * 1.24, 0.0], [br * 1.30, 0.05], [br * 1.22, 0.09],
+         [br * 0.98, 0.11], [br * 0.72, 0.17], [br * 0.36, 0.22], [br * 0.14, 0.24], [0.02, 0.25]]
+          .map(([r2, y2]) => [r2, y2 * MEDR * 0.17]), 30));
+      const rayGeo = kit.geo(`floor.rays:${MEDR.toFixed(2)}`, () => {
+        const p = new Parts();
+        const RN = 14;
+        for (let i = 0; i < RN; i++) {
+          const a = (i / RN) * TAU;
+          const L = br * (i % 2 ? 1.35 : 0.95);
+          p.add(new THREE.BoxGeometry(L, MEDR * 0.022, br * 0.155),
+            { p: [Math.cos(a) * (br * 1.30 + L * 0.5), MEDR * 0.012, Math.sin(a) * (br * 1.30 + L * 0.5)], r: [0, -a, 0] });
+        }
+        p.add(new THREE.TorusGeometry(br * 1.30, MEDR * 0.020, 6, 40), { p: [0, MEDR * 0.014, 0], r: [Math.PI / 2, 0, 0] });
+        return p.merge();
+      });
+      const dome = new THREE.Mesh(domeGeo, this._M(B.mats.metal, {
+        tint: '#5f4322', specGain: 2.0, litGain: 0.60, ambGain: 0.7,
+      }));
+      dome.name = 'floor.boss';
+      dome.position.set(medOff.x, 0.02, medOff.y);
+      dome.castShadow = true; dome.receiveShadow = true;
+      this.root.add(dome);
+      // NO emissive. An emissive gold ray glows over its whole area, which is
+      // what tools/analyze.mjs measures as "large regions of the ground still
+      // blazing"; a purely SPECULAR ray puts the same energy into a few pixels
+      // on its arris, which is what §9.5 actually asks for.
+      // §9.2 the HERO is the brightest large-ish shape in the play area. The
+      // omphalos burst sits at the middle of every gameplay frame and it was
+      // matching the character's own top values (measured p95 0.737 vs 0.701) —
+      // the one piece of floor ornament allowed to compete with the subject.
+      // Set down so the ground plane's specular hit stays a hit, not a rival.
+      const rays = new THREE.Mesh(rayGeo, this._M(B.mats.leaf, { emissiveIntensity: 0.0, specGain: 1.05, litGain: 0.60 }));
+      rays.name = 'floor.boss.rays';
+      rays.position.set(medOff.x, 0.02, medOff.y);
+      rays.receiveShadow = true;
+      this.root.add(rays);
+    }
+
+    // Broken slabs lying across the emblem. They finish the "ruined inlay"
+    // read, and they are what stops the fret from being an unbroken periodic
+    // band across the middle of every frame.
+    {
+      const sb = new Batcher(this.root);
+      const sm4 = new THREE.Matrix4(), sq = new THREE.Quaternion();
+      // These spall slabs sit dead centre of the emblem, i.e. dead centre of
+      // every gameplay frame. At litGain 0.82 the rubble albedo read as a
+      // BROWN CARPET laid over the ornament — the brightest non-ornament patch
+      // on the ground plane, and (being a dense fibrous texture) the only real
+      // periodic signal tools/analyze.mjs could find on the floor. They are
+      // broken stone in shadow; light them like it.
+      const slabMat = this._M(B.mats.rubble, { variation: 0.26, litGain: 0.66, ambGain: 0.50 });
+      // ROUND-2: these were 1.9-3.0m slabs dropped anywhere from 0.45R to
+      // 1.05R of a 3.8m emblem — between them they blacked out a QUARTER of the
+      // medallion and cut the outer fret in half, which is what read at
+      // gameplay distance as a hole in the floor. Smaller, fewer, kept off the
+      // fret, and lit enough to read as fallen stone rather than as absence.
+      for (let i = 0; i < 3; i++) {
+        const g2 = kit.rubbleGeo('slab', 70 + i, { w: 0.85 + f() * 0.55, d: 0.62 + f() * 0.44, t: 0.14 });
+        const a = f() * TAU, rr = MEDR * (0.78 + f() * 0.34);
+        sq.setFromEuler(new THREE.Euler((f() - 0.5) * 0.12, f() * TAU, (f() - 0.5) * 0.12));
+        sm4.compose(new THREE.Vector3(medOff.x + Math.cos(a) * rr, 0.055, medOff.y + Math.sin(a) * rr),
+          sq, new THREE.Vector3(1, 1, 1));
+        sb.add(g2, slabMat, sm4, { name: 'floor.spall' });
+      }
+      sb.build();
+    }
+
+    // ---- raised dais -----------------------------------------------------
+    if (this.dais) {
+      const d = this.dais;
+      const cx = d.at ? d.at[0] : 0, cz = d.at ? d.at[1] : 0;
+      d.x = cx; d.z = cz;
+      const steps = d.steps ?? 3;
+      const p = new Parts();
+      for (let i = 0; i < steps; i++) {
+        const rr = d.r + (steps - i) * 0.52;
+        const hh = d.h * ((i + 1) / steps);
+        p.add(lathe([[rr, 0], [rr, hh], [rr - 0.52, hh]], 48), { p: [0, 0, 0] });
+      }
+      p.add(new THREE.CircleGeometry(d.r, 48), { p: [0, d.h + 0.002, 0], r: [-Math.PI / 2, 0, 0] });
+      const dm = new THREE.Mesh(this._keep(faceted(p.merge())),
+        this._M(B.mats.dais, { litGain: 0.85, ambGain: 0.6, rimStrength: 0.18 }));
+      dm.name = 'floor.dais';
+      dm.position.set(cx, 0, cz);
+      dm.castShadow = true; dm.receiveShadow = true;
+      this.root.add(dm);
+      G.keepOut.push({ x: cx, z: cz, r: d.r + steps * 0.52 + 0.4 });
+    }
+  }
+
+  // =========================================================================
+  // RIM — curb, parapet, broken edge, hanging chains
+  // =========================================================================
+  _buildRim(ctx, G) {
+    const { B, A, kit, f } = G;
+    const R = this.bounds.r;
+    // The rim runs right across the bottom of every gameplay frame. At full
+    // rig gain the curb + coping became the brightest continuous shape in the
+    // shot — a lit hoop drawn around the play space, which is the opposite of
+    // what a foreground repoussoir is for. It keeps its lit top arris and gives
+    // back diffuse.
+    // The rim runs across the bottom of every gameplay frame — the one piece of
+    // built architecture in the FOREGROUND band §1.1 wants at high value. Its
+    // indirect share is lifted so the curb, the coping and the parapet read as
+    // a described edge instead of dissolving into the apron.
+    const stone = this._M(B.mats.wall, { variation: 0.22, litGain: 0.60, ambGain: 0.95, specGain: 1.30 });
+
+    // ---- the curb: a moulded stone edge all the way round ----------------
+    // This is the island's LIT TOP EDGE. Without it the floor stops at a razor
+    // line and the arena reads as a decal instead of a terrace (§9.5).
+    const curb = new THREE.Mesh(this._keep(sweep(this.profile, [
+      [-0.72, 0.02], [-0.72, 0.20], [-0.50, 0.24], [-0.50, 0.40],
+      [-0.16, 0.44], [0.06, 0.40], [0.10, 0.22], [0.16, 0.04], [0.18, -0.40],
+    ], { flat: true })), stone);
+    curb.name = 'rim.curb';
+    curb.castShadow = true; curb.receiveShadow = true;
+    this.root.add(curb);
+
+    // a gold fillet running the very lip — the thinnest, brightest line in the
+    // composition, and the thing that draws the island's shape from above
+    const fillet = new THREE.Mesh(this._keep(sweep(this.profile, [
+      [-0.26, 0.442], [-0.19, 0.478], [-0.08, 0.455],
+    ], { a0: 122 * DEG, a1: 328 * DEG, closed: false, flat: true })),
+      this._M(B.mats.leaf, { emissiveIntensity: 0.0 }));
+    fillet.name = 'rim.fillet';
+    fillet.castShadow = false; fillet.receiveShadow = true;
+    this.root.add(fillet);
+
+    // ---- parapet on the NEAR arc ------------------------------------------
+    // The near arc is what the 45deg camera puts across the bottom of frame.
+    // A balustrade there gives the foreground an ornate, mid-value repoussoir
+    // instead of an empty band of floor.
+    const nearA0 = 318 * DEG, nearA1 = 502 * DEG;    // through 0 / 360
+    const parapetH = 1.25;
+    // Balusters and copings are placed by hand along the PROFILE rather than by
+    // kit.parapet's arc helper, so the rim follows whatever shape the room is.
+    const balGeo = kit.geo(`baluster:${parapetH.toFixed(2)}`, () => lathe([
+      [0.19, 0.00], [0.21, 0.05], [0.15, 0.10], [0.13, 0.16],
+      [0.20, 0.26], [0.24, 0.38], [0.21, 0.50], [0.14, 0.60],
+      [0.10, 0.68], [0.14, 0.76], [0.13, 0.84], [0.17, 0.92], [0.16, 1.00],
+    ].map(([r, y]) => [r * parapetH * 0.62, y * parapetH * 0.78 + parapetH * 0.11]), 14));
+
+    const rAt = (a) => this.radiusAt(a);
+    const balN = Math.round((nearA1 - nearA0) * R / (parapetH * 0.56));
+    const balIM = kit.instancer(balGeo, stone, balN + 4, { name: 'rim.baluster' });
+    // gaps: a real ruin has whole sections of balustrade missing
+    const gaps = [];
+    for (let i = 0; i < 3; i++) { const c = nearA0 + (nearA1 - nearA0) * (0.12 + f() * 0.76); gaps.push([c - (5 + f() * 9) * DEG, c + (5 + f() * 9) * DEG]); }
+    const inGap = (a) => gaps.some(([g0, g1]) => a > g0 && a < g1);
+    for (let i = 0; i < balN; i++) {
+      const a = nearA0 + (nearA1 - nearA0) * ((i + 0.5) / balN);
+      if (inGap(a)) continue;
+      const rr = rAt(a) - 0.52;
+      balIM.userData.push(Math.cos(a) * rr, 0.30, Math.sin(a) * rr, -a, 1);
+    }
+    if (balIM.count) { balIM.userData.finish(); this.root.add(balIM); }
+
+    // coping + base rail as swept runs, cut where the balusters are missing
+    const runs = [];
+    let cur = nearA0;
+    for (const [g0, g1] of gaps.sort((p, q) => p[0] - q[0])) {
+      if (g0 > cur) runs.push([cur, Math.min(g0, nearA1)]);
+      cur = Math.max(cur, g1);
+    }
+    if (cur < nearA1) runs.push([cur, nearA1]);
+    for (const [s0, s1] of runs) {
+      if (s1 - s0 < 3 * DEG) continue;
+      const rail = new THREE.Mesh(this._keep(sweep(this.profile, [
+        [-0.86, 0.30], [-0.86, 0.46], [-0.74, 0.52], [-0.30, 0.52], [-0.18, 0.46], [-0.18, 0.30],
+      ], { a0: s0, a1: s1, closed: false, flat: true })), stone);
+      rail.name = 'rim.rail';
+      rail.castShadow = true; rail.receiveShadow = true;
+      this.root.add(rail);
+      const cop = new THREE.Mesh(this._keep(sweep(this.profile, [
+        [-0.94, parapetH * 0.90], [-0.94, parapetH * 1.02], [-0.80, parapetH * 1.09],
+        [-0.24, parapetH * 1.09], [-0.10, parapetH * 1.02], [-0.10, parapetH * 0.90],
+      ], { a0: s0, a1: s1, closed: false, flat: true })), stone);
+      cop.name = 'rim.coping';
+      cop.castShadow = true; cop.receiveShadow = true;
+      this.root.add(cop);
+    }
+
+    // ---- posts at the ends of each run + a gold urn finial ---------------
+    const postGeo = kit.geo('rim.post', () => {
+      const p = new Parts();
+      p.box(0.62, parapetH * 1.18, 0.62, [0, parapetH * 0.59, 0]);
+      p.box(0.80, 0.13, 0.80, [0, 0.07, 0]);
+      p.box(0.76, 0.12, 0.76, [0, parapetH * 1.16, 0]);
+      return faceted(p.merge());
+    });
+    const finGeo = kit.geo('rim.finial', () => lathe([
+      [0.06, 0], [0.20, 0.10], [0.26, 0.24], [0.20, 0.40], [0.10, 0.50], [0.13, 0.58], [0.05, 0.68],
+    ], 14));
+    const postIM = kit.instancer(postGeo, stone, runs.length * 2 + 2, { name: 'rim.post' });
+    const finIM = kit.instancer(finGeo, this._M(B.mats.metal), runs.length * 2 + 2, { name: 'rim.finial' });
+    for (const [s0, s1] of runs) {
+      for (const a of [s0, s1]) {
+        const rr = rAt(a) - 0.52;
+        postIM.userData.push(Math.cos(a) * rr, 0, Math.sin(a) * rr, -a, 1);
+        finIM.userData.push(Math.cos(a) * rr, parapetH * 1.22, Math.sin(a) * rr, -a, 1);
+      }
+    }
+    if (postIM.count) { postIM.userData.finish(); this.root.add(postIM); }
+    if (finIM.count) { finIM.userData.finish(); this.root.add(finIM); }
+
+    // ---- hanging chains falling off the rim into the dark ----------------
+    // ONE CONTINUOUS ROD PER CHAIN. Eighteen discrete torus links strung over a
+    // 13m drop put one bead every 70cm, and in the review frames those beads
+    // read as perfectly straight, evenly spaced DOTTED LINES bisecting the
+    // composition — the single most eye-catching element in four of ten frames
+    // and (correctly) read as a debug path. At play distance a chain is a LINE;
+    // it is drawn as one, with an alternating radius so the beading modulates
+    // the silhouette instead of interrupting it.
+    // NO SHADOW CASTING. A chain link is ~8cm of geometry and the chamber's
+    // shadow map spans ~28m, so a hanging chain resolves to 3-4 shadow texels
+    // and lands on the back wall as a hard, black, STAIR-STEPPED diagonal
+    // ~800px long — a §7 auto-fail. Chains are silhouette dressing.
+    const ch = B.chains;
+    {
+      const parts = [];
+      for (let i = 0; i < ch.count; i++) {
+        const a = f() * TAU;
+        const rr = rAt(a) - 0.1;
+        const from = new THREE.Vector3(Math.cos(a) * rr, 0.20, Math.sin(a) * rr);
+        const to = new THREE.Vector3(Math.cos(a) * (rr + 1.2 + f() * 1.6), -ch.drop * (0.6 + f() * 0.8), Math.sin(a) * (rr + 1.2 + f() * 1.6));
+        const n = Math.max(10, Math.round(from.distanceTo(to) / 0.16));
+        const pts = catenary(from, to, ch.sag, n);
+        parts.push(taperedTube(pts, pts.map((_, k) => (k % 2 ? 0.055 : 0.032)), 5));
+      }
+      if (parts.length) {
+        const cm = new THREE.Mesh(this._keep(mergeGeos(parts)),
+          this._M(B.mats.iron, { litGain: 0.34, ambGain: 0.30, specGain: 0.9 }));
+        cm.name = 'rim.chains';
+        cm.castShadow = false; cm.receiveShadow = false;
+        this.root.add(cm);
+      }
+    }
+  }
+
+  // =========================================================================
+  // BACK WALL — the two-storey mass that gives the frame its mid value band
+  // =========================================================================
+  _buildBackWall(ctx, G) {
+    const { A, B, kit, f } = G;
+    if (A.wall.arcs === 'none') return;
+    const R = this.bounds.r;
+    const batch = new Batcher(this.root);
+
+    // ── THE BACK WALL IS THE BACKGROUND (§1.1) ────────────────────────────
+    // These two materials cover the largest surface in the upper third of
+    // every composition frame and they were running at the library's default
+    // gains, i.e. lit exactly like the foreground. Measured depthBands ran
+    // top 0.381 / mid 0.153 / bottom 0.031. The wall now recedes: a third of
+    // the key, a plum multiply toward §2's mid shadow violet (#3a1d52), and a
+    // specular share small enough that the ashlar faces stop flaring. What
+    // survives is the ORNAMENT on it — the meander, the cornice, the sigils —
+    // which is where §9.5 wants the light anyway.
+    const wallMat = this._M(B.mats.wall, { variation: 0.20, litGain: 0.36, ambGain: 0.62, specGain: 0.70, tint: '#8d7192' });
+    const bayMat = this._M(B.mats.bay, { variation: 0.26, litGain: 0.30, ambGain: 0.54, specGain: 0.60, tint: '#7c6288' });
+    const leaf = this._M(B.mats.leaf, { emissiveIntensity: 0.06 });
+    const metal = this._M(B.mats.metal);
+
+    const [a0, a1] = G.wallArc;
+    const H1 = A.wall.height ?? 5.6;                   // lower storey
+    const storeys = A.wall.storeys ?? 2;
+    const rAt = (a) => this.radiusAt(a) + 0.55;
+
+    // door openings we must not build across
+    const openings = this.doorAngles.map((a) => ({ a, half: 15 * DEG }));
+    const inOpening = (a) => openings.some((o) => Math.abs(((a - o.a + Math.PI * 3) % TAU) - Math.PI) < o.half);
+
+    // ---- ASHLAR: courses of individual blocks -----------------------------
+    const blockGeo = kit.geo('wall.block', () => faceted(new THREE.BoxGeometry(1, 1, 1)));
+    const BLOCK_W = 1.72;
+    const blocks = [];
+    // courses fill exactly [0.36, H1] so the top of the masonry meets the
+    // astragal and the meander band instead of growing through them
+    const courses = Math.max(3, Math.round((H1 - 0.36) / 0.90));
+    const COURSE_H = (H1 - 0.36) / courses;
+    for (let c = 0; c < courses; c++) {
+      const y = 0.36 + COURSE_H * (c + 0.5);
+      const stagger = (c % 2) * 0.5;
+      const n = Math.max(8, Math.round((a1 - a0) * R / BLOCK_W));
+      for (let i = 0; i < n; i++) {
+        const a = a0 + (a1 - a0) * ((i + 0.5 + stagger) / n);
+        if (inOpening(a)) continue;
+        // the arc has to END somewhere: crumble the last few metres into ruin
+        const edgeT = Math.min(Math.abs(a - a0), Math.abs(a - a1)) / (20 * DEG);
+        if (c >= 1 && edgeT < 1 && f() > edgeT * 0.6 + 0.10 * c) continue;
+        if (A.wall.ruined && f() < 0.06 * (c + 1)) continue;
+        // Jitter is SEASONING, not structure: at high amplitude the courses
+        // stop reading as bedded masonry and the wall becomes a shelf of loose
+        // slabs with light leaking between them.
+        blocks.push({ a, y: y + (f() - 0.5) * 0.025, r: rAt(a) + (f() - 0.5) * 0.03,
+          w: BLOCK_W * (1.06 + f() * 0.07), h: COURSE_H * 0.965, d: 1.15 + f() * 0.07, tilt: (f() - 0.5) * 0.014 });
+      }
+    }
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), pv = new THREE.Vector3(), sv = new THREE.Vector3();
+    const focal = blocks.filter((b) => openings.some((o) => Math.abs(((b.a - o.a + Math.PI * 3) % TAU) - Math.PI) < 34 * DEG));
+    const plain = blocks.filter((b) => focal.indexOf(b) < 0);
+    for (const [list, mat, nm] of [[focal, wallMat, 'wall.ashlar'], [plain, bayMat, 'wall.ashlar.bay']]) {
+      if (!list.length) continue;
+      const im = kit.instancer(blockGeo, mat, list.length, { name: nm });
+      for (const b of list) {
+        e.set(b.tilt, -b.a, b.tilt * 0.6); q.setFromEuler(e);
+        pv.set(Math.cos(b.a) * b.r, b.y, Math.sin(b.a) * b.r);
+        sv.set(b.d, b.h, b.w);
+        im.userData.pushMatrix(m4.compose(pv, q, sv));
+      }
+      im.userData.finish();
+      this.root.add(im);
+    }
+
+    // ---- solid backing so no light leaks through the joints --------------
+    // Cut into runs between the doorways: a continuous shell would brick the
+    // exits up, and the exits are the whole point of the room.
+    const runsW = [];
+    {
+      const cuts = openings.map((o) => [o.a - o.half, o.a + o.half]).sort((p, q) => p[0] - q[0]);
+      let cur = a0 - 2 * DEG;
+      for (const [c0, c1] of cuts) {
+        if (c0 > cur) runsW.push([cur, Math.min(c0, a1 + 2 * DEG)]);
+        cur = Math.max(cur, c1);
+      }
+      if (cur < a1 + 2 * DEG) runsW.push([cur, a1 + 2 * DEG]);
+    }
+    const backMat = this._M(B.mats.wall, { side: THREE.DoubleSide, variation: 0.18, litGain: 0.28, ambGain: 0.52, specGain: 0.50, tint: '#7a6284' });
+    for (const [s0, s1] of runsW) {
+      if (s1 - s0 < 2 * DEG) continue;
+      const back = new THREE.Mesh(this._keep(sweep(this.profile, [
+        [1.15, 0.0], [1.15, H1 + 0.4],
+      ], { a0: s0, a1: s1, closed: false, radiusOffset: 0.0 })), backMat);
+      back.name = 'wall.back';
+      back.castShadow = true; back.receiveShadow = true;
+      this.root.add(back);
+      const plinth = new THREE.Mesh(this._keep(sweep(this.profile, [
+        [-0.15, 0.0], [-0.15, 0.30], [0.06, 0.36], [0.06, 0.0],
+      ], { a0: s0, a1: s1, closed: false, radiusOffset: 0.55, flat: true })), wallMat);
+      plinth.name = 'wall.plinth';
+      plinth.castShadow = true; plinth.receiveShadow = true;
+      this.root.add(plinth);
+    }
+    G.wallRuns = runsW;
+
+    // ---- pilasters: hard verticals every bay ------------------------------
+    const nBays = 11;
+    const pilGeo = kit.geo('wall.pilaster', () => {
+      const p = new Parts();
+      p.box(1.15, H1, 0.62, [0, H1 * 0.5, 0]);
+      p.box(1.38, 0.34, 0.86, [0, 0.17, 0]);
+      p.box(1.28, 0.16, 0.78, [0, 0.42, 0]);
+      p.box(1.40, 0.30, 0.92, [0, H1 - 0.15, 0]);
+      p.box(1.54, 0.13, 1.02, [0, H1 + 0.04, 0]);
+      for (let k = -1; k <= 1; k++) {
+        p.add(new THREE.CylinderGeometry(0.075, 0.075, H1 * 0.70, 8, 1, false, 0, Math.PI),
+          { p: [k * 0.26, H1 * 0.52, 0.31], r: [0, Math.PI, 0] });
+      }
+      return faceted(p.merge());
+    });
+    const pilIM = kit.instancer(pilGeo, wallMat, nBays + 2, { name: 'wall.pilaster' });
+    const bayCentres = [];
+    for (let i = 0; i <= nBays; i++) {
+      const a = a0 + (a1 - a0) * (i / nBays);
+      if (inOpening(a)) continue;
+      const rr = rAt(a) - 0.28;
+      pilIM.userData.push(Math.cos(a) * rr, 0, Math.sin(a) * rr, faceIn(a), 1);
+    }
+    for (let i = 0; i < nBays; i++) {
+      const a = a0 + (a1 - a0) * ((i + 0.5) / nBays);
+      if (!inOpening(a)) bayCentres.push(a);
+    }
+    if (pilIM.count) { pilIM.userData.finish(); this.root.add(pilIM); }
+
+    // ---- carved panels in every bay ---------------------------------------
+    // Flat ashlar between pilasters is a brick wall; a recessed, moulded field
+    // is architecture. Only the bays around the room's focal axis carry the
+    // gold meander and a rosette (§1.5: ornament is a wayfinder, not wallpaper).
+    if (bayCentres.length) {
+      const pb = new Batcher(this.root);
+      const bayArc = (a1 - a0) / nBays;
+      const pw = Math.min(3.9, (bayArc * R) - 1.5);
+      const ph = Math.min(3.6, H1 - 1.5);
+      const rich = kit.panel({ w: pw, h: ph, d: 0.42, meander: true, rosette: true, bandY: ph * 0.24 });
+      const plainP = kit.panel({ w: pw, h: ph, d: 0.42, meander: false });
+      const focalA = this.doorAngles.length ? this.doorAngles[Math.floor(this.doorAngles.length / 2)] : Math.PI;
+      const pm = new THREE.Matrix4(), pq = new THREE.Quaternion(), pone = new THREE.Vector3(1, 1, 1);
+      for (const a of bayCentres) {
+        const dA = Math.abs(((a - focalA + Math.PI * 3) % TAU) - Math.PI);
+        const rr = rAt(a) - 0.30;
+        pq.setFromEuler(new THREE.Euler(0, faceIn(a), 0));
+        pm.compose(new THREE.Vector3(Math.cos(a) * rr, 0.55 + ph * 0.5, Math.sin(a) * rr), pq, pone);
+        pb.addTemplate(dA < 40 * DEG ? rich : plainP, pm, { name: 'wall.panel' });
+      }
+      pb.build();
+      rich.clear(); plainP.clear();
+    }
+
+    // ---- GREEK KEY BAND, real extruded geometry, capping the lower storey --
+    {
+      const h = 0.62, depth = 0.30;
+      const per = kit.geo(`meander:${h.toFixed(3)}:${depth.toFixed(3)}`, () => {
+        return meanderPeriod(h, depth);
+      });
+      const railG = kit.geo(`mrail:${h.toFixed(3)}`, () => faceted(new THREE.BoxGeometry(h * 1.03, h / 8, depth * h)));
+      const n = Math.round((a1 - a0) * R / h);
+      const perIM = kit.instancer(per, leaf, n + 2, { name: 'wall.meander', recv: false });
+      const railIM = kit.instancer(railG, leaf, n + 2, { name: 'wall.meander.rail', recv: false });
+      for (let i = 0; i < n; i++) {
+        const a = a0 + (a1 - a0) * ((i + 0.5) / n);
+        if (inOpening(a)) continue;
+        const rr = rAt(a) - 0.22;
+        perIM.userData.push(Math.cos(a) * rr, H1 + 0.58, Math.sin(a) * rr, faceOut(a), 1);
+        railIM.userData.push(Math.cos(a) * rr, H1 + 0.58 - h * 0.5 + h / 16, Math.sin(a) * rr, faceOut(a), 1);
+      }
+      if (perIM.count) { perIM.userData.finish(); this.root.add(perIM); }
+      if (railIM.count) { railIM.userData.finish(); this.root.add(railIM); }
+      // a bead-and-reel astragal carrying the band — the small proud member
+      // that gives the whole course a lit lower edge
+      const bh = 0.46;
+      const brGeo = kit.geo(`br:${bh.toFixed(3)}`, () => beadAndReelUnit(bh));
+      const nb = Math.round((a1 - a0) * R / (bh * 0.80));
+      const brIM = kit.instancer(brGeo, leaf, nb + 2, { name: 'wall.beadreel', recv: false });
+      for (let i = 0; i < nb; i++) {
+        const a = a0 + (a1 - a0) * ((i + 0.5) / nb);
+        if (inOpening(a)) continue;
+        const rr = rAt(a) - 0.30;
+        brIM.userData.push(Math.cos(a) * rr, H1 + 0.16, Math.sin(a) * rr, faceOut(a), 1);
+      }
+      if (brIM.count) { brIM.userData.finish(); this.root.add(brIM); }
+    }
+
+    // ---- mid cornice ------------------------------------------------------
+    this._corniceRun(ctx, G, { a0, a1, y: H1 + 1.42, h: 0.95, dOut: 0.55, mat: wallMat, trim: leaf, openings });
+
+    // ---- upper storey: a blind arcade ------------------------------------
+    if (storeys >= 2) {
+      // Storey heights are TUNED, not guessed. Measured against the shot sheet:
+      // taller is not automatically better, because past a point the upper
+      // storey stops adding lit architecture to the frame's top third and just
+      // pushes the arcade (and its cool lamps) out of frame above it.
+      const H2 = H1 + 2.30;
+      const upH = 5.4;
+      const arcSpan = 2.9;
+      // §1.1 / §9.6: the upper storey is BACKGROUND. It loses chroma, loses
+      // value and drifts toward the biome's complement, so the frame gains a
+      // real warm-front / cool-back separation instead of one salmon field.
+      // Cool, but NOT dark: this band sits across the top of every gameplay
+      // frame and it is the only thing that can hold a value above the stage.
+      // Low chroma + high value + the complement hue = "distance" (§1.1) while
+      // still giving the frame its top band.
+      // Cool AND bright. The trick is the SPLIT, not the tint: a warm key at
+      // full gain drags any surface it touches into the key's own hue, so the
+      // background gives most of its key back and takes a large share of the
+      // (indigo) hemisphere instead. That is what makes distance read as cool
+      // in a room lit by fire, and it is the §9.6 complement at real scale.
+      // ROUND-2. This was tint #e2e6ff at ambGain 7.60 — a near-white surface
+      // taking SEVEN AND A HALF TIMES the hemisphere — and it is the single
+      // biggest reason the measured depth gradient ran backwards: the top
+      // storey of the far wall was the brightest large surface in the game.
+      // The SPLIT (cool back / warm front) is the right idea and it stays; it
+      // is the VALUE that was wrong. §1.1 asks the background for low value AND
+      // low chroma-through-haze, so the band keeps its complement hue, gets
+      // MORE saturated (a dark saturated blue is distance; a pale blue-white is
+      // a light source) and drops nearly two stops.
+      const coolStone = { tint: '#7e93d8', litGain: 0.26, ambGain: 2.60, specGain: 0.32, variation: 0.18, rimStrength: 1.0 };
+      const archT = kit.arch({ span: arcSpan, thickness: 0.52, depth: 0.75, voussoirs: 11, springY: 2.3, ornate: false });
+      const archStone = this._M(B.mats.arch), archCool = this._M(B.mats.arch, coolStone);
+      archT.traverse((o) => { if (o.isMesh && o.material === archStone) o.material = archCool; });
+      const nicheGeo = kit.geo('wall.niche', () => {
+        const p = new Parts();
+        // a dark recess behind each blind arch: a half-cylinder facing in
+        p.add(new THREE.CylinderGeometry(arcSpan * 0.5, arcSpan * 0.5, 3.2, 18, 1, true, -Math.PI / 2, Math.PI), { p: [0, 1.6, 0] });
+        p.add(new THREE.SphereGeometry(arcSpan * 0.5, 18, 8, -Math.PI / 2, Math.PI, 0, Math.PI / 2), { p: [0, 3.2, 0] });
+        return p.merge();
+      });
+      const nicheMat = this._M(B.mats.rock, { tint: '#1a1020', litGain: 0.30, ambGain: 0.35, rimStrength: 0.10, side: THREE.DoubleSide });
+      const upperMat = this._M(B.mats.wall, { ...coolStone, side: THREE.DoubleSide });
+      const upperWall = new THREE.Mesh(this._keep(sweep(this.profile, [
+        [0.70, H2 - 0.2], [0.70, H2 + upH],
+      ], { a0: a0 + 4 * DEG, a1: a1 - 4 * DEG, closed: false, radiusOffset: 0.55 })), upperMat);
+      upperWall.name = 'wall.upper';
+      // ── THE SHADOW POLICY, and it is load-bearing ────────────────────────
+      // The key sits at 38deg. A 15m wall on the key's azimuth throws a 19m
+      // shadow — which is the whole arena. The measured result was a ground
+      // plane at display luma 0.02: not a dark stage, a black hole, with every
+      // scrap of floor light coming from the braziers. Nothing above the first
+      // storey casts: the room keeps its height and its silhouette, and the key
+      // gets back on to the middle of the floor where the long, described
+      // column shadows can read against it (§9.7).
+      upperWall.castShadow = false; upperWall.receiveShadow = true;
+      this.root.add(upperWall);
+
+      for (const a of bayCentres) {
+        const rr = rAt(a) - 0.05;
+        const m = new THREE.Matrix4();
+        const qq = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, faceIn(a), 0));
+        m.compose(new THREE.Vector3(Math.cos(a) * rr, H2, Math.sin(a) * rr), qq, new THREE.Vector3(1, 1, 1));
+        batch.addTemplate(archT, m, { name: 'wall.arcade', cast: false });
+        const nm = new THREE.Mesh(nicheGeo, nicheMat);
+        nm.position.set(Math.cos(a) * (rr + 0.55), H2, Math.sin(a) * (rr + 0.55));
+        nm.rotation.y = faceOut(a);   // the shell is on the far side; it OPENS inward
+        nm.receiveShadow = true;
+        this.root.add(nm);
+      }
+      // Pilasters continuing up between the arches. Without them the upper
+      // storey is a smooth swept band with holes cut in it; with them the bays
+      // read as a bay SYSTEM running the full height of the room, which is what
+      // makes an interior feel built rather than extruded.
+      {
+        const upPil = kit.geo('wall.pilaster.up', () => {
+          const p = new Parts();
+          p.box(0.92, upH * 0.86, 0.50, [0, upH * 0.43, 0]);
+          p.box(1.14, 0.26, 0.66, [0, 0.13, 0]);
+          p.box(1.06, 0.12, 0.60, [0, 0.32, 0]);
+          p.box(1.16, 0.26, 0.70, [0, upH * 0.86 - 0.13, 0]);
+          p.box(1.30, 0.11, 0.80, [0, upH * 0.86 + 0.05, 0]);
+          return faceted(p.merge());
+        });
+        const nUp = nBays;
+        const upIM = kit.instancer(upPil, upperMat, nUp + 2, { name: 'wall.pilaster.up', cast: false });
+        for (let i = 0; i <= nUp; i++) {
+          const a = a0 + (a1 - a0) * (i / nUp);
+          if (a < a0 + 3 * DEG || a > a1 - 3 * DEG) continue;
+          const rr = rAt(a) + 0.18;
+          upIM.userData.push(Math.cos(a) * rr, H2 - 0.1, Math.sin(a) * rr, faceIn(a), 1);
+        }
+        if (upIM.count) { upIM.userData.finish(); this.root.add(upIM); }
+      }
+
+      // §9.6 TWO HUES. Every brazier in the chamber is warm, so without a cold
+      // source at scale the whole frame collapses into one salmon family. A
+      // COLD LAMP burning in each dark niche is the classic Hades answer: it
+      // sits high on the far wall (mid/background band), it is small and
+      // saturated rather than broad and washy, and it draws the arcade's arches
+      // as silhouettes against it.
+      const glyphGeo = kit.geo('wall.glyph', () => {
+        const p = new Parts();
+        p.add(new THREE.OctahedronGeometry(0.62, 1), { p: [0, 0, 0], s: [0.72, 1.55, 0.72] });
+        p.add(new THREE.OctahedronGeometry(0.30, 0), { p: [0.34, -0.55, 0.10], s: [0.7, 1.3, 0.7], r: [0.3, 0.4, 0.25] });
+        p.add(new THREE.OctahedronGeometry(0.24, 0), { p: [-0.30, -0.70, -0.06], s: [0.7, 1.1, 0.7], r: [-0.2, 0.9, -0.3] });
+        return faceted(p.merge());
+      });
+      const accent = B.accent;
+      const glyphMat = this._M(B.mats.crystal, {
+        tint: accent, emissive: accent, emissiveIntensity: 1.15,
+        litGain: 0.55, ambGain: 0.5, specGain: 1.4, rimStrength: 1.1, rimColor: accent,
+      });
+      const glyphIM = kit.instancer(glyphGeo, glyphMat, bayCentres.length, { name: 'wall.glyph', recv: false, cast: false });
+      for (const a of bayCentres) {
+        const rr = rAt(a) + 0.10;
+        glyphIM.userData.push(Math.cos(a) * rr, H2 + 1.55, Math.sin(a) * rr, faceIn(a), 1);
+      }
+      if (glyphIM.count) { glyphIM.userData.finish(); this.root.add(glyphIM); }
+      batch.build();
+      // crowning cornice, and a gold cyma running its lip. This is the highest
+      // line in the room and it sits across the top of every wide frame: §9.5
+      // wants the light on the EDGES of architecture, and there is no edge in
+      // the chamber more structural than the one where the wall meets the dark.
+      const crownY = H2 + upH + 0.3;
+      this._corniceRun(ctx, G, { a0: a0 + 3 * DEG, a1: a1 - 3 * DEG, y: crownY, h: 1.20, dOut: 0.85, mat: upperMat, trim: leaf, openings: [], cast: false });
+      const cyma = new THREE.Mesh(this._keep(sweep(this.profile, [
+        [1.00, crownY + 0.60], [1.30, crownY + 0.66], [1.34, crownY + 0.80], [1.08, crownY + 0.84],
+      ], { a0: a0 + 3 * DEG, a1: a1 - 3 * DEG, closed: false, radiusOffset: 0.55, flat: true })),
+        this._M(B.mats.leaf, { emissiveIntensity: 0.16, specGain: 1.5 }));
+      cyma.name = 'wall.cyma';
+      cyma.castShadow = false; cyma.receiveShadow = true;
+      this.root.add(cyma);
+      G.wallTop = H2 + upH + 1.5;
+    } else {
+      G.wallTop = H1 + 2.4;
+    }
+    G.wallH1 = H1;
+    G.bayCentres = bayCentres;
+  }
+
+  /** A cornice swept round an arc, with dentils and egg-and-dart instanced. */
+  _corniceRun(ctx, G, o) {
+    const { kit, B } = G;
+    const R = this.bounds.r;
+    const body = new THREE.Mesh(this._keep(sweep(this.profile, [
+      [0.30, o.y - o.h * 0.52], [0.30, o.y - o.h * 0.30],
+      [0.30 + o.dOut * 0.4, o.y - o.h * 0.26], [0.30 + o.dOut * 0.4, o.y - o.h * 0.10],
+      [0.30 + o.dOut, o.y + o.h * 0.10], [0.30 + o.dOut, o.y + o.h * 0.24],
+      [0.30 + o.dOut * 0.55, o.y + o.h * 0.34], [0.30 + o.dOut * 0.55, o.y + o.h * 0.46],
+      [0.30, o.y + o.h * 0.52],
+    ], { a0: o.a0, a1: o.a1, closed: false, radiusOffset: 0.55, flat: true })), o.mat);
+    body.name = 'cornice';
+    body.castShadow = o.cast !== false; body.receiveShadow = true;
+    this.root.add(body);
+
+    const inOpening = (a) => (o.openings || []).some((op) => Math.abs(((a - op.a + Math.PI * 3) % TAU) - Math.PI) < op.half);
+    // dentils
+    const dh = o.h * 0.22;
+    const dGeo = kit.geo(`dentil:${dh.toFixed(3)}`, () => faceted(new THREE.BoxGeometry(dh * 0.55, dh, dh * 0.72)));
+    const nd = Math.round((o.a1 - o.a0) * R / (dh * 1.9));
+    const dIM = kit.instancer(dGeo, o.mat, nd + 2, { name: 'cornice.dentils', recv: false, cast: o.cast !== false });
+    for (let i = 0; i < nd; i++) {
+      const a = o.a0 + (o.a1 - o.a0) * ((i + 0.5) / nd);
+      if (inOpening(a)) continue;
+      const rr = this.radiusAt(a) + 0.55 + 0.30 + o.dOut * 0.55;
+      dIM.userData.push(Math.cos(a) * rr, o.y - o.h * 0.12, Math.sin(a) * rr, -a + Math.PI / 2, 1);
+    }
+    if (dIM.count) { dIM.userData.finish(); this.root.add(dIM); }
+    // egg-and-dart under the corona — the lit arris of the whole wall
+    const eh = o.h * 0.42;
+    const eGeo = kit.geo(`ed:${eh.toFixed(3)}`, () => eggAndDartUnit(eh));
+    const ne = Math.round((o.a1 - o.a0) * R / (eh * 0.70));
+    const eIM = kit.instancer(eGeo, o.trim, ne + 2, { name: 'cornice.eggdart', recv: false, cast: o.cast !== false });
+    for (let i = 0; i < ne; i++) {
+      const a = o.a0 + (o.a1 - o.a0) * ((i + 0.5) / ne);
+      if (inOpening(a)) continue;
+      const rr = this.radiusAt(a) + 0.55 + 0.30 + o.dOut * 0.92;
+      eIM.userData.push(Math.cos(a) * rr, o.y + o.h * 0.30, Math.sin(a) * rr, faceIn(a), 1);
+    }
+    if (eIM.count) { eIM.userData.finish(); this.root.add(eIM); }
+  }
+
+  // =========================================================================
+  // COLONNADE — the mid-ground value band
+  // =========================================================================
+  _buildColonnade(ctx, G) {
+    const { A, B, kit, f } = G;
+    const R = this.bounds.r;
+    const per = A.peristyle || { count: 12, order: 'doric', h: 7.5 };
+    const batch = new Batcher(this.root);
+    const inOpening = (a) => this.doorAngles.some((d) => Math.abs(((a - d + Math.PI * 3) % TAU) - Math.PI) < 17 * DEG);
+
+    // EVERY perimeter column wears its order. `ornate:false` dressed the capital
+    // in plain shaft stone, so the whole colonnade — the largest run of
+    // architecture in any frame — carried no gold at all, and measured
+    // saturated gold was 1.2% of a gameplay frame against §2's "ornament spine
+    // of the whole game". The capital is a small, bright, high-up shape: it is
+    // exactly what §9.5 means by lighting the EDGES of architecture.
+    // ── PAINTED AERIAL PERSPECTIVE (§1.1 "background is LOW value, LOW chroma
+    // and hazed") ─────────────────────────────────────────────────────────
+    // There is no distance haze in this game: render/shaders/grades.js authors
+    // hazeStart 40 / hazeEnd 58 over a 25m arena shot from 14-26 units, so no
+    // architecture in the chamber ever receives any. The measured consequence
+    // was depthBands top 0.38 / mid 0.15 / bottom 0.03 — the far colonnade was
+    // the brightest, most saturated and most detailed surface in every frame,
+    // which is §1.1 exactly reversed.
+    // Until the grade ships a usable haze band this is the world's own answer,
+    // and it is the answer a background painter would give anyway: the far
+    // colonnade is simply PAINTED darker and cooler than the near one. §8 pins
+    // the camera yaw at 45deg and it never rotates in play, so +X+Z is always
+    // near and -X-Z is always far — the same rule the floor glaze already uses.
+    const withRole = (over, fn) => {
+      const save = {};
+      for (const k in over) { save[k] = kit.roleOpts[k]; kit.roleOpts[k] = { ...(kit.roleOpts[k] || {}), ...over[k] }; }
+      const out = fn();
+      for (const k in over) kit.roleOpts[k] = save[k];
+      return out;
+    };
+    // #3a1d52 is §2's mid shadow violet; multiplied into the albedo it is a
+    // recession toward the ink ramp rather than a grey knock-down.
+    const FAR = {
+      column: { litGain: 0.26, ambGain: 0.46, specGain: 0.85, tint: '#57406a' },
+      leaf:   { litGain: 0.30, ambGain: 0.34, specGain: 1.05, tint: '#7a6a86' },
+    };
+    const plain = kit.column({ h: per.h, r: per.h * 0.075, order: per.order, ornate: true });
+    const ornate = kit.column({ h: per.h * 1.05, r: per.h * 0.079, order: per.order, ornate: true });
+    const plainFar = withRole(FAR, () => kit.column({ h: per.h, r: per.h * 0.0751, order: per.order, ornate: true }));
+    const ornateFar = withRole(FAR, () => kit.column({ h: per.h * 1.05, r: per.h * 0.0791, order: per.order, ornate: true }));
+    // depth 0 = the far rim, 1 = the near rim. Everything past the room's
+    // mid-line takes the recession.
+    const depthOf = (x, z) => clamp01(0.5 + 0.5 * ((x + z) * 0.70711 / (R + 1.5)));
+
+    const cols = [];
+    if (per.grid) {
+      // a hypostyle grid: rows of columns marching across the hall
+      const step = R * 0.52;
+      for (let ix = -1; ix <= 1; ix++) for (let iz = -1; iz <= 1; iz++) {
+        if (ix === 0 && iz === 0) continue;
+        const x = ix * step, z = iz * step;
+        if (!this.insideXZ(x, z, 1.6)) continue;
+        cols.push({ x, z, ornate: Math.abs(ix) + Math.abs(iz) === 2 });
+      }
+      // plus a ring against the wall
+      for (let i = 0; i < 8; i++) {
+        const a = 140 * DEG + (170 * DEG) * (i / 7);
+        if (inOpening(a)) continue;
+        const rr = this.radiusAt(a) - 2.1;
+        cols.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, ornate: false });
+      }
+    } else if (per.sides) {
+      // two files down the long axis
+      for (const side of [-1, 1]) {
+        for (let i = 0; i < Math.round(per.count / 2); i++) {
+          const t = (i + 0.5) / Math.round(per.count / 2);
+          const x = lerp(-R * 0.80, R * 0.80, t);
+          const z = side * (R * (A.shape === 'causeway' ? 0.26 : 0.52));
+          if (!this.insideXZ(x, z, 1.4)) continue;
+          cols.push({ x, z, ornate: i === 0 || i === Math.round(per.count / 2) - 1 });
+        }
+      }
+    } else if (per.atCorners) {
+      for (let i = 0; i < per.count; i++) {
+        const a = (i / per.count) * TAU + Math.PI / per.count;
+        const rr = this.radiusAt(a) * 0.42;
+        cols.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, ornate: i % 2 === 0 });
+      }
+    } else {
+      // §8 pins the camera yaw at 45deg, so the arc around theta=45deg is the
+      // rim between the lens and the arena. A column standing there crops the
+      // play space and puts a lit vertical across the foreground. The peristyle
+      // therefore runs the far three-quarters and the near quarter stays open,
+      // which is also exactly how Hades frames a chamber.
+      for (let i = 0; i < per.count; i++) {
+        const a = (i / per.count) * TAU + 0.11;
+        if (inOpening(a)) continue;
+        const nearD = Math.abs(((a - 45 * DEG + Math.PI * 3) % TAU) - Math.PI);
+        if (nearD < 52 * DEG) continue;
+        const rr = this.radiusAt(a) - 2.35;
+        cols.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, ornate: false });
+      }
+      // the pair flanking the centre door wears the full order (§1.5 hierarchy)
+      const dA = this.doorAngles[Math.floor(this.doorAngles.length / 2)] ?? Math.PI;
+      for (const s of [-1, 1]) {
+        const a = dA + s * 22 * DEG;
+        const rr = this.radiusAt(a) - 2.6;
+        cols.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, ornate: true });
+      }
+    }
+
+    // ---- ONE BAY IN FOUR HAS FALLEN (§1.5, §1.8) --------------------------
+    // A rotationally symmetric colonnade gives the chamber no FRONT: every
+    // heading looks the same, so the player cannot orient and the frame has no
+    // landmark. Collapsing a regular quarter of the ring — a snapped stump, its
+    // drums rolled out across the floor, its capital lying on its side — is the
+    // asymmetric feature Hades always plants for exactly that reason, and it
+    // costs three instanced buckets.
+    const ruinMat = this._M(B.mats.rubble, { variation: 0.28, litGain: 0.46, ambGain: 0.62 });
+    const colStoneMat = this._M(B.mats.column, { variation: 0.24 });
+    const rubBatch = new Batcher(this.root);
+    const rm4 = new THREE.Matrix4(), rq = new THREE.Quaternion();
+    const colR = per.h * 0.075;
+    const fallBay = (c) => {
+      const y0 = this.heightAt(c.x, c.z);
+      // the stump: the column's own base plus one and a bit of shaft, snapped
+      const stumpH = colR * (1.6 + f() * 1.5);
+      const stump = kit.geo(`ruin.stump:${stumpH.toFixed(2)}:${colR.toFixed(2)}`, () => {
+        const p2 = new Parts();
+        p2.add(faceted(new THREE.BoxGeometry(colR * 2.55, colR * 0.46, colR * 2.55)), { p: [0, colR * 0.23, 0] });
+        const sh = columnDrumGeo(f, { r: colR * 0.98, h: stumpH, flutes: 8, depth: colR * 0.22 });
+        p2.add(sh, { p: [0, colR * 0.46 + stumpH * 0.5, 0] });
+        return p2.merge();
+      });
+      rq.setFromEuler(new THREE.Euler(0, f() * TAU, 0));
+      rm4.compose(new THREE.Vector3(c.x, y0, c.z), rq, one);
+      rubBatch.add(stump, colStoneMat, rm4, { name: 'colonnade.stump' });
+      // its drums, rolled out toward the arena
+      const inward = Math.atan2(-c.z, -c.x);
+      for (let d = 0; d < 3; d++) {
+        const dist = 1.5 + d * 1.25 + f() * 0.7;
+        const dx = c.x + Math.cos(inward) * dist + (f() - 0.5) * 1.1;
+        const dz = c.z + Math.sin(inward) * dist + (f() - 0.5) * 1.1;
+        if (!this.insideXZ(dx, dz, 1.0)) continue;
+        const dg = kit.geo(`ruin.drum:${d}`, () => columnDrumGeo(f, { r: colR * 0.96, h: colR * 2.1, flutes: 8, depth: colR * 0.22 }));
+        rq.setFromEuler(new THREE.Euler(Math.PI / 2 + (f() - 0.5) * 0.16, f() * TAU, (f() - 0.5) * 0.2));
+        rm4.compose(new THREE.Vector3(dx, y0 + colR * 0.96, dz), rq, one);
+        rubBatch.add(dg, colStoneMat, rm4, { name: 'colonnade.drum' });
+        this.colliders.push({ kind: 'circle', x: dx, z: dz, r: colR * 1.1 });
+        G.keepOut.push({ x: dx, z: dz, r: colR * 1.6 });
+      }
+      // the capital, on its side, acanthus up — the readable landmark shape
+      const capG = kit.geo('ruin.cap', () => brokenCapitalGeo(f, kit));
+      const cdist = 2.9 + f() * 0.8;
+      const cx = c.x + Math.cos(inward) * cdist, cz = c.z + Math.sin(inward) * cdist;
+      if (this.insideXZ(cx, cz, 1.2)) {
+        rq.setFromEuler(new THREE.Euler(0, f() * TAU, 0));
+        rm4.compose(new THREE.Vector3(cx, y0, cz), rq, one);
+        rubBatch.add(capG, colStoneMat, rm4, { name: 'colonnade.capital.fallen' });
+        this.colliders.push({ kind: 'circle', x: cx, z: cz, r: 0.9 });
+        G.keepOut.push({ x: cx, z: cz, r: 1.5 });
+      }
+      // spall
+      for (let k = 0; k < 4; k++) {
+        const a2 = f() * TAU, rr2 = 0.9 + f() * 2.6;
+        const rx = c.x + Math.cos(inward) * 1.2 + Math.cos(a2) * rr2;
+        const rz = c.z + Math.sin(inward) * 1.2 + Math.sin(a2) * rr2;
+        if (!this.insideXZ(rx, rz, 0.6)) continue;
+        const cg = kit.geo(`ruin.chunk:${k}`, () => rubbleChunkGeo(f, { w: 0.5 + f() * 0.5, h: 0.3 + f() * 0.28, d: 0.42 + f() * 0.4 }));
+        rq.setFromEuler(new THREE.Euler((f() - 0.5) * 0.5, f() * TAU, (f() - 0.5) * 0.5));
+        rm4.compose(new THREE.Vector3(rx, this.heightAt(rx, rz) + 0.12, rz), rq, one);
+        rubBatch.add(cg, ruinMat, rm4, { name: 'colonnade.spall' });
+      }
+    };
+
+    const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+    let ci = -1;
+    for (const c of cols) {
+      ci++;
+      if (A.peristyle.ruined && f() < 0.22) {
+        // a broken shaft: a stump plus a fallen drum nearby
+        fallBay(c);
+        continue;
+      }
+      // one regular bay in four, and never an ornate one: the ruin has to be
+      // legible as a deliberate gap in the rhythm, not as random attrition
+      if (!c.ornate && ci % 4 === 2) { fallBay(c); continue; }
+      qq.setFromEuler(new THREE.Euler(0, f() * TAU, 0));
+      m.compose(new THREE.Vector3(c.x, this.heightAt(c.x, c.z), c.z), qq, one);
+      const far = depthOf(c.x, c.z) < 0.46;
+      batch.addTemplate(c.ornate ? (far ? ornateFar : ornate) : (far ? plainFar : plain), m, { name: 'colonnade' });
+      this.colliders.push({ kind: 'circle', x: c.x, z: c.z, r: per.h * 0.075 * 1.45 });
+      G.keepOut.push({ x: c.x, z: c.z, r: per.h * 0.075 * 2.2 });
+      G.slots.push({ x: c.x, z: c.z, w: 1.0, spread: 2.4 });
+    }
+    batch.build();
+    rubBatch.build();
+    G.columns = cols;
+    G.colH = per.h;
+
+    // ---- an ARCHITRAVE tying the wall columns together --------------------
+    // Free-standing posts read as a fence. A beam across their capitals is what
+    // makes the room read as built architecture.
+    if (!per.grid && !per.sides && G.wallArc) {
+      const [wa0, wa1] = G.wallArc;
+      const y = per.h + 0.30;
+      const beam = new THREE.Mesh(this._keep(sweep(this.profile, [
+        [-2.9, y], [-2.9, y + 0.62], [-2.1, y + 0.70], [-2.1, y + 0.10],
+      ], { a0: wa0 + 6 * DEG, a1: wa1 - 6 * DEG, closed: false, flat: true })),
+        this._M(B.mats.wall, { side: THREE.DoubleSide, variation: 0.16 }));
+      beam.name = 'colonnade.architrave';
+      beam.castShadow = true; beam.receiveShadow = true;
+      this.root.add(beam);
+    }
+
+    // dispose the templates (their geometry is cached in the kit, not here)
+    plain.clear(); ornate.clear(); plainFar.clear(); ornateFar.clear();
+  }
+
+  // =========================================================================
+  // FOCAL — the thing the room points at
+  // =========================================================================
+  _buildFocal(ctx, G) {
+    const { A, B, kit, f } = G;
+    const R = this.bounds.r;
+    const batch = new Batcher(this.root);
+    const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+    // MARBLE, NOT VERDIGRIS. `metal` resolves to bronze.verdigris, whose green
+    // is off-palette for Tartarus (§2 lists no green here at all; verdigris is
+    // a bronze patina and #3fa86a is Elysium's) and which is what put a swirled
+    // bile-green marble on the Cerberus. `bone` is an authored Tartarus
+    // material -- crimson stone, BONE, blood -- and it puts the statuary a full
+    // value band above the wall behind it, which is what §9.4 wants from the
+    // mid-ground. The gold trim shell rides on top of it.
+    // ...but a marble figure at full rig gain is the BRIGHTEST thing in the
+    // room, which inverts §9.2 (the hero out-values everything in the play
+    // area) just as surely as a bright floor does. Statuary is mid-ground: one
+    // band above the wall, one band below the character, and its highlight
+    // lives on the gold trim's specular rather than on its diffuse.
+    // ...and TINTED toward §2's marble: bone's own ramp tops out at #f7f1e0,
+    // which under a brazier at intensity 200 is a white blob with no form left
+    // in it. #c3bacb pulls it to marble light over marble shadow (#efe3cf /
+    // #8a7f9c) and the litGain cut is what puts the modelling back.
+    // ── ROUND-2 §7 HARD BAN ("uniform flat-lit geometry with no rim and no
+    // value separation"). kit.js authors pteruges straps, a sculpted cuirass,
+    // pectoral spheres, a belt torus, three-lame pauldrons on the sentinel, and
+    // a full muzzle / jaw / fang / ear / paw stack on the hound. NONE of it
+    // survived to screen, and the cause was not the geometry: at litGain 0.34
+    // against ambGain 0.56 a figure receives a third of the key and is
+    // dominated by a flat hemisphere wash. With no terminator every carved
+    // surface collapses to one tone and the mesh reads as its own bounding
+    // primitive — a cone with a ball on it. Key up 2.5x, ambient halved, so the
+    // directional light carves the relief that is already there.
+    // PROJECTION. `bone` ships triplanar:false, so a statue merged out of ~200
+    // primitives gave EVERY sphere and tube its own full copy of the texture:
+    // the bone speckle came out at 20cm across and the Cerberus read as a
+    // LEOPARD at 3x. World-space projection at a 0.6m period turns the same
+    // texture back into stone grain.
+    // VALUE BAND. §9.2 says the HERO is the brightest large-ish shape in the
+    // play area; measured, the sentinel and the hound were 95/255 against a
+    // hero at 46/255. The gains below now carve the relief, but a #c3bacb
+    // marble under a brazier is still a pale MASS, so the tint comes down a
+    // band too: statuary sits one band above the wall and one below the
+    // character, and its highlight lives on the gold trim's specular.
+    // MATERIAL. `bone` ships triplanar:false, so a statue merged out of ~200
+    // primitives gave EVERY sphere and tube its own full copy of the texture —
+    // the bone speckle came out 20cm across and the Cerberus read as a LEOPARD
+    // at 3x. Forcing world projection on `bone` only swapped the leopard for a
+    // checkerboard, because that recipe's field is a tile grid. Statuary wants
+    // a STONE with directional veining, which is exactly what marble is: it
+    // projects triplanar by design, it carves instead of spotting, and tinted
+    // to §2's marble shadow (#8a7f9c) it stays inside the Tartarus ink ramp
+    // rather than importing Elysium's white.
+    const statueMat = { mat: 'marble.elysium', matOpts: { tint: '#8f8496', litGain: 0.44, ambGain: 0.40,
+      specGain: 1.60, variation: 0.14, variationTint: '#5a2331', triScale: 0.42 } };
+
+    // Statues stand on the wall arc between the doors, facing the arena.
+    const kinds = B.props.statues;
+    const placed = [];
+    // The bays BETWEEN the doorways are the only places a figure can stand;
+    // build() resolved them, so nothing can grow out of a threshold.
+    const gaps = G.bays;
+    const spots = gaps.slice(1, 1 + Math.min(kinds.length, 3)).map((g2, i) => ({ a: g2.a, kind: kinds[i % kinds.length] }));
+    for (const s of spots) {
+      const rr = this.radiusAt(s.a) - 4.0;
+      const st = kit.statue(s.kind, { scale: s.kind === 'hound' ? 1.35 : 1.15, plinth: true, plinthH: 1.15, plinthW: s.kind === 'hound' ? 2.4 : 1.7, ...statueMat });
+      qq.setFromEuler(new THREE.Euler(0, faceIn(s.a) + (f() - 0.5) * 0.3, 0));
+      const x = Math.cos(s.a) * rr, z = Math.sin(s.a) * rr;
+      m.compose(new THREE.Vector3(x, 0, z), qq, one);
+      batch.addTemplate(st, m, { name: 'statue' });
+      st.clear();
+      this.colliders.push({ kind: 'circle', x, z, r: 1.15 });
+      G.keepOut.push({ x, z, r: 2.2 });
+      G.slots.push({ x, z, w: 1.4, spread: 2.6 });
+      placed.push({ x, z });
+    }
+
+    // The focal statue: bigger, standing in the WIDEST bay of the back wall.
+    const fa = G.focalAngle;
+    if (A.focal === 'throne' && this.dais) {
+      const d = this.dais;
+      const th = kit.geo('throne', () => {
+        const p = new Parts();
+        p.box(2.6, 0.55, 2.2, [0, 0.28, 0]);
+        p.box(2.3, 3.1, 0.5, [0, 1.55, -0.85]);
+        p.box(2.7, 0.4, 0.7, [0, 3.25, -0.85]);
+        for (const s of [-1, 1]) {
+          p.box(0.42, 1.5, 2.0, [s * 1.1, 1.3, 0]);
+          p.add(lathe([[0.24, 0], [0.30, 0.2], [0.16, 0.5], [0.24, 0.7], [0.10, 0.9]], 12), { p: [s * 1.1, 2.05, 0.85] });
+        }
+        return faceted(p.merge());
+      });
+      const tm = new THREE.Mesh(th, this._M(B.mats.wall));
+      tm.position.set(d.x, d.h, d.z);
+      tm.rotation.y = faceIn(fa);
+      tm.castShadow = true; tm.receiveShadow = true;
+      this.root.add(tm);
+      this.colliders.push({ kind: 'circle', x: d.x, z: d.z, r: 1.8 });
+    } else {
+      const rr = this.radiusAt(fa) - 5.6;
+      const st = kit.statue(B.props.focalStatue, { scale: 1.7, plinth: true, plinthH: 1.6, plinthW: 3.0, ...statueMat });
+      qq.setFromEuler(new THREE.Euler(0, faceIn(fa), 0));
+      const x = Math.cos(fa) * rr, z = Math.sin(fa) * rr;
+      m.compose(new THREE.Vector3(x, 0, z), qq, one);
+      batch.addTemplate(st, m, { name: 'statue.focal' });
+      st.clear();
+      this.colliders.push({ kind: 'circle', x, z, r: 2.0 });
+      G.keepOut.push({ x, z, r: 3.4 });
+      G.slots.push({ x, z, w: 2.0, spread: 3.4 });
+    }
+    batch.build();
+    G.focalAngle = fa;
+  }
+
+  // =========================================================================
+  // BRAZIERS — placed on the light rig's own practicals wherever it can be done
+  // =========================================================================
+  _brazierAnchors(G) {
+    const { f } = G;
+    const ctx = this.ctx;
+    const rig = ctx.lighting && ctx.lighting.rigDef;
+    const list = (rig && rig.practicals) || [];
+    const warm = list.filter((p) => { const c = new THREE.Color(p.color || '#ffa257'); return c.r >= c.b * 1.15; });
+    const out = [];
+    // one warm practical is reserved for the hanging bowl over the arena, so
+    // the play space gets a modelling light instead of only a rim of fire
+    const n = Math.max(4, (warm.length || 5) - 1);
+    for (let i = 0; i < n; i++) {
+      const src = warm[i];
+      let a, r;
+      if (src) {
+        a = Math.atan2(src.pos[2], src.pos[0]);
+        r = Math.hypot(src.pos[0], src.pos[2]);
+      } else {
+        a = 120 * DEG + (240 * DEG) * (i / n);
+        r = this.bounds.r * 0.74;
+      }
+      // snap on to this room's own brazier ring: the authored practicals were
+      // laid out for a 16u circle and would otherwise stand inside a wall or
+      // out over the void in a cruciform / causeway plan.
+      const rMax = this.radiusAt(a) - 3.2;
+      r = Math.min(r, rMax);
+      r = Math.max(r, this.bounds.r * 0.42);
+      // never in a doorway
+      for (const d of this.doorAngles) {
+        if (Math.abs(((a - d + Math.PI * 3) % TAU) - Math.PI) < 14 * DEG) a = d + 17 * DEG;
+      }
+      out.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, rad: 6.4, light: src ? i : -1 });
+    }
+    return out;
+  }
+
+  _buildBraziers(ctx, G) {
+    const { B, kit, f } = G;
+    const pools = G.pools || this._brazierAnchors(G);
+    const batch = new Batcher(this.root);
+    const template = kit.brazier({ h: 2.05, r: 0.74, plinth: true });
+    const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+    const flameLocal = template.userData.flame.clone();
+    pools.forEach((p, i) => {
+      qq.setFromEuler(new THREE.Euler(0, f() * TAU, 0));
+      m.compose(new THREE.Vector3(p.x, this.heightAt(p.x, p.z), p.z), qq, one);
+      batch.addTemplate(template, m, { name: 'brazier' });
+      G.flamePoints.push({
+        x: p.x, y: this.heightAt(p.x, p.z) + flameLocal.y + 0.10, z: p.z,
+        seed: (i * 0.371 + 0.13) % 1, scale: 1.0,
+      });
+      this.colliders.push({ kind: 'circle', x: p.x, z: p.z, r: 0.95 });
+      G.keepOut.push({ x: p.x, z: p.z, r: 2.0 });
+      G.slots.push({ x: p.x, z: p.z, w: 0.7, spread: 2.8 });
+    });
+    // the hearth: squat, wide, low enough to read from a floor-level camera
+    {
+      const hb = kit.brazier({ h: 1.15, r: 1.05, plinth: true });
+      const hm = new THREE.Matrix4(), hq = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, f() * TAU, 0));
+      hm.compose(new THREE.Vector3(G.hearth.x, this.heightAt(G.hearth.x, G.hearth.z), G.hearth.z), hq, new THREE.Vector3(1, 1, 1));
+      batch.addTemplate(hb, hm, { name: 'hearth' });
+      G.flamePoints.push({
+        x: G.hearth.x, y: this.heightAt(G.hearth.x, G.hearth.z) + hb.userData.flame.y + 0.08,
+        z: G.hearth.z, seed: 0.83, scale: 1.0,
+      });
+      hb.clear();
+      this.colliders.push({ kind: 'circle', x: G.hearth.x, z: G.hearth.z, r: 1.25 });
+      G.keepOut.push({ x: G.hearth.x, z: G.hearth.z, r: 2.6 });
+      G.slots.push({ x: G.hearth.x, z: G.hearth.z, w: 0.8, spread: 3.0 });
+    }
+    batch.build();
+    template.clear();
+
+    // Move the rig's own warm practicals on to the braziers we actually built.
+    // The rig authors COUNT and COLOUR; the room owns WHERE, because only the
+    // room knows its plan. (Runtime light positioning only — never their file.)
+    const rig = ctx.lighting;
+    if (rig && rig._practicals) {
+      const warm = rig._practicals.filter((l) => l.color && l.color.r >= l.color.b * 1.15);
+      warm.forEach((l, i) => {
+        if (i >= pools.length) {
+          // the spare goes up on to the hanging bowl (its position is derived
+          // from the same focal axis, so it lands wherever the bowl is hung)
+          const fa = this.focalAngle, rr = this.bounds.r * 0.26;
+          l.position.set(Math.cos(fa) * rr, 7.6, Math.sin(fa) * rr);
+          l.distance = Math.max(l.distance, 16);
+          return;
+        }
+        const p = pools[i];
+        l.position.set(p.x, this.heightAt(p.x, p.z) + 2.35, p.z);
+      });
+      // the cool washes go up on to the wall / capitals of THIS room
+      const cool = rig._practicals.filter((l) => !(l.color && l.color.r >= l.color.b * 1.15));
+      const [wa0, wa1] = G.wallArc || [130 * DEG, 320 * DEG];
+      cool.forEach((l, i) => {
+        const a = wa0 + (wa1 - wa0) * ((i + 0.5) / Math.max(1, cool.length));
+        // STAND-OFF. The rig authors these at intensity 215-290 / distance 17,
+        // numbers chosen when the plan was r=17. On a r=12.6 plan a 1.5m
+        // stand-off puts a 265cd source a metre and a half off the masonry and
+        // the bay panels blow to white. 3.4m back keeps the wash on the wall
+        // and off its own hotspot.
+        const rr = this.radiusAt(a) - 3.4;
+        l.position.set(Math.cos(a) * rr, (G.wallH1 || 5.5) + 1.4 + (i % 2) * 2.2, Math.sin(a) * rr);
+      });
+    }
+  }
+
+  // =========================================================================
+  // HANGINGS — banners, censers, wall sconces
+  // =========================================================================
+  _buildHangings(ctx, G) {
+    const { B, kit, f } = G;
+    const [wa0, wa1] = G.wallArc || [130 * DEG, 320 * DEG];
+    const H1 = G.wallH1 || 5.5;
+    const inOpening = (a) => this.doorAngles.some((d) => Math.abs(((a - d + Math.PI * 3) % TAU) - Math.PI) < 17 * DEG);
+
+    // ---- banners hanging from the mid cornice ----------------------------
+    const nB = B.props.banners;
+    const variants = [0, 1, 2].map((i) => kit.banner({ w: 2.0, h: 4.6 + i * 0.5, sag: 0.22, wave: 0.18, seed: 0.13 + i * 0.29 }));
+    for (let i = 0; i < nB; i++) {
+      const a = wa0 + (wa1 - wa0) * ((i + 0.5) / nB);
+      if (inOpening(a)) continue;
+      const rr = this.radiusAt(a) - 0.1;
+      const v = variants[i % 3];
+      const g = v.clone(true);
+      g.position.set(Math.cos(a) * rr, H1 + 0.30, Math.sin(a) * rr);
+      g.rotation.y = faceIn(a);             // the painted face looks INTO the room
+      g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+      this.root.add(g);
+      this.props.addSway(g, { amp: 0.020, rate: 0.36 + f() * 0.22, phase: f() * 10, axis: 'x', drift: 0.4 });
+    }
+    for (const v of variants) v.clear();
+
+    // ---- THE HANGING BRAZIER over the arena -------------------------------
+    // A chamber lit only from its rim has a dead middle: the play space gets no
+    // modelling light, the floor emblem is a flat dark disc, and the character
+    // has nothing above them to separate their crown from the ground. A great
+    // chained bowl hanging off-axis over the arena fixes all three at once and
+    // is about as Hades as an object gets. Its pool is registered with the
+    // floor glaze, so the ground plane is painted around it.
+    {
+      const fa = G.focalAngle ?? Math.PI * 1.25;
+      const hx = Math.cos(fa) * this.bounds.r * 0.26;
+      const hz = Math.sin(fa) * this.bounds.r * 0.26;
+      const hy = 7.4;
+      G.hangPos = [hx, hy + 0.2, hz];
+      const big = kit.censer({ drop: (G.wallTop || 14) - hy + 1.0, r: 1.05 });
+      big.position.set(hx, hy, hz);
+      big.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      this.root.add(big);
+      this.props.addSway(big, { amp: 0.022, rate: 0.24, phase: 3.1, axis: 'z', drift: 0.8 });
+      G.flamePoints.push({ x: hx, y: hy + 0.55, z: hz, seed: 0.62, scale: 0.95 });
+      // borrow a pooled practical if the rig has one spare
+      ctx.lighting?.acquireLight?.({
+        color: '#ffb070', intensity: 210, distance: 15, decay: 2.0,
+        pos: [hx, hy + 0.2, hz], flicker: 0.34, speed: 0.63, kind: 'practical',
+      });
+    }
+
+    // ---- censers hanging over the arena ----------------------------------
+    const nC = B.props.censers;
+    const cen = kit.censer({ drop: 3.4, r: 0.46 });
+    for (let i = 0; i < nC; i++) {
+      const a = wa0 + (wa1 - wa0) * ((i + 0.75) / (nC + 0.5));
+      const rr = this.radiusAt(a) - 3.4;
+      const g = cen.clone(true);
+      const y = (G.wallTop || 12) - 3.9;
+      g.position.set(Math.cos(a) * rr, y, Math.sin(a) * rr);
+      g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      this.root.add(g);
+      this.props.addSway(g, { amp: 0.045, rate: 0.30 + f() * 0.2, phase: f() * 10, axis: 'z', drift: 0.7 });
+      G.flamePoints.push({ x: Math.cos(a) * rr, y: y + 0.34, z: Math.sin(a) * rr, seed: (0.4 + i * 0.19) % 1, scale: 0.58 });
+    }
+    cen.clear();
+
+    // ---- wall sconces flanking every door --------------------------------
+    const sc = kit.sconce({ r: 0.42 });
+    const batch = new Batcher(this.root);
+    const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+    // Outboard of the door piers (the opening is +-15deg and the piers reach
+    // ~9deg), so a sconce is always mounted on solid masonry and never left
+    // hanging in the middle of a threshold.
+    const flameLocal = sc.userData.flame;
+    for (const d of this.doorAngles) {
+      for (const s of [-1, 1]) {
+        const a = d + s * 20 * DEG;
+        const rr = this.radiusAt(a) - 0.15;
+        qq.setFromEuler(new THREE.Euler(0, faceIn(a), 0));
+        const y = 3.5;
+        m.compose(new THREE.Vector3(Math.cos(a) * rr, y, Math.sin(a) * rr), qq, one);
+        batch.addTemplate(sc, m, { name: 'sconce' });
+        const fr = rr - flameLocal.z;      // the bowl sits inboard of the plate
+        G.flamePoints.push({
+          x: Math.cos(a) * fr, y: y + flameLocal.y + 0.06, z: Math.sin(a) * fr,
+          seed: Math.abs(Math.sin(a * 12.9898) * 43758.5453) % 1, scale: 0.42,
+        });
+      }
+    }
+    batch.build();
+    sc.clear();
+  }
+
+  // =========================================================================
+  // DOORS
+  // =========================================================================
+  _buildDoors(ctx, G) {
+    const { kit, B, rng } = G;
+    const anchors = this.doorAngles.map((a) => ({
+      x: Math.cos(a) * (this.radiusAt(a) - 0.9),
+      z: Math.sin(a) * (this.radiusAt(a) - 0.9),
+      y: 0, angle: a, width: 4.0, height: 4.4,
+    }));
+    this.doors.build(ctx, kit, { anchors, biome: B, rng });
+    for (const a of anchors) {
+      G.keepOut.push({ x: a.x, z: a.z, r: 4.6 });
+      // the jambs are solid
+      for (const s of [-1, 1]) {
+        const px = a.x + Math.cos(a.angle + Math.PI / 2) * s * 2.9;
+        const pz = a.z + Math.sin(a.angle + Math.PI / 2) * s * 2.9;
+        this.colliders.push({ kind: 'circle', x: px, z: pz, r: 1.0 });
+      }
+    }
+    if (this._clearedPending) this.doors.setSealed(false);
+  }
+
+  // =========================================================================
+  // SCATTER
+  // =========================================================================
+  _buildScatter(ctx, G) {
+    const { B, kit, rng, f } = G;
+    const R = this.bounds.r;
+    const [wa0, wa1] = G.wallArc || [130 * DEG, 320 * DEG];
+
+    // Slots hug the wall base and the column feet; the PLAY AREA gets nothing.
+    // §1.8: negative space is used, not filled — a rogue-lite arena that is
+    // full of clutter is unreadable, and a clean centre is what lets the
+    // character read as the subject.
+    const slots = G.slots.slice();
+    for (let i = 0; i < 16; i++) {
+      const a = wa0 + (wa1 - wa0) * ((i + 0.5) / 16);
+      const rr = this.radiusAt(a) - 1.6 - f() * 1.4;
+      slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 2.4, spread: 2.0 });
+    }
+    // the FAR mid-ring: a hall this size cannot have a ten-metre band of
+    // nothing between the emblem and the colonnade. Debris goes on the far
+    // side only — the near half stays clear so the play space reads (§1.8).
+    for (let i = 0; i < 7; i++) {
+      const a = 135 * DEG + (170 * DEG) * ((i + 0.5) / 7) + (f() - 0.5) * 0.2;
+      const rr = R * (0.50 + f() * 0.22);
+      slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 1.5, spread: 2.2 });
+    }
+    // a few pieces spilled toward the near rim so the foreground has texture
+    for (let i = 0; i < 6; i++) {
+      const a = 320 * DEG + (170 * DEG) * ((i + 0.5) / 6);
+      const rr = this.radiusAt(a) - 2.4 - f() * 1.6;
+      slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 1.1, spread: 1.8 });
+    }
+
+    const keepOut = G.keepOut.slice();
+    keepOut.push({ x: 0, z: 0, r: R * 0.40 });      // the play area stays clean
+
+    const cols = this.props.scatter(kit, {
+      rng, slots, mix: B.props.mix,
+      count: Math.round(58 * (B.props.density ?? 1)),
+      keepOut,
+      inside: (x, z, r) => this.insideXZ(x, z, r + 1.1),
+      root: this.root,
+    });
+    for (const c of cols) this.colliders.push(c);
+  }
+
+  // =========================================================================
+  _finishColliders(ctx, G) {
+    // A coarse uniform grid so collide() and raycastWalk() stay O(1)-ish even
+    // with a hundred solids in a hypostyle hall.
+    const R = this.bounds.r + 4;
+    const cell = 4;
+    const n = Math.ceil((R * 2) / cell);
+    const grid = new Array(n * n);
+    for (let i = 0; i < grid.length; i++) grid[i] = null;
+    const idx = (x, z) => {
+      const ix = Math.min(n - 1, Math.max(0, Math.floor((x + R) / cell)));
+      const iz = Math.min(n - 1, Math.max(0, Math.floor((z + R) / cell)));
+      return iz * n + ix;
+    };
+    // Every collider kind has to publish a footprint or it never lands in the
+    // grid and collide() silently ignores it — which is exactly how a solid
+    // becomes a ghost. AABBs get their extents; circles get their radius.
+    for (const c of this.colliders) {
+      let x0, x1, z0, z1;
+      if (c.kind === 'aabb') {
+        x0 = Math.min(c.x0, c.x1) - 0.8; x1 = Math.max(c.x0, c.x1) + 0.8;
+        z0 = Math.min(c.z0, c.z1) - 0.8; z1 = Math.max(c.z0, c.z1) + 0.8;
+      } else {
+        const r = (c.r ?? 1) + 0.8;
+        x0 = c.x - r; x1 = c.x + r; z0 = c.z - r; z1 = c.z + r;
+      }
+      for (let x = x0; x <= x1 + cell * 0.5; x += cell * 0.5) {
+        for (let z = z0; z <= z1 + cell * 0.5; z += cell * 0.5) {
+          const k = idx(Math.min(x, x1), Math.min(z, z1));
+          if (!grid[k]) grid[k] = [];
+          if (grid[k].indexOf(c) < 0) grid[k].push(c);
+        }
+      }
+    }
+    this._grid = { grid, n, cell, R, idx };
+  }
+
+  // =========================================================================
+  // QUERIES — the contract other systems call
+  // =========================================================================
+  /** Interpolated boundary radius at a world angle. */
+  radiusAt(a) {
+    const t = ((a % TAU) + TAU) % TAU / TAU * NA;
+    const i0 = Math.floor(t) % NA, i1 = (i0 + 1) % NA, ft = t - Math.floor(t);
+    return this.profile[i0] * (1 - ft) + this.profile[i1] * ft;
+  }
+
+  insideXZ(x, z, margin = 0) {
+    const d = Math.hypot(x, z);
+    if (d < 1e-4) return true;
+    return d + margin <= this.radiusAt(Math.atan2(z, x));
+  }
+
+  /** Legacy contract — kept exactly, now shape-aware. */
   clampToArena(v3, radius = 0.4) {
-    const r = this.bounds.r - radius;
     const d = Math.hypot(v3.x, v3.z);
+    if (d < 1e-5) return v3;
+    const r = this.radiusAt(Math.atan2(v3.z, v3.x)) - radius - 0.55;
     if (d > r) { const k = r / d; v3.x *= k; v3.z *= k; }
     return v3;
   }
-  heightAt() { return 0; }
+
+  heightAt(x, z) {
+    const d = this.dais;
+    if (!d) return 0;
+    const dx = x - (d.x || 0), dz = z - (d.z || 0);
+    const r = Math.hypot(dx, dz);
+    const steps = d.steps ?? 3;
+    if (r > d.r + steps * 0.52) return 0;
+    if (r <= d.r) return d.h;
+    const k = Math.ceil((r - d.r) / 0.52);
+    return d.h * Math.max(0, (steps - k + 1) / steps);
+  }
+
+  /**
+   * collide(pos, radius) -> pos
+   * Pushes `pos` out of every solid it overlaps, then clamps it inside the
+   * arena boundary. Mutates and returns `pos` (a THREE.Vector3 or {x,z}).
+   */
+  collide(pos, radius = 0.4) {
+    const g = this._grid;
+    let list = this.colliders;
+    if (g) {
+      const cell = g.grid[g.idx(pos.x, pos.z)];
+      list = cell || EMPTY;
+    }
+    for (let i = 0; i < list.length; i++) {
+      const c = list[i];
+      if (c.kind === 'aabb') {
+        const cx = Math.max(c.x0, Math.min(pos.x, c.x1));
+        const cz = Math.max(c.z0, Math.min(pos.z, c.z1));
+        const dx = pos.x - cx, dz = pos.z - cz;
+        const d = Math.hypot(dx, dz);
+        if (d > 1e-5) {
+          // outside the box: push along the shortest exit vector
+          if (d < radius) { const k = (radius - d) / d; pos.x += dx * k; pos.z += dz * k; }
+        } else {
+          // INSIDE the box. Clamping to the nearest point returns the point
+          // itself, so the naive push moves along an arbitrary axis and can
+          // leave the body still inside — a body that spawns inside a solid
+          // then walks through it. Eject through the nearest FACE instead.
+          const ex0 = pos.x - c.x0, ex1 = c.x1 - pos.x;
+          const ez0 = pos.z - c.z0, ez1 = c.z1 - pos.z;
+          const m = Math.min(ex0, ex1, ez0, ez1);
+          if (m === ex0) pos.x = c.x0 - radius;
+          else if (m === ex1) pos.x = c.x1 + radius;
+          else if (m === ez0) pos.z = c.z0 - radius;
+          else pos.z = c.z1 + radius;
+        }
+      } else {
+        const dx = pos.x - c.x, dz = pos.z - c.z;
+        const rr = c.r + radius;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < rr * rr) {
+          const d = Math.sqrt(d2) || 1e-5;
+          const k = (rr - d) / d;
+          pos.x += dx * k; pos.z += dz * k;
+        }
+      }
+    }
+    this.clampToArena(pos, radius);
+    return pos;
+  }
+
+  /**
+   * raycastWalk(from, to, radius) -> {hit, t, point, normal}
+   * Straight-line walkability for AI. `t` is the fraction of the segment that
+   * is clear. Cheap: analytic against circles, sampled against the boundary.
+   */
+  raycastWalk(from, to, radius = 0.4) {
+    const dx = to.x - from.x, dz = to.z - from.z;
+    const len = Math.hypot(dx, dz);
+    const out = { hit: false, t: 1, point: new THREE.Vector3(to.x, 0, to.z), normal: new THREE.Vector3(0, 0, 0) };
+    if (len < 1e-5) return out;
+    const ux = dx / len, uz = dz / len;
+    let best = 1;
+    let bn = null;
+    for (const c of this.colliders) {
+      if (c.kind === 'aabb') {
+        // proper slab test against the box grown by `radius`. A bounding-circle
+        // proxy reports a hit on any path that merely passes near a long thin
+        // box, and an AI that believes it cannot walk down an open corridor is
+        // worse than no walkability test at all.
+        const x0 = c.x0 - radius, x1 = c.x1 + radius;
+        const z0 = c.z0 - radius, z1 = c.z1 + radius;
+        let tmin = 0, tmax = 1;
+        let ok = true;
+        for (const [o, dd, lo, hi] of [[from.x, dx, x0, x1], [from.z, dz, z0, z1]]) {
+          if (Math.abs(dd) < 1e-6) { if (o < lo || o > hi) { ok = false; break; } continue; }
+          let t0 = (lo - o) / dd, t1 = (hi - o) / dd;
+          if (t0 > t1) { const t = t0; t0 = t1; t1 = t; }
+          tmin = Math.max(tmin, t0); tmax = Math.min(tmax, t1);
+          if (tmin > tmax) { ok = false; break; }
+        }
+        if (ok && tmin < best) {
+          best = tmin;
+          const mx = from.x + dx * tmin, mz = from.z + dz * tmin;
+          bn = { x: mx - Math.max(c.x0, Math.min(mx, c.x1)), z: mz - Math.max(c.z0, Math.min(mz, c.z1)) };
+          if (Math.abs(bn.x) < 1e-6 && Math.abs(bn.z) < 1e-6) bn = { x: -ux, z: -uz };
+        }
+        continue;
+      }
+      const cx = c.x, cz = c.z, cr = c.r;
+      const R2 = cr + radius;
+      const ox = from.x - cx, oz = from.z - cz;
+      const b = ox * ux + oz * uz;
+      const cc = ox * ox + oz * oz - R2 * R2;
+      if (cc < 0) { best = 0; bn = { x: ox, z: oz }; break; }
+      const disc = b * b - cc;
+      if (disc <= 0) continue;
+      const s = -b - Math.sqrt(disc);
+      if (s >= 0 && s < len) {
+        const t = s / len;
+        if (t < best) {
+          best = t;
+          bn = { x: from.x + ux * s - cx, z: from.z + uz * s - cz };
+        }
+      }
+    }
+    // boundary
+    const steps = Math.max(2, Math.ceil(len / 1.5));
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      if (t > best) break;
+      const x = from.x + dx * t, z = from.z + dz * t;
+      if (!this.insideXZ(x, z, radius + 0.55)) {
+        best = Math.max(0, (i - 1) / steps);
+        bn = { x: -x, z: -z };
+        break;
+      }
+    }
+    out.t = best;
+    out.hit = best < 0.999;
+    out.point.set(from.x + dx * best, 0, from.z + dz * best);
+    if (bn) {
+      const l = Math.hypot(bn.x, bn.z) || 1;
+      out.normal.set(bn.x / l, 0, bn.z / l);
+    }
+    return out;
+  }
+
+  /** All exits, for AGENT-RUN / AGENT-UI. */
+  getExits() { return this.doors.getChoices(); }
+
+  setCleared(v = true) {
+    this._clearedPending = v;
+    const snap = !!(this.ctx && (this.ctx.CAPTURE || this.ctx.capture));
+    this.doors.setSealed(!v, snap);
+    return this;
+  }
+
+  // =========================================================================
+  // BIOME / LIFECYCLE
+  // =========================================================================
+  setBiome(name, ctx = this.ctx) {
+    if (!BIOMES[name] || name === this.biome) return this;
+    // Announce FIRST: the light rig retunes, publishes a new rim constant and
+    // a new prefiltered sky, and re-authors its practicals — all of which
+    // build() then reads while laying out the chamber.
+    ctx?.events?.emit?.('biome.changed', { name });
+    this.build(name, null, this.seed);
+    return this;
+  }
+
+  /** Swap to a fresh room of the same biome (chamber transition). */
+  nextRoom(seed, archetype) {
+    return this.build(this.biome, archetype || null, seed ?? (this.seed + 1));
+  }
+
+  /**
+   * Material lookup that survives a stubbed material system. ARCHITECTURE §6
+   * ("code defensively against stubs") — the world is built during init and a
+   * peer agent's half-written library must not take the whole game down with
+   * it. Never ships an untextured grey (§7): the fallback is painted stone.
+   */
+  _M(name, opts) {
+    const m = this.ctx && this.ctx.mats;
+    // §1.2 / §9.6. render/lighting.js publishes rim.dir with a POSITIVE Z, which
+    // at the shipping camera (yaw 45, pitch 50) projects onto SCREEN-LEFT — the
+    // same side the key lights from. Adding the complement on top of the key
+    // side just adds up to white, which is why measured cyan occupancy was
+    // 3.8-6.5% against §9.6's 8% floor while the rim was nominally the second
+    // strongest source in the frame. ENV_RIM_DIR moves it to the screen-RIGHT
+    // contour, where the key is not, so every column arris, cornice lip and
+    // statue edge in the room carries a genuinely saturated cool edge. The
+    // shader's own ground-plane veto keeps it off the floor.
+    const o2 = (opts && opts.rimDir) ? opts : { ...(opts || {}), rimDir: ENV_RIM_DIR };
+    if (m && typeof m.get === 'function') {
+      try { return m.get(name, o2); } catch (e) { /* fall through */ }
+    }
+    if (!this._fallbackMat) {
+      this._fallbackMat = new THREE.MeshStandardMaterial({ color: new THREE.Color('#5a2331'), roughness: 0.85, metalness: 0.05 });
+      this._mats.push(this._fallbackMat);
+    }
+    return this._fallbackMat;
+  }
+
+  _keep(g) { this._geo.push(g); return g; }
+
+  clear() {
+    this.doors.dispose();
+    this.props.dispose();
+    for (const c of this.root.children.slice()) this.root.remove(c);
+    for (const g of this._geo) g.dispose?.();
+    this._geo.length = 0;
+    for (const m of this._mats) m.dispose?.();
+    this._mats.length = 0;
+    if (this.kit) { this.kit.dispose(); this.kit = null; }
+    this.colliders.length = 0;
+    this._grid = null;
+    this._built = false;
+  }
 
   update(dt, ctx) {
-    const t = (ctx && ctx.time && ctx.time.t) || 0;
-    if (this.doorMat) this.doorMat.uniforms.uTime.value = t;
-    if (this.flameMats) for (const m of this.flameMats) m.uniforms.uTime.value = t;
-    else if (this.flameMat) this.flameMat.uniforms.uTime.value = t;
+    this.props.update(dt, ctx);
+    this.doors.update(dt, ctx);
   }
 
-  /** Y-axis billboard the flames — cheap, and they never shear on the ground plane. */
-  lateUpdate(alpha, ctx) {
-    if (!this.flames || !ctx || !ctx.camera) return;
-    const c = ctx.camera.position;
-    for (const f of this.flames) f.rotation.y = Math.atan2(c.x - f.position.x, c.z - f.position.z);
-    if (this.statues) for (const st of this.statues) st.visible = true;
-  }
+  lateUpdate(alpha, ctx) { /* flames billboard in the vertex shader */ }
+
   dispose() { this.clear(); }
 }
+
+const EMPTY = [];
+
+export default World;

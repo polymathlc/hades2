@@ -94,15 +94,43 @@ function setupCapture(engine, ctx, setBiome){
       engine.skipRender = false;
       return n;
     },
-    // freeze the camera at an authored pose (disables the follow rig)
+    // freeze the camera at an authored pose (disables the follow rig).
+    //
+    // ANCHORING: a pose may carry `anchor:'player'`, in which case pos/target
+    // are offsets from the hero's feet on the ground plane. The shot list used
+    // to hard-code world coordinates aimed at the origin, so every "gameplay"
+    // frame was pointed at the middle of the room while the character stood
+    // somewhere else — the critic never actually saw the subject. Anchored
+    // poses frame whatever the player is doing, which is the framing the game
+    // itself uses. `anchor:'rig'` goes further and reproduces the live camera
+    // rig's own geometry (pitch/yaw/distance/fov) so the shot IS the play
+    // camera rather than an approximation of it.
     pose(p){
       if(!p){ ctx.cameraRig.enabled = true; return; }
       ctx.cameraRig.enabled = false;
       const cam = ctx.camera;
-      if(p.pos) cam.position.set(...p.pos);
-      if(p.target) cam.lookAt(...p.target);
+      const pl = ctx.player && ctx.player.position ? ctx.player.position : null;
+      if(p.anchor === 'rig' && ctx.cameraRig){
+        const rig = ctx.cameraRig;
+        const dist = p.distance ?? rig.tune.distance;
+        const pitch = (p.pitchDeg != null ? p.pitchDeg : rig.tune.pitchDeg) * Math.PI/180;
+        const yaw   = (p.yawDeg   != null ? p.yawDeg   : rig.tune.yawDeg)   * Math.PI/180;
+        const o = p.at ? new THREE.Vector3(...p.at) : (pl ? pl.clone() : new THREE.Vector3());
+        if(p.offset) o.add(new THREE.Vector3(...p.offset));
+        const cp = Math.cos(pitch);
+        cam.position.set(o.x + Math.sin(yaw)*cp*dist, o.y + Math.sin(pitch)*dist, o.z + Math.cos(yaw)*cp*dist);
+        cam.lookAt(o.x, o.y + (p.lookHeight ?? rig.tune.lookHeight), o.z);
+        cam.fov = p.fov ?? rig.tune.fov;
+        cam.updateProjectionMatrix();
+        cam.updateMatrixWorld(true);
+        return;
+      }
+      const ax = (p.anchor === 'player' && pl) ? pl.x : 0;
+      const az = (p.anchor === 'player' && pl) ? pl.z : 0;
+      if(p.pos) cam.position.set(p.pos[0]+ax, p.pos[1], p.pos[2]+az);
+      if(p.target) cam.lookAt(p.target[0]+ax, p.target[1], p.target[2]+az);
       if(p.fov){ cam.fov=p.fov; cam.updateProjectionMatrix(); }
-      ctx.renderer.render(ctx.scene, ctx.camera);
+      cam.updateMatrixWorld(true);
     },
     state(name, args){ ctx.events.emit('capture.state', {name, args}); },
     // deterministic biome switch for the critic loop: capture.biome('elysium')
@@ -116,7 +144,13 @@ function setupCapture(engine, ctx, setBiome){
       else if(ctx.post && ctx.post.render) ctx.post.render(ctx);
       else ctx.renderer.render(ctx.scene, ctx.camera);
     },
-    info(){ return { fps: engine.perf.fps, calls: ctx.renderer.info.render.calls, tris: ctx.renderer.info.render.triangles,
+    info(){ const ms = ctx.mats && ctx.mats.stats ? ctx.mats.stats : null;
+            return { fps: engine.perf.fps, calls: ctx.renderer.info.render.calls, tris: ctx.renderer.info.render.triangles,
+                     progs: ctx.renderer.info.programs ? ctx.renderer.info.programs.length : 0,
+                     geoms: ctx.renderer.info.memory.geometries, texs: ctx.renderer.info.memory.textures,
+                     matSets: ms ? ms.built : 0, matMs: ms ? +ms.ms.toFixed(1) : 0,
+                     mtexel: ms ? +(ms.texels/1e6).toFixed(2) : 0,
+                     player: ctx.player && ctx.player.position ? [ +ctx.player.position.x.toFixed(2), +ctx.player.position.y.toFixed(2), +ctx.player.position.z.toFixed(2) ] : null,
                      t: ctx.time.t, frame: ctx.time.frame }; },
   };
   ctx.capture = drv;
