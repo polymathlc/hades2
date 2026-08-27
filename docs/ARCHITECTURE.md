@@ -256,3 +256,24 @@ Two uses:
 2. **Against real reference** — drop reference stills into `refs/` (filenames matching the shot ids)
    and run `tools/ab.mjs refs shots/latest shots/ab-vs-ref`. The critic then performs a genuine
    two-image blind comparison. `refs/` is gitignored; reference images are never committed.
+
+## 9. Measured performance budget (update these numbers when they change)
+
+Measured on the recovered wave-2 build (headless SwiftShader; draw calls and counts are
+GPU-independent, timings are not):
+
+| Metric | Measured | Budget | Status |
+|---|---|---|---|
+| Draw calls | 312 | < 400 | ok |
+| Triangles | 637k | < 1.2M | ok |
+| Shader programs | 56 | < 80 | ok |
+| Textures | 92 | — | watch |
+| **Material generation** | **7080 ms** | **< 1500 ms** | **FAIL — P1** |
+
+**Material generation at 7 seconds is a shipping defect.** A player stares at a blank screen for
+seven seconds before the first chamber appears. Fixes, in order of preference:
+1. Generate at lower resolution and upsample — most painterly surfaces do not need 2048².
+2. Generate on demand per biome rather than the whole library up front.
+3. Move synthesis into a Worker so it does not block the main thread, with a loading state.
+4. Cache generated textures in IndexedDB keyed by a content hash, so only the first load pays.
+Whoever owns `src/materials/**` next must bring this under 1500 ms.
