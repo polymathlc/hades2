@@ -10,13 +10,14 @@
 //   'line'  a lane along a charge                        (brute charge, boss)
 //   'ring'  an expanding annulus for a radial slam       (boss phase 2)
 //
-// ART DIRECTION (§5, §9): a marker is a SHAPE with three layers — a hot
-// near-white leading arris, a saturated body in the attacker's identity colour,
-// and a wide low-alpha glow. It is additive, it sits on the dark stage, and it
-// supplies part of the frame's highlight band. Crucially the FILL SWEEPS: the
-// bright region grows from the attacker outward and reaches the edge exactly on
-// the frame the hit lands, so the tell encodes both "where" and "when" without
-// a number on screen.
+// ART DIRECTION (§5, §9): a marker is a DRAWN SHAPE, not a lit surface. Its
+// energy lives in a bold ~2px outline on the footprint boundary and in the hot
+// arris of a sweep that reaches the edge exactly on the frame the hit lands —
+// so the tell encodes both "where" and "when" without a number on screen. The
+// interior is a translucent tint at a few percent of scene linear. It is
+// additive, it sits on the dark stage, it contributes to the frame's highlight
+// band through its LINES, and it is never allowed to out-value the character
+// standing on it. See the note above FRAG for what this replaced and why.
 //
 // PERF: one geometry, one program, a fixed pool of N meshes (default 14). A
 // pooled marker is hidden, never destroyed; nothing allocates after init.
@@ -33,6 +34,36 @@ void main(){
 }`;
 
 // p is in unit-disc space: |p| <= 1 is the marker footprint.
+//
+// ── REBUILT (AGENT-PLAYABLE, §7 hard ban / §9 THE VALUE LAW) ───────────────
+// The previous build painted the whole threatened area as a filled wash at
+// ~0.37 linear and let the sweep add another 0.29 on top. Under Tartarus'
+// exposure of 2.9 that is a near-white slab: measured groundP90 on 07_combat
+// was 0.769 against a 0.42 ceiling, and in the frame the hero's legs
+// disappeared into an orange wedge. A tell that eats the character has
+// destroyed the very reading it exists to provide.
+//
+// The rebuild moves ALL of the marker's energy out of its area and into its
+// LINES, which is how a drawn tell works and how Hades draws one:
+//
+//   OUTLINE   a ~2px screen-space stroke on the entire footprint boundary —
+//             the outer arc, the two cheeks, the inner cut, the lane sides.
+//             This is the bright layer. It is where the highlight band (§9.3)
+//             comes from and it costs a fraction of a percent of the frame.
+//   INTERIOR  a translucent tint, 0.005-0.018 scene-linear. Over the dark
+//             stage that lands around 0.3-0.38 display against a 0.22 floor:
+//             clearly hostile ground, never a lit surface, and always
+//             out-valued by the character standing on it.
+//   SWEEP     the fill grows from the attacker to the edge, reaching it
+//             exactly at uK == 1, led by a hot thin arris. The arris is the
+//             "when"; the outline is the "where".
+//   SNAP      on the last ~16% of the wind-up the OUTLINE flashes, not the
+//             fill — the frame goes hot along the edges instead of blooming
+//             a slab.
+//
+// Everything is computed as the colour ADDED to the frame (alpha is left at
+// the footprint mask and the blend is additive), so a level in this shader
+// means what it says instead of being squared by premultiplication.
 const FRAG = /* glsl */`
 precision highp float;
 varying vec2 vP;
@@ -46,66 +77,67 @@ uniform float uAlpha;
 uniform float uInner;    // inner radius for ring / lane half-width for line
 uniform float uPulse;
 
-float aa(float e, float x){ float w = fwidth(x) * 1.4 + 1e-4; return smoothstep(e - w, e + w, x); }
+const float PI  = 3.14159265;
+const float TAU = 6.28318531;
 
 void main(){
   float r = length(vP);
   float a = atan(vP.y, vP.x);
-  float da = abs(mod(a - uAim + 3.14159265, 6.2831853) - 3.14159265);
+  float da = abs(mod(a - uAim + PI, TAU) - PI);
 
-  // ---- footprint mask -----------------------------------------------------
-  float m = 1.0;
-  float edgeR = 1.0;                       // where the outer arris sits
+  // one screen-pixel, measured in footprint units, so every stroke below is
+  // the same weight on screen whether the marker is 1.2m or 6m across
+  float px = max(fwidth(r), 1e-4);
+
+  // ---- signed distance to the footprint boundary (+ = inside) -------------
+  float d;        // distance to the nearest edge
+  float sweep;    // the coordinate the fill runs along, 0 at the attacker
+  float areaK;    // ink budget: a disc covers ~6x an arc, a lane ~2x
+
   if(uShape < 0.5){                        // ARC wedge
-    m *= 1.0 - aa(uHalfArc, da);
-    m *= 1.0 - aa(1.0, r);
-    m *= aa(0.16, r);
+    float ri = 0.15;
+    float side = (uHalfArc - da) * max(r, 0.10);   // arc length, not angle
+    d = min(min(1.0 - r, r - ri), side);
+    sweep = r; areaK = 1.0;
   } else if(uShape < 1.5){                 // DISC
-    m *= 1.0 - aa(1.0, r);
+    d = 1.0 - r;
+    sweep = r; areaK = 0.58;
   } else if(uShape < 2.5){                 // LINE lane, aimed along uAim
-    vec2 d = vec2(cos(uAim), sin(uAim));
-    float along = dot(vP, d);
-    float across = abs(dot(vP, vec2(-d.y, d.x)));
-    m *= 1.0 - aa(uInner, across);
-    m *= aa(0.0, along) * (1.0 - aa(1.0, along));
-    r = along;                             // sweep runs down the lane
+    vec2 dir = vec2(cos(uAim), sin(uAim));
+    float along  = dot(vP, dir);
+    float across = abs(dot(vP, vec2(-dir.y, dir.x)));
+    d = min(min(uInner - across, along), 1.0 - along);
+    sweep = along; areaK = 0.80;
   } else {                                 // RING annulus
-    m *= 1.0 - aa(1.0, r);
-    m *= aa(uInner, r);
+    d = min(1.0 - r, r - uInner);
+    sweep = r; areaK = 0.90;
   }
-  if(m <= 0.001) discard;
 
-  // ---- three-layer build (§5) --------------------------------------------
-  // LEVELS ARE LOW ON PURPOSE. This draws into a linear HDR buffer that is
-  // then bloomed and tone-mapped: at the values a naive "additive marker"
-  // wants (~1.0 core) every tell became a blown white slab and the frame
-  // failed §7's "bloom fog" ban outright. The marker's job is to be the
-  // brightest thing ON THE FLOOR, not the brightest thing in the frame — the
-  // hero and the practicals outrank it.
-  //
-  // BODY: a low, saturated wash over the whole threatened area so the shape
-  // reads even at 1/8 resolution.
-  float areaK = (uShape > 0.5 && uShape < 1.5) ? 0.55 : 1.0;  // a disc covers 6x an arc's area
-  float body = (0.090 + 0.050 * uK) * areaK;
+  float m = smoothstep(0.0, px * 1.6, d);
+  if(m <= 0.002) discard;
 
-  // SWEEP: the filled region, growing to the edge exactly at uK == 1.
-  float fill = 1.0 - aa(uK * edgeR, r);
-  body += fill * (0.130 + 0.160 * uK) * areaK;
+  // ---- INTERIOR: a tint, never a surface ---------------------------------
+  float filled = 1.0 - smoothstep(uK - px * 1.6, uK + px * 1.6, sweep);
+  float body = (0.0050 + 0.0050 * uK) + filled * (0.0080 + 0.0100 * uK);
+  body *= areaK;
 
-  // CORE: the hot leading arris of the sweep, plus the static outer rule that
-  // tells you where the danger stops. Thin, so it reads as a drawn line.
-  float lead  = exp(-pow((r - uK * edgeR) * 14.0, 2.0)) * (0.16 + 0.28 * uK);
-  float rule  = exp(-pow((r - edgeR) * 18.0, 2.0)) * 0.30;
-  float cheek = (uShape < 0.5) ? exp(-pow((da - uHalfArc) * 30.0, 2.0)) * 0.16 : 0.0;
+  // ---- OUTLINE: the drawn stroke that carries the read -------------------
+  float sw   = px * 1.7;
+  float line = exp(-pow(d / sw, 2.0));
+  // a wide, very low bleed just inside the stroke so the edge has a glow
+  // shoulder instead of an aliased hairline (§5 three-layer construction)
+  float halo = exp(-d / (px * 16.0)) * 0.020;
 
-  float core = lead + rule + cheek;
-  // the strike flash: the sweep goes hot for the last few frames
-  float snap = smoothstep(0.86, 1.0, uK);
-  core += snap * (0.18 + 0.14 * uPulse) * fill;
+  // ---- SWEEP ARRIS: the hot leading edge of the fill ---------------------
+  float arris = exp(-pow((sweep - uK) / (px * 2.6), 2.0)) * step(0.03, uK);
 
-  vec3 col = uBody * body + uCore * core;
-  float al = (body * 0.85 + core) * uAlpha * m;
-  gl_FragColor = vec4(col * al, al);
+  // ---- SNAP: the last frames flash the EDGES, not the area ---------------
+  float snap = smoothstep(0.84, 1.0, uK);
+  float edge = line  * (0.26 + 0.30 * uK + 0.34 * snap * uPulse)
+             + arris * (0.16 + 0.26 * uK);
+
+  vec3 col = uBody * (body + halo + edge * 0.62) + uCore * edge * 0.40;
+  gl_FragColor = vec4(col * (m * uAlpha), m * uAlpha);
 }`;
 
 const _c = new THREE.Color();
@@ -140,7 +172,9 @@ export class Telegraphs {
           uAim: { value: 0 }, uAlpha: { value: 1 }, uInner: { value: 0.3 }, uPulse: { value: 0 },
         },
         transparent: true, depthWrite: false, depthTest: true,
-        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+        blending: THREE.CustomBlending,
+        blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor,
+        blendEquation: THREE.AddEquation, side: THREE.DoubleSide,
         toneMapped: false,
       });
       const m = new THREE.Mesh(this.geo, mat);

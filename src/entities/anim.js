@@ -635,6 +635,351 @@ export function buildClipData() {
     { t: 0.32, b: 'pelvis', p: [0, 0, 0], e: 'outElastic' },
   ]);
 
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // ARSENAL CLIPS — one pose language per weapon (§1.1 silhouette first).
+  //
+  // These are authored at a NOMINAL duration; player.js time-scales each clip
+  // onto the weapon runtime's own step timeline (speed = clip.dur / step.dur),
+  // so a designer retuning weapons.js retimes the animation for free and a
+  // spear poke can never play at a blade's rhythm. That is the whole reason
+  // the clips below carry NO root-motion track: the WeaponRuntime owns root
+  // motion, and a clip that also translated would double every lunge.
+  //
+  // Every strike is authored as anticipation -> commit -> hold -> settle at
+  // roughly (0.33, 0.48, 0.62, 1.0) of the clip so the time-scaling lands the
+  // commit inside the runtime's ACTIVE window whatever the weapon's numbers.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ── SPEAR: THRUST 1 — two-handed stab. The hitbox is a LINE, so the pose
+  //    has to be a line: both hands on the shaft, shoulders square behind it.
+  C.thrust1 = new Clip('thrust1', 0.405, [
+    ...stance(0),
+    ...pose(0.135, {
+      pelvis: [-4, -14, 1], spine1: [-4, -9, 0], spine2: [-3, -8, 0], chest: [-12, -20, -2], neck: [0, 14, 0], head: [-4, 30, 0],
+      clavR: [0, -6, 6], armR: [-16, 0, -34], foreR: [-104, 0, 16], handR: [-12, 0, 8],
+      clavL: [0, -4, 4], armL: [-30, 0, 26], foreL: [-96, 0, -14], handL: [-10, 0, 0],
+      thighL: [-6, 0, 5], shinL: [14, 0, 0], thighR: [12, 0, -5], shinR: [32, 0, 0], footR: [10, 0, 0],
+    }, 'outQuad'),
+    { t: 0.135, b: 'pelvis', p: [0, -0.030, -0.055], e: 'outQuad' },
+    ...pose(0.195, {
+      pelvis: [18, 6, 0], spine1: [10, 4, 0], spine2: [8, 3, 0], chest: [14, 8, 0], neck: [-4, 0, 0], head: [6, 2, 0],
+      clavR: [0, 8, -10], armR: [-88, 0, -12], foreR: [-8, 0, 2], handR: [2, 0, 0],
+      clavL: [0, 6, 8], armL: [-84, 0, 14], foreL: [-14, 0, -2], handL: [2, 0, 0],
+      thighL: [-50, 0, 6], shinL: [24, 0, 0], footL: [-12, 0, 0],
+      thighR: [28, 0, -6], shinR: [24, 0, 0], footR: [22, 0, 0],
+    }, 'outQuint'),
+    { t: 0.195, b: 'pelvis', p: [0, -0.055, 0.115], e: 'outQuint' },
+    ...pose(0.255, {
+      pelvis: [18, 6, 0], spine1: [10, 4, 0], spine2: [8, 3, 0], chest: [14, 8, 0], neck: [-4, 0, 0], head: [6, 2, 0],
+      clavR: [0, 8, -10], armR: [-88, 0, -12], foreR: [-8, 0, 2], handR: [2, 0, 0],
+      clavL: [0, 6, 8], armL: [-84, 0, 14], foreL: [-14, 0, -2], handL: [2, 0, 0],
+      thighL: [-50, 0, 6], shinL: [24, 0, 0], footL: [-12, 0, 0],
+      thighR: [28, 0, -6], shinR: [24, 0, 0], footR: [22, 0, 0],
+    }, 'linear'),
+    { t: 0.255, b: 'pelvis', p: [0, -0.055, 0.115], e: 'linear' },
+    ...pose(0.315, {
+      pelvis: [10, 3, 1], chest: [8, 5, 0], head: [4, 2, 0],
+      armR: [-52, 0, -22], foreR: [-46, 0, 8], armL: [-50, 0, 20], foreL: [-52, 0, -6],
+      thighL: [-26, 0, 5], shinL: [20, 0, 0], thighR: [10, 0, -5], shinR: [22, 0, 0],
+    }, 'outQuad'),
+    ...stance(0.405, 'outCubic'),
+    { t: 0.405, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── SPEAR: THRUST 2 — the low return poke, shorter windup, dropped line.
+  C.thrust2 = new Clip('thrust2', 0.375, [
+    ...stance(0),
+    ...pose(0.115, {
+      pelvis: [4, -10, -2], spine1: [2, -7, 0], chest: [-6, -16, -4], neck: [0, 12, 0], head: [-2, 22, 0],
+      clavR: [0, -4, 2], armR: [-8, 0, -30], foreR: [-96, 0, 20], handR: [-10, 0, 10],
+      clavL: [0, -2, 0], armL: [-20, 0, 24], foreL: [-88, 0, -16],
+      thighL: [-2, 0, 5], shinL: [10, 0, 0], thighR: [8, 0, -5], shinR: [26, 0, 0],
+    }, 'outQuad'),
+    { t: 0.115, b: 'pelvis', p: [0, -0.042, -0.040], e: 'outQuad' },
+    ...pose(0.175, {
+      pelvis: [24, 4, -1], spine1: [13, 3, 0], spine2: [10, 2, 0], chest: [18, 6, -2], neck: [-6, 0, 0], head: [8, 0, 0],
+      clavR: [0, 6, -12], armR: [-76, 0, -14], foreR: [-6, 0, 2], handR: [4, 0, 0],
+      clavL: [0, 4, 6], armL: [-72, 0, 16], foreL: [-12, 0, -2],
+      thighL: [-58, 0, 6], shinL: [30, 0, 0], footL: [-14, 0, 0],
+      thighR: [32, 0, -6], shinR: [22, 0, 0], footR: [24, 0, 0],
+    }, 'outQuint'),
+    { t: 0.175, b: 'pelvis', p: [0, -0.085, 0.120], e: 'outQuint' },
+    ...pose(0.235, {
+      pelvis: [24, 4, -1], spine1: [13, 3, 0], spine2: [10, 2, 0], chest: [18, 6, -2], neck: [-6, 0, 0], head: [8, 0, 0],
+      clavR: [0, 6, -12], armR: [-76, 0, -14], foreR: [-6, 0, 2], handR: [4, 0, 0],
+      clavL: [0, 4, 6], armL: [-72, 0, 16], foreL: [-12, 0, -2],
+      thighL: [-58, 0, 6], shinL: [30, 0, 0], footL: [-14, 0, 0],
+      thighR: [32, 0, -6], shinR: [22, 0, 0], footR: [24, 0, 0],
+    }, 'linear'),
+    { t: 0.235, b: 'pelvis', p: [0, -0.085, 0.120], e: 'linear' },
+    ...stance(0.375, 'outCubic'),
+    { t: 0.375, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── SPEAR: SPIN — a 360 sweep read entirely in the SPINE. The root never
+  //    rotates (facing is gameplay state), so the whip has to live in the
+  //    pelvis/chest counter-rotation and two horizontally extended arms.
+  C.spin = new Clip('spin', 0.615, [
+    ...stance(0),
+    ...pose(0.200, {
+      pelvis: [-2, -30, 2], spine1: [-2, -18, 0], spine2: [-2, -15, 0], chest: [-10, -30, -4], neck: [0, 22, 0], head: [-4, 40, 0],
+      clavR: [0, -10, -6], armR: [-24, 0, -62], foreR: [-56, 0, 6], handR: [-10, 0, 12],
+      clavL: [0, 8, 10], armL: [-12, 0, 48], foreL: [-70, 0, -8],
+      thighL: [-14, 0, 7], shinL: [26, 0, 0], thighR: [-4, 0, -7], shinR: [20, 0, 0],
+    }, 'outQuad'),
+    { t: 0.200, b: 'pelvis', p: [0, -0.050, -0.020], e: 'outQuad' },
+    ...pose(0.295, {
+      pelvis: [8, 55, 0], spine1: [6, 30, 0], spine2: [5, 26, 0], chest: [12, 48, 2], neck: [-2, -18, 0], head: [6, -34, 0],
+      clavR: [0, 16, 12], armR: [-4, 0, -86], foreR: [-6, 0, 4], handR: [0, 0, -14],
+      clavL: [0, -14, -10], armL: [-2, 0, 82], foreL: [-8, 0, -4],
+      thighL: [-14, 0, 16], shinL: [18, 0, 0], footL: [-6, 0, 0],
+      thighR: [-8, 0, -18], shinR: [16, 0, 0], footR: [-2, 0, 0],
+    }, 'outQuint'),
+    { t: 0.295, b: 'pelvis', p: [0, -0.070, 0.045], e: 'outQuint' },
+    ...pose(0.385, {
+      pelvis: [6, 70, 0], spine1: [5, 38, 0], spine2: [4, 32, 0], chest: [9, 62, 2], neck: [-2, -26, 0], head: [4, -46, 0],
+      clavR: [0, 16, 12], armR: [-8, 0, -80], foreR: [-14, 0, 4], handR: [0, 0, -12],
+      clavL: [0, -14, -10], armL: [-6, 0, 76], foreL: [-16, 0, -4],
+      thighL: [-12, 0, 14], shinL: [20, 0, 0], thighR: [-6, 0, -16], shinR: [18, 0, 0],
+    }, 'linear'),
+    { t: 0.385, b: 'pelvis', p: [0, -0.060, 0.030], e: 'linear' },
+    ...pose(0.480, {
+      pelvis: [4, 26, 1], spine1: [3, 14, 0], chest: [6, 22, 1], neck: [0, -12, 0], head: [2, -22, 0],
+      armR: [-20, 0, -50], foreR: [-40, 0, 6], armL: [-16, 0, 46], foreL: [-44, 0, -6],
+      thighL: [-14, 0, 8], shinL: [22, 0, 0], thighR: [-4, 0, -8], shinR: [18, 0, 0],
+    }, 'outQuad'),
+    ...stance(0.615, 'outCubic'),
+    { t: 0.615, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── SPEAR: THROW WIND — overhead cock. Non-looping, so it HOLDS its final
+  //    pose for as long as the charge is held. Right shoulder driven back
+  //    (negative chest yaw), left arm out at the target: a javelin silhouette.
+  C.throwWind = new Clip('throwWind', 0.50, [
+    ...stance(0),
+    ...pose(0.16, {
+      pelvis: [-4, -8, 2], spine1: [-4, -6, 0], chest: [-14, -14, -2], neck: [0, 10, 0], head: [-6, 20, 0],
+      clavR: [0, -4, 12], armR: [-96, 0, -24], foreR: [-70, 0, 6], handR: [-10, 0, 0],
+      clavL: [0, -2, 8], armL: [-46, 0, 30], foreL: [-56, 0, -10],
+      thighL: [-6, 0, 5], shinL: [14, 0, 0], thighR: [4, 0, -5], shinR: [24, 0, 0],
+    }, 'outQuad'),
+    { t: 0.16, b: 'pelvis', p: [0, -0.028, -0.045], e: 'outQuad' },
+    ...pose(0.50, {
+      pelvis: [-8, -18, 3], spine1: [-6, -12, 0], spine2: [-6, -10, 0], chest: [-20, -20, -3], neck: [0, 22, 0], head: [-8, 40, 0],
+      clavR: [0, -8, 20], armR: [-152, 0, -26], foreR: [-48, 0, 4], handR: [-6, 0, 0],
+      clavL: [0, 4, 12], armL: [-78, 0, 30], foreL: [-20, 0, -8], handL: [-6, 0, 0],
+      thighL: [-14, 0, 6], shinL: [20, 0, 0], footL: [-4, 4, 0],
+      thighR: [12, 0, -6], shinR: [40, 0, 0], footR: [14, -3, 0],
+    }, 'outCubic'),
+    { t: 0.50, b: 'pelvis', p: [0, -0.060, -0.085], e: 'outCubic' },
+  ]);
+
+  // ── SPEAR: THROW — the whip-through. Starts ON the cocked pose so the
+  //    release reads as one continuous action, not a cut.
+  C.throw = new Clip('throw', 0.33, [
+    ...pose(0, {
+      pelvis: [-8, -18, 3], spine1: [-6, -12, 0], spine2: [-6, -10, 0], chest: [-20, -20, -3], neck: [0, 22, 0], head: [-8, 40, 0],
+      clavR: [0, -8, 20], armR: [-152, 0, -26], foreR: [-48, 0, 4], handR: [-6, 0, 0],
+      clavL: [0, 4, 12], armL: [-78, 0, 30], foreL: [-20, 0, -8], handL: [-6, 0, 0],
+      thighL: [-14, 0, 6], shinL: [20, 0, 0], thighR: [12, 0, -6], shinR: [40, 0, 0],
+    }),
+    { t: 0, b: 'pelvis', p: [0, -0.060, -0.085] },
+    ...pose(0.095, {
+      pelvis: [22, 18, -2], spine1: [13, 12, 0], spine2: [11, 10, 0], chest: [24, 20, 4], neck: [-6, -16, 0], head: [10, -30, 0],
+      clavR: [0, 12, -16], armR: [-34, 0, -12], foreR: [-12, 0, 0], handR: [8, 0, 0],
+      clavL: [0, -8, -8], armL: [24, 0, -26], foreL: [-58, 0, 4],
+      thighL: [-52, 0, 6], shinL: [34, 0, 0], footL: [-12, 0, 0],
+      thighR: [30, 0, -6], shinR: [26, 0, 0], footR: [22, 0, 0],
+    }, 'outQuint'),
+    { t: 0.095, b: 'pelvis', p: [0, -0.070, 0.120], e: 'outQuint' },
+    ...pose(0.17, {
+      pelvis: [18, 14, -1], chest: [20, 16, 3], neck: [0, -12, 0], head: [8, -22, 0],
+      armR: [-28, 0, -20], foreR: [-30, 0, 4], armL: [8, 0, -18], foreL: [-52, 0, 4],
+      thighL: [-38, 0, 6], shinL: [30, 0, 0], thighR: [18, 0, -6], shinR: [26, 0, 0],
+    }, 'outQuad'),
+    ...stance(0.33, 'outCubic'),
+    { t: 0.33, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── BOW: DRAW — a real archer's blade. The left shoulder leads the target
+  //    (negative chest yaw), the head counter-yaws so the eye stays on the
+  //    line, the right elbow rides HIGH. Holds at full draw.
+  C.draw = new Clip('draw', 0.55, [
+    ...stance(0),
+    ...pose(0.18, {
+      pelvis: [0, -10, 2], spine1: [0, -7, 0], chest: [-6, -16, -1], neck: [0, 12, 0], head: [-2, 22, 0],
+      clavL: [0, 2, 14], armL: [-54, 0, 26], foreL: [-56, 0, -8], handL: [-10, 0, 0],
+      clavR: [0, -4, -6], armR: [-26, 0, -32], foreR: [-72, 0, 14], handR: [-10, 0, 12],
+      thighL: [-10, 0, 6], shinL: [18, 0, 0], thighR: [0, 0, -6], shinR: [14, 0, 0],
+    }, 'outQuad'),
+    { t: 0.18, b: 'pelvis', p: [0, -0.022, -0.010], e: 'outQuad' },
+    ...pose(0.55, {
+      pelvis: [2, -22, 2], spine1: [1, -14, 0], spine2: [1, -12, 0], chest: [-4, -26, -1], neck: [-1, 28, 0], head: [2, 46, 0],
+      clavL: [0, 8, 8], armL: [-86, 0, 12], foreL: [-6, 0, -2], handL: [-2, 0, 0],
+      clavR: [0, -10, -16], armR: [-58, 0, -54], foreR: [-120, 0, 18], handR: [-4, 0, 14],
+      thighL: [-18, 0, 7], shinL: [20, 0, 0], footL: [-4, 4, 0],
+      thighR: [8, 0, -9], shinR: [16, 0, 0], footR: [2, -8, 0],
+    }, 'outCubic'),
+    { t: 0.55, b: 'pelvis', p: [0, -0.048, -0.020], e: 'outCubic' },
+  ]);
+
+  // ── BOW: LOOSE — the release. Starts on the full-draw pose; the string
+  //    hand snaps open and back past the ear, the bow arm holds the line.
+  C.loose = new Clip('loose', 0.28, [
+    ...pose(0, {
+      pelvis: [2, -22, 2], spine1: [1, -14, 0], spine2: [1, -12, 0], chest: [-4, -26, -1], neck: [-1, 28, 0], head: [2, 46, 0],
+      clavL: [0, 8, 8], armL: [-86, 0, 12], foreL: [-6, 0, -2], handL: [-2, 0, 0],
+      clavR: [0, -10, -16], armR: [-58, 0, -54], foreR: [-120, 0, 18], handR: [-4, 0, 14],
+      thighL: [-18, 0, 7], shinL: [20, 0, 0], thighR: [8, 0, -9], shinR: [16, 0, 0],
+    }),
+    { t: 0, b: 'pelvis', p: [0, -0.048, -0.020] },
+    ...pose(0.055, {
+      pelvis: [2, -16, 2], spine1: [1, -10, 0], chest: [-2, -18, -1], neck: [-1, 20, 0], head: [2, 34, 0],
+      clavL: [0, 6, 6], armL: [-90, 0, 14], foreL: [-10, 0, -2],
+      clavR: [0, -12, -20], armR: [-44, 0, -72], foreR: [-64, 0, 26], handR: [-22, 0, 30],
+      thighL: [-16, 0, 7], shinL: [18, 0, 0], thighR: [6, 0, -9], shinR: [14, 0, 0],
+    }, 'outQuint'),
+    ...pose(0.14, {
+      pelvis: [1, -12, 2], chest: [-2, -14, -1], neck: [0, 16, 0], head: [2, 26, 0],
+      armL: [-76, 0, 16], foreL: [-24, 0, -2], armR: [-32, 0, -60], foreR: [-56, 0, 20], handR: [-18, 0, 24],
+    }, 'outQuad'),
+    ...stance(0.28, 'outCubic'),
+    { t: 0.28, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── SHIELD: BASH 1 — the shield arm (LEFT) drives; the sword arm stays
+  //    cocked low behind so the silhouette keeps its two negative-space holes.
+  C.bash1 = new Clip('bash1', 0.405, [
+    ...stance(0),
+    ...pose(0.12, {
+      pelvis: [-2, 16, 2], spine1: [-2, 10, 0], chest: [-10, 22, 4], neck: [0, -14, 0], head: [-4, -26, 0],
+      clavL: [0, -8, 8], armL: [-32, 0, 34], foreL: [-98, 0, -16], handL: [-14, 0, 0],
+      clavR: [0, 4, -4], armR: [-4, 0, -30], foreR: [-52, 0, 12],
+      thighL: [-2, 0, 5], shinL: [12, 0, 0], thighR: [10, 0, -5], shinR: [28, 0, 0],
+    }, 'outQuad'),
+    { t: 0.12, b: 'pelvis', p: [0, -0.032, -0.050], e: 'outQuad' },
+    ...pose(0.185, {
+      pelvis: [20, -18, -1], spine1: [11, -12, 0], spine2: [9, -10, 0], chest: [16, -22, -5], neck: [-4, 22, 0], head: [8, 34, 0],
+      clavL: [0, 12, -10], armL: [-94, 0, 10], foreL: [-18, 0, -4], handL: [-4, 0, 0],
+      clavR: [0, -6, 6], armR: [-10, 0, -36], foreR: [-62, 0, 14],
+      thighL: [-46, 0, 6], shinL: [26, 0, 0], footL: [-10, 0, 0],
+      thighR: [24, 0, -6], shinR: [26, 0, 0], footR: [20, 0, 0],
+    }, 'outQuint'),
+    { t: 0.185, b: 'pelvis', p: [0, -0.058, 0.100], e: 'outQuint' },
+    ...pose(0.255, {
+      pelvis: [20, -18, -1], spine1: [11, -12, 0], spine2: [9, -10, 0], chest: [16, -22, -5], neck: [-4, 22, 0], head: [8, 34, 0],
+      clavL: [0, 12, -10], armL: [-94, 0, 10], foreL: [-18, 0, -4], handL: [-4, 0, 0],
+      clavR: [0, -6, 6], armR: [-10, 0, -36], foreR: [-62, 0, 14],
+      thighL: [-46, 0, 6], shinL: [26, 0, 0], footL: [-10, 0, 0],
+      thighR: [24, 0, -6], shinR: [26, 0, 0], footR: [20, 0, 0],
+    }, 'linear'),
+    { t: 0.255, b: 'pelvis', p: [0, -0.058, 0.100], e: 'linear' },
+    ...stance(0.405, 'outCubic'),
+    { t: 0.405, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── SHIELD: BASH 2 — the shoulder-check. Whole body behind the boss of the
+  //    shield, both feet leave the line, the biggest hold in the arm's kit.
+  C.bash2 = new Clip('bash2', 0.505, [
+    ...stance(0),
+    ...pose(0.14, {
+      pelvis: [-10, 22, 3], spine1: [-8, 14, 0], spine2: [-7, 12, 0], chest: [-22, 30, 6], neck: [-2, -22, 0], head: [-10, -44, 0],
+      clavL: [0, -10, 12], armL: [-40, 0, 38], foreL: [-104, 0, -18], handL: [-16, 0, 0],
+      clavR: [0, 6, -6], armR: [-2, 0, -34], foreR: [-46, 0, 14],
+      thighL: [-4, 0, 5], shinL: [16, 0, 0], thighR: [16, 0, -5], shinR: [38, 0, 0], footR: [14, 0, 0],
+    }, 'outQuad'),
+    { t: 0.14, b: 'pelvis', p: [0, -0.062, -0.080], e: 'outQuad' },
+    ...pose(0.215, {
+      pelvis: [32, -24, -2], spine1: [17, -15, 0], spine2: [14, -13, 0], chest: [28, -30, -7], neck: [-8, 30, 0], head: [14, 46, 0],
+      clavL: [0, 16, -14], armL: [-104, 0, 8], foreL: [-14, 0, -4], handL: [-2, 0, 0],
+      clavR: [0, -8, 8], armR: [-6, 0, -44], foreR: [-70, 0, 18],
+      thighL: [-58, 0, 6], shinL: [32, 0, 0], footL: [-14, 0, 0],
+      thighR: [34, 0, -6], shinR: [30, 0, 0], footR: [26, 0, 0],
+    }, 'outQuint'),
+    { t: 0.215, b: 'pelvis', p: [0, -0.092, 0.150], e: 'outQuint' },
+    ...pose(0.305, {
+      pelvis: [32, -24, -2], spine1: [17, -15, 0], spine2: [14, -13, 0], chest: [28, -30, -7], neck: [-8, 30, 0], head: [14, 46, 0],
+      clavL: [0, 16, -14], armL: [-104, 0, 8], foreL: [-14, 0, -4], handL: [-2, 0, 0],
+      clavR: [0, -8, 8], armR: [-6, 0, -44], foreR: [-70, 0, 18],
+      thighL: [-58, 0, 6], shinL: [32, 0, 0], footL: [-14, 0, 0],
+      thighR: [34, 0, -6], shinR: [30, 0, 0], footR: [26, 0, 0],
+    }, 'linear'),
+    { t: 0.305, b: 'pelvis', p: [0, -0.092, 0.150], e: 'linear' },
+    ...pose(0.39, {
+      pelvis: [18, -12, -1], chest: [16, -16, -4], neck: [0, 12, 0], head: [8, 20, 0],
+      armL: [-64, 0, 20], foreL: [-52, 0, -8], armR: [-4, 0, -32], foreR: [-58, 0, 14],
+      thighL: [-32, 0, 6], shinL: [26, 0, 0], thighR: [16, 0, -6], shinR: [26, 0, 0],
+    }, 'outQuad'),
+    ...stance(0.505, 'outCubic'),
+    { t: 0.505, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── SHIELD: GUARD — the block stance. LOOPS with a braced tremor so a held
+  //    guard is alive rather than frozen. Chin behind the rim, weight low and
+  //    forward, sword arm cocked back: readable as "I am absorbing this".
+  C.guard = new Clip('guard', 1.30, [
+    ...pose(0, {
+      pelvis: [10, 6, 3], spine1: [7, 4, -1], spine2: [7, 3, -1], chest: [10, 8, -2], neck: [-6, -2, 0], head: [-4, -4, 1],
+      clavL: [0, 2, 16], armL: [-74, 0, 24], foreL: [-92, 0, -18], handL: [-12, 0, 0],
+      clavR: [0, -2, -8], armR: [-14, 0, -30], foreR: [-76, 0, 16], handR: [-12, 0, 24],
+      thighL: [-22, 0, 7], shinL: [32, 0, 0], footL: [-6, 4, 0],
+      thighR: [-8, 0, -8], shinR: [26, 0, 0], footR: [-2, -6, 0],
+    }),
+    { t: 0, b: 'pelvis', p: [0.012, -0.060, 0.010] },
+    ...pose(0.65, {
+      pelvis: [12, 5, 3], spine1: [8, 3, -1], spine2: [8, 3, -1], chest: [12, 7, -2], neck: [-7, -2, 0], head: [-5, -4, 1],
+      clavL: [0, 2, 17], armL: [-77, 0, 25], foreL: [-95, 0, -18], handL: [-12, 0, 0],
+      clavR: [0, -2, -8], armR: [-16, 0, -31], foreR: [-79, 0, 16], handR: [-12, 0, 25],
+      thighL: [-24, 0, 7], shinL: [34, 0, 0], footL: [-6, 4, 0],
+      thighR: [-9, 0, -8], shinR: [28, 0, 0], footR: [-2, -6, 0],
+    }),
+    { t: 0.65, b: 'pelvis', p: [0.010, -0.070, 0.014] },
+    ...pose(1.30, {
+      pelvis: [10, 6, 3], spine1: [7, 4, -1], spine2: [7, 3, -1], chest: [10, 8, -2], neck: [-6, -2, 0], head: [-4, -4, 1],
+      clavL: [0, 2, 16], armL: [-74, 0, 24], foreL: [-92, 0, -18], handL: [-12, 0, 0],
+      clavR: [0, -2, -8], armR: [-14, 0, -30], foreR: [-76, 0, 16], handR: [-12, 0, 24],
+      thighL: [-22, 0, 7], shinL: [32, 0, 0], footL: [-6, 4, 0],
+      thighR: [-8, 0, -8], shinR: [26, 0, 0], footR: [-2, -6, 0],
+    }),
+    { t: 1.30, b: 'pelvis', p: [0.012, -0.060, 0.010] },
+  ], { loop: true });
+
+  // ── SHIELD: RUSH — the charged bash dash. Two driving strides behind the
+  //    shield; the runtime supplies the displacement, this supplies the effort.
+  C.rush = new Clip('rush', 0.50, [
+    ...pose(0, {
+      pelvis: [14, 4, 2], spine1: [9, 3, -1], chest: [14, 6, -2], neck: [-14, 0, 0], head: [-16, -2, 0],
+      clavL: [0, 4, 14], armL: [-80, 0, 20], foreL: [-72, 0, -14], handL: [-10, 0, 0],
+      clavR: [0, -2, -8], armR: [-16, 0, -30], foreR: [-74, 0, 16],
+      thighL: [-26, 0, 6], shinL: [34, 0, 0], thighR: [-10, 0, -7], shinR: [28, 0, 0],
+    }),
+    { t: 0, b: 'pelvis', p: [0, -0.060, 0] },
+    ...pose(0.10, {
+      pelvis: [34, 2, 1], spine1: [16, 2, 0], spine2: [14, 1, 0], chest: [20, 4, -1], neck: [-30, 0, 0], head: [-38, -2, 0],
+      clavL: [0, 10, -6], armL: [-96, 0, 14], foreL: [-24, 0, -6], handL: [-4, 0, 0],
+      clavR: [0, -6, 4], armR: [-8, 0, -42], foreR: [-88, 0, 20],
+      thighL: [-60, 0, 6], shinL: [30, 0, 0], footL: [-16, 0, 0],
+      thighR: [42, 0, -6], shinR: [44, 0, 0], footR: [26, 0, 0],
+    }, 'outQuint'),
+    { t: 0.10, b: 'pelvis', p: [0, -0.090, 0.070], e: 'outQuint' },
+    ...pose(0.26, {
+      pelvis: [34, -2, -1], spine1: [16, -2, 0], spine2: [14, -1, 0], chest: [20, -4, 1], neck: [-30, 0, 0], head: [-38, 2, 0],
+      clavL: [0, 10, -6], armL: [-100, 0, 12], foreL: [-20, 0, -6], handL: [-4, 0, 0],
+      clavR: [0, -6, 4], armR: [-4, 0, -44], foreR: [-92, 0, 22],
+      thighL: [40, 0, 6], shinL: [42, 0, 0], footL: [26, 0, 0],
+      thighR: [-58, 0, -6], shinR: [32, 0, 0], footR: [-16, 0, 0],
+    }, 'linear'),
+    { t: 0.26, b: 'pelvis', p: [0, -0.086, 0.070], e: 'linear' },
+    ...pose(0.36, {
+      pelvis: [18, 0, 0], spine1: [10, 0, 0], chest: [12, 0, 0], neck: [-16, 0, 0], head: [-22, 0, 0],
+      armL: [-70, 0, 18], foreL: [-46, 0, -8], armR: [-14, 0, -32], foreR: [-70, 0, 16],
+      thighL: [-20, 0, 6], shinL: [40, 0, 0], thighR: [-26, 0, -6], shinR: [36, 0, 0],
+    }, 'outQuad'),
+    ...stance(0.50, 'outCubic'),
+    { t: 0.50, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
   return C;
 }
 

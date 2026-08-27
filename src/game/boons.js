@@ -1,0 +1,435 @@
+// OWNER: AGENT-UI (data + modifier engine; presentation lives in src/ui/boons.js)
+// ---------------------------------------------------------------------------
+// EREBUS — BOONS
+//
+// Boons are DATA. Each one carries a small `apply(mods, v)` function that
+// writes into a flat, plain modifier object. Nothing walks a list of boons at
+// combat time: granting a boon rebuilds `state.mods` once, and combat reads
+// `ctx.boons.mods.attackMul` (a property access) at hit time.
+//
+// Numbers scale with rarity through `base` values multiplied by RARITY_MUL, so
+// one authored boon covers all four rarities without four copies.
+// ---------------------------------------------------------------------------
+
+import { GODS } from '../materials/palette.js';
+
+export const SLOTS = {
+  attack:  { name: 'Attack',  glyph: 'sword' },
+  special: { name: 'Special', glyph: 'burst' },
+  cast:    { name: 'Cast',    glyph: 'bolt' },
+  dash:    { name: 'Dash',    glyph: 'chevron' },
+  call:    { name: 'Call',    glyph: 'horn' },
+  passive: { name: 'Boon',    glyph: 'laurel' },
+};
+
+export const RARITIES = ['common', 'rare', 'epic', 'heroic'];
+export const RARITY_MUL = { common: 1, rare: 1.5, epic: 2.0, heroic: 2.6 };
+export const RARITY_LABEL = { common: 'Common', rare: 'Rare', epic: 'Epic', heroic: 'Heroic' };
+/** Weights used when a boon is offered without a forced rarity. */
+export const RARITY_WEIGHT = { common: 62, rare: 26, epic: 9, heroic: 3 };
+
+export const GOD_INFO = {
+  zeus:      { name: 'Zeus',      title: 'God of Thunder',        color: GODS.zeus,      status: 'shock', emblem: 'bolt' },
+  poseidon:  { name: 'Poseidon',  title: 'God of the Sea',        color: GODS.poseidon,  status: null,    emblem: 'trident' },
+  athena:    { name: 'Athena',    title: 'Goddess of Wisdom',     color: GODS.athena,    status: null,    emblem: 'aegis' },
+  aphrodite: { name: 'Aphrodite', title: 'Goddess of Love',       color: GODS.aphrodite, status: 'weak',  emblem: 'rose' },
+  ares:      { name: 'Ares',      title: 'God of War',            color: GODS.ares,      status: 'doom',  emblem: 'blades' },
+  artemis:   { name: 'Artemis',   title: 'Goddess of the Hunt',   color: GODS.artemis,   status: null,    emblem: 'bow' },
+  dionysus:  { name: 'Dionysus',  title: 'God of Wine',           color: GODS.dionysus,  status: 'doom',  emblem: 'grapes' },
+  hermes:    { name: 'Hermes',    title: 'God of Swiftness',      color: GODS.hermes,    status: null,    emblem: 'wing' },
+  hecate:    { name: 'Hecate',    title: 'Witch of the Crossroads', color: GODS.hecate,  status: 'chill', emblem: 'moons' },
+  selene:    { name: 'Selene',    title: 'Goddess of the Moon',   color: GODS.selene,    status: 'chill', emblem: 'crescent' },
+};
+export const GOD_KEYS = Object.keys(GOD_INFO);
+
+// ── helpers ────────────────────────────────────────────────────────────────
+const r1 = (n) => Math.round(n * 10) / 10;
+function scaleVal(base, mul) {
+  if (typeof base !== 'number') return base;
+  const v = base * mul;
+  return Math.abs(base) >= 5 ? Math.round(v) : r1(v);
+}
+/** Resolve a boon's authored `base` table for a given rarity. */
+export function valuesFor(boon, rarity) {
+  const mul = RARITY_MUL[rarity] || 1;
+  const out = {};
+  for (const k in boon.base) out[k] = scaleVal(boon.base[k], mul);
+  return out;
+}
+
+// A rider is what a slot's hit carries: bonus damage, a damage type, and an
+// optional status the combat system already implements (burn/chill/shock/doom/weak).
+function rider(m, slot, o) {
+  const r = m.rider[slot] || (m.rider[slot] = { bonus: 0, type: null, status: null, stacks: 0, color: null, god: null, name: null });
+  if (o.bonus) r.bonus += o.bonus;
+  if (o.type) r.type = o.type;
+  if (o.status) { r.status = o.status; r.stacks += (o.stacks || 1); }
+  if (o.color) r.color = o.color;
+  if (o.god) r.god = o.god;
+  if (o.name) r.name = o.name;
+  return r;
+}
+
+// ═══════════════════════════════════════════════════════ THE BOON TABLE ════
+// text() receives the rarity-scaled values, so a Heroic card literally reads
+// the Heroic number.
+const B = (id, god, slot, name, base, text, apply, extra) => ({ id, god, slot, name, base, text, apply, ...(extra || {}) });
+
+export const BOONS = [
+  // ── ZEUS — chain lightning, shock ────────────────────────────────────────
+  B('zeus.attack', 'zeus', 'attack', 'Lightning Strike', { dmg: 14, stacks: 1 },
+    v => `Your Attack deals ${v.dmg} bonus lightning damage and inflicts Shock.`,
+    (m, v) => rider(m, 'attack', { bonus: v.dmg, type: 'lightning', status: 'shock', stacks: v.stacks, color: GODS.zeus, god: 'zeus', name: 'Lightning Strike' }),
+    { status: 'shock' }),
+  B('zeus.special', 'zeus', 'special', 'Thunder Flourish', { dmg: 26 },
+    v => `Your Special calls a bolt for ${v.dmg} lightning damage in a wide arc.`,
+    (m, v) => rider(m, 'special', { bonus: v.dmg, type: 'lightning', status: 'shock', color: GODS.zeus, god: 'zeus', name: 'Thunder Flourish' }),
+    { status: 'shock' }),
+  B('zeus.cast', 'zeus', 'cast', 'Electric Shot', { dmg: 20, arcs: 2 },
+    v => `Your Cast forks to ${v.arcs} nearby foes for ${v.dmg} lightning damage.`,
+    (m, v) => { rider(m, 'cast', { bonus: v.dmg, type: 'lightning', status: 'shock', color: GODS.zeus, god: 'zeus', name: 'Electric Shot' }); m.castForks += v.arcs; }),
+  B('zeus.dash', 'zeus', 'dash', 'Thunder Dash', { dmg: 22 },
+    v => `Your Dash blasts foes at the point of departure for ${v.dmg} lightning damage.`,
+    (m, v) => rider(m, 'dash', { bonus: v.dmg, type: 'lightning', status: 'shock', color: GODS.zeus, god: 'zeus', name: 'Thunder Dash' })),
+  B('zeus.passive', 'zeus', 'passive', 'Heaven’s Vengeance', { chance: 8, dmg: 30 },
+    v => `${v.chance}% chance that taking damage strikes the attacker for ${v.dmg}.`,
+    (m, v) => { m.retaliate += v.chance / 100; m.retaliateDmg += v.dmg; }),
+
+  // ── POSEIDON — knockback, displacement, rooms ────────────────────────────
+  B('poseidon.attack', 'poseidon', 'attack', 'Tempest Strike', { dmg: 12, knock: 3 },
+    v => `Your Attack deals ${v.dmg} bonus damage and knocks foes back ${v.knock}m.`,
+    (m, v) => { rider(m, 'attack', { bonus: v.dmg, type: 'physical', color: GODS.poseidon, god: 'poseidon', name: 'Tempest Strike' }); m.knockback += v.knock; }),
+  B('poseidon.special', 'poseidon', 'special', 'Tidal Dash', { dmg: 24, knock: 5 },
+    v => `Your Special becomes a breaking wave: ${v.dmg} damage, ${v.knock}m knockback.`,
+    (m, v) => { rider(m, 'special', { bonus: v.dmg, color: GODS.poseidon, god: 'poseidon', name: 'Tidal Dash' }); m.knockback += v.knock; }),
+  B('poseidon.cast', 'poseidon', 'cast', 'Flood Shot', { dmg: 18, radius: 1.6 },
+    v => `Your Cast bursts for ${v.dmg} damage in a ${v.radius}m flood.`,
+    (m, v) => { rider(m, 'cast', { bonus: v.dmg, color: GODS.poseidon, god: 'poseidon', name: 'Flood Shot' }); m.castRadius += v.radius; }),
+  B('poseidon.dash', 'poseidon', 'dash', 'Breaker Dash', { dmg: 20, radius: 2.2 },
+    v => `Your Dash slams for ${v.dmg} damage in a ${v.radius}m ring on arrival.`,
+    (m, v) => { rider(m, 'dash', { bonus: v.dmg, color: GODS.poseidon, god: 'poseidon', name: 'Breaker Dash' }); m.dashRadius += v.radius; }),
+  B('poseidon.passive', 'poseidon', 'passive', 'Sunken Treasure', { heal: 6, wall: 12 },
+    v => `Knocking a foe into a wall deals ${v.wall} damage; each clear heals ${v.heal}.`,
+    (m, v) => { m.wallSlamDmg += v.wall; m.clearHeal += v.heal; }),
+
+  // ── ATHENA — deflect, exposure, defence ──────────────────────────────────
+  B('athena.attack', 'athena', 'attack', 'Divine Strike', { dmg: 15, expose: 10 },
+    v => `Your Attack deals ${v.dmg} bonus damage and Exposes foes for ${v.expose}%.`,
+    (m, v) => { rider(m, 'attack', { bonus: v.dmg, color: GODS.athena, god: 'athena', name: 'Divine Strike' }); m.expose += v.expose / 100; }),
+  B('athena.special', 'athena', 'special', 'Phalanx Flourish', { dmg: 22, deflect: 1 },
+    v => `Your Special deals ${v.dmg} bonus damage and deflects for ${v.deflect}s.`,
+    (m, v) => { rider(m, 'special', { bonus: v.dmg, color: GODS.athena, god: 'athena', name: 'Phalanx Flourish' }); m.deflect += v.deflect; }),
+  B('athena.cast', 'athena', 'cast', 'Phalanx Shot', { dmg: 16, weak: 2 },
+    v => `Your Cast pins and Weakens foes by ${v.weak} stacks for ${v.dmg} damage.`,
+    (m, v) => rider(m, 'cast', { bonus: v.dmg, status: 'weak', stacks: v.weak, color: GODS.athena, god: 'athena', name: 'Phalanx Shot' }),
+    { status: 'weak' }),
+  B('athena.dash', 'athena', 'dash', 'Deflect Dash', { dmg: 12, window: 0.6 },
+    v => `Your Dash deflects incoming attacks for ${v.window}s and deals ${v.dmg}.`,
+    (m, v) => { rider(m, 'dash', { bonus: v.dmg, color: GODS.athena, god: 'athena', name: 'Deflect Dash' }); m.deflect += v.window; }),
+  B('athena.passive', 'athena', 'passive', 'Bronze Skin', { dr: 8 },
+    v => `Take ${v.dr}% less damage from all sources.`,
+    (m, v) => { m.damageTaken *= (1 - v.dr / 100); }),
+
+  // ── APHRODITE — weak, charm, raw damage ──────────────────────────────────
+  B('aphrodite.attack', 'aphrodite', 'attack', 'Heartbreak Strike', { dmg: 22, weak: 1 },
+    v => `Your Attack deals ${v.dmg} bonus damage and inflicts Weak (${v.weak}).`,
+    (m, v) => rider(m, 'attack', { bonus: v.dmg, status: 'weak', stacks: v.weak, color: GODS.aphrodite, god: 'aphrodite', name: 'Heartbreak Strike' }),
+    { status: 'weak' }),
+  B('aphrodite.special', 'aphrodite', 'special', 'Heartbreak Flourish', { dmg: 34, weak: 2 },
+    v => `Your Special deals ${v.dmg} bonus damage and inflicts Weak (${v.weak}).`,
+    (m, v) => rider(m, 'special', { bonus: v.dmg, status: 'weak', stacks: v.weak, color: GODS.aphrodite, god: 'aphrodite', name: 'Heartbreak Flourish' }),
+    { status: 'weak' }),
+  B('aphrodite.cast', 'aphrodite', 'cast', 'Crush Shot', { dmg: 30 },
+    v => `Your Cast blooms for ${v.dmg} bonus damage and leaves foes Weakened.`,
+    (m, v) => rider(m, 'cast', { bonus: v.dmg, status: 'weak', color: GODS.aphrodite, god: 'aphrodite', name: 'Crush Shot' }),
+    { status: 'weak' }),
+  B('aphrodite.dash', 'aphrodite', 'dash', 'Passion Dash', { dmg: 18, weak: 2 },
+    v => `Your Dash Weakens (${v.weak}) all nearby foes and deals ${v.dmg}.`,
+    (m, v) => rider(m, 'dash', { bonus: v.dmg, status: 'weak', stacks: v.weak, color: GODS.aphrodite, god: 'aphrodite', name: 'Passion Dash' }),
+    { status: 'weak' }),
+  B('aphrodite.passive', 'aphrodite', 'passive', 'Life Affirmation', { hp: 25 },
+    v => `Gain ${v.hp} maximum life. Beauty endures.`,
+    (m, v) => { m.maxHealthAdd += v.hp; }),
+
+  // ── ARES — doom, blade rifts, crits ──────────────────────────────────────
+  B('ares.attack', 'ares', 'attack', 'Curse of Agony', { dmg: 30 },
+    v => `Your Attack inflicts Doom, dealing ${v.dmg} damage after a delay.`,
+    (m, v) => rider(m, 'attack', { bonus: 0, type: 'arcane', status: 'doom', color: GODS.ares, god: 'ares', name: 'Curse of Agony' }) && (m.doomDmg += v.dmg),
+    { status: 'doom' }),
+  B('ares.special', 'ares', 'special', 'Curse of Pain', { dmg: 46 },
+    v => `Your Special inflicts Doom for ${v.dmg} delayed damage.`,
+    (m, v) => { rider(m, 'special', { status: 'doom', type: 'arcane', color: GODS.ares, god: 'ares', name: 'Curse of Pain' }); m.doomDmg += v.dmg; },
+    { status: 'doom' }),
+  B('ares.cast', 'ares', 'cast', 'Slicing Shot', { dmg: 24, ticks: 5 },
+    v => `Your Cast opens a Blade Rift: ${v.ticks} cuts of ${v.dmg} damage.`,
+    (m, v) => { rider(m, 'cast', { bonus: v.dmg, color: GODS.ares, god: 'ares', name: 'Slicing Shot' }); m.castTicks += v.ticks; }),
+  B('ares.dash', 'ares', 'dash', 'Blade Dash', { dmg: 26 },
+    v => `Your Dash cuts a rift behind you for ${v.dmg} damage.`,
+    (m, v) => rider(m, 'dash', { bonus: v.dmg, color: GODS.ares, god: 'ares', name: 'Blade Dash' })),
+  B('ares.passive', 'ares', 'passive', 'Battle Rage', { crit: 6, mul: 0.4 },
+    v => `+${v.crit}% Critical chance and +${v.mul}x Critical damage.`,
+    (m, v) => { m.critChance += v.crit / 100; m.critMul += v.mul; }),
+
+  // ── ARTEMIS — crit, seeking ──────────────────────────────────────────────
+  B('artemis.attack', 'artemis', 'attack', 'Deadly Strike', { dmg: 10, crit: 12 },
+    v => `Your Attack deals ${v.dmg} bonus damage with +${v.crit}% Critical chance.`,
+    (m, v) => { rider(m, 'attack', { bonus: v.dmg, color: GODS.artemis, god: 'artemis', name: 'Deadly Strike' }); m.critChance += v.crit / 100; }),
+  B('artemis.special', 'artemis', 'special', 'Deadly Flourish', { dmg: 18, crit: 15 },
+    v => `Your Special deals ${v.dmg} bonus damage with +${v.crit}% Critical chance.`,
+    (m, v) => { rider(m, 'special', { bonus: v.dmg, color: GODS.artemis, god: 'artemis', name: 'Deadly Flourish' }); m.critChance += v.crit / 100; }),
+  B('artemis.cast', 'artemis', 'cast', 'True Shot', { dmg: 26 },
+    v => `Your Cast seeks the nearest foe and deals ${v.dmg} bonus damage.`,
+    (m, v) => { rider(m, 'cast', { bonus: v.dmg, color: GODS.artemis, god: 'artemis', name: 'True Shot' }); m.castSeek = 1; }),
+  B('artemis.dash', 'artemis', 'dash', 'Hunter’s Flare', { dmg: 16, crit: 10 },
+    v => `Your Dash marks foes: +${v.crit}% Critical chance against them, ${v.dmg} damage.`,
+    (m, v) => { rider(m, 'dash', { bonus: v.dmg, color: GODS.artemis, god: 'artemis', name: 'Hunter’s Flare' }); m.critChance += v.crit / 100; }),
+  B('artemis.passive', 'artemis', 'passive', 'Pressure Points', { crit: 4, mul: 0.6 },
+    v => `All damage has +${v.crit}% Critical chance and +${v.mul}x Critical damage.`,
+    (m, v) => { m.critChance += v.crit / 100; m.critMul += v.mul; }),
+
+  // ── DIONYSUS — hangover (burn), festive fog ──────────────────────────────
+  B('dionysus.attack', 'dionysus', 'attack', 'Drunken Strike', { stacks: 2, dmg: 8 },
+    v => `Your Attack inflicts ${v.stacks} Hangover, burning for ${v.dmg} per stack.`,
+    (m, v) => { rider(m, 'attack', { bonus: 0, type: 'poison', status: 'burn', stacks: v.stacks, color: GODS.dionysus, god: 'dionysus', name: 'Drunken Strike' }); m.status.burn += v.dmg / 8; },
+    { status: 'burn' }),
+  B('dionysus.special', 'dionysus', 'special', 'Drunken Flourish', { stacks: 3, dmg: 10 },
+    v => `Your Special inflicts ${v.stacks} Hangover for ${v.dmg} damage per stack.`,
+    (m, v) => { rider(m, 'special', { status: 'burn', type: 'poison', stacks: v.stacks, color: GODS.dionysus, god: 'dionysus', name: 'Drunken Flourish' }); m.status.burn += v.dmg / 10; },
+    { status: 'burn' }),
+  B('dionysus.cast', 'dionysus', 'cast', 'Trippy Shot', { dmg: 14, radius: 2.4 },
+    v => `Your Cast leaves a festive fog: ${v.dmg} damage in ${v.radius}m.`,
+    (m, v) => { rider(m, 'cast', { bonus: v.dmg, status: 'burn', color: GODS.dionysus, god: 'dionysus', name: 'Trippy Shot' }); m.castRadius += v.radius; },
+    { status: 'burn' }),
+  B('dionysus.dash', 'dionysus', 'dash', 'Trippy Dash', { dmg: 14, stacks: 2 },
+    v => `Your Dash leaves a fog inflicting ${v.stacks} Hangover for ${v.dmg}.`,
+    (m, v) => rider(m, 'dash', { bonus: v.dmg, status: 'burn', stacks: v.stacks, color: GODS.dionysus, god: 'dionysus', name: 'Trippy Dash' }),
+    { status: 'burn' }),
+  B('dionysus.passive', 'dionysus', 'passive', 'Premium Vintage', { dmg: 3 },
+    v => `Deal +${v.dmg}% damage for every Hangover stack on the target.`,
+    (m, v) => { m.hangoverAmp += v.dmg / 100; }),
+
+  // ── HERMES — speed, cooldowns ────────────────────────────────────────────
+  B('hermes.passive', 'hermes', 'passive', 'Swift Strike', { spd: 12 },
+    v => `Your Attack is ${v.spd}% faster.`,
+    (m, v) => { m.attackSpeed *= (1 + v.spd / 100); }),
+  B('hermes.dash', 'hermes', 'dash', 'Greater Evasion', { dodge: 8 },
+    v => `${v.dodge}% chance to dodge any incoming attack.`,
+    (m, v) => { m.dodge += v.dodge / 100; }),
+  B('hermes.call', 'hermes', 'call', 'Quick Favour', { cdr: 20 },
+    v => `Your Call charges ${v.cdr}% faster and refunds magick.`,
+    (m, v) => { m.callCharge *= (1 + v.cdr / 100); }),
+  B('hermes.cast', 'hermes', 'cast', 'Flurry Cast', { rate: 25 },
+    v => `Your Cast fires ${v.rate}% faster and returns sooner.`,
+    (m, v) => { m.castSpeed *= (1 + v.rate / 100); }),
+  B('hermes.attack', 'hermes', 'attack', 'Hyper Sprint', { spd: 14, dmg: 8 },
+    v => `Move ${v.spd}% faster; the first hit out of a Dash deals +${v.dmg}.`,
+    (m, v) => { m.moveMul *= (1 + v.spd / 100); rider(m, 'dash', { bonus: v.dmg, color: GODS.hermes, god: 'hermes', name: 'Hyper Sprint' }); }),
+
+  // ── HECATE — chill, arcane, cast mastery ─────────────────────────────────
+  B('hecate.attack', 'hecate', 'attack', 'Crossroads Strike', { dmg: 16, chill: 2 },
+    v => `Your Attack deals ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    (m, v) => rider(m, 'attack', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Crossroads Strike' }),
+    { status: 'chill' }),
+  B('hecate.cast', 'hecate', 'cast', 'Witching Hour', { dmg: 34, chill: 3 },
+    v => `Your Cast rends for ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    (m, v) => rider(m, 'cast', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Witching Hour' }),
+    { status: 'chill' }),
+  B('hecate.special', 'hecate', 'special', 'Hex Flourish', { dmg: 28, chill: 2 },
+    v => `Your Special hexes for ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    (m, v) => rider(m, 'special', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Hex Flourish' }),
+    { status: 'chill' }),
+  B('hecate.dash', 'hecate', 'dash', 'Phase Dash', { dmg: 14, chill: 2 },
+    v => `Your Dash phases through foes, Chilling (${v.chill}) for ${v.dmg}.`,
+    (m, v) => rider(m, 'dash', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Phase Dash' }),
+    { status: 'chill' }),
+  B('hecate.passive', 'hecate', 'passive', 'Arcane Reserve', { mana: 40 },
+    v => `Magick regenerates ${v.mana}% faster; Chill lasts longer.`,
+    (m, v) => { m.manaRegenMul *= (1 + v.mana / 100); m.status.chill += 0.25; }),
+
+  // ── SELENE — moon magick, the Call ───────────────────────────────────────
+  B('selene.call', 'selene', 'call', 'Moon Water', { dmg: 60 },
+    v => `Your Call detonates moonlight for ${v.dmg} damage around you.`,
+    (m, v) => { rider(m, 'call', { bonus: v.dmg, type: 'arcane', color: GODS.selene, god: 'selene', name: 'Moon Water' }); }),
+  B('selene.cast', 'selene', 'cast', 'Lunar Ray', { dmg: 30 },
+    v => `Your Cast becomes a sustained ray for ${v.dmg} damage per second.`,
+    (m, v) => { rider(m, 'cast', { bonus: v.dmg, type: 'arcane', color: GODS.selene, god: 'selene', name: 'Lunar Ray' }); m.castBeam = 1; }),
+  B('selene.passive', 'selene', 'passive', 'Night Bloom', { hp: 15, mana: 25 },
+    v => `Gain ${v.hp} life and ${v.mana} maximum magick under the dark moon.`,
+    (m, v) => { m.maxHealthAdd += v.hp; m.maxManaAdd += v.mana; }),
+  B('selene.dash', 'selene', 'dash', 'Silver Step', { dmg: 18, iframes: 0.2 },
+    v => `Your Dash leaves moonlight for ${v.dmg} and extends invulnerability ${v.iframes}s.`,
+    (m, v) => { rider(m, 'dash', { bonus: v.dmg, type: 'arcane', color: GODS.selene, god: 'selene', name: 'Silver Step' }); m.iframeAdd += v.iframes; }),
+  B('selene.special', 'selene', 'special', 'Moonlit Flourish', { dmg: 26, chill: 2 },
+    v => `Your Special deals ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    (m, v) => rider(m, 'special', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.selene, god: 'selene', name: 'Moonlit Flourish' }),
+    { status: 'chill' }),
+];
+
+// ═══════════════════════════════════════════════════════════ DUO BOONS ════
+// A duo requires a boon from BOTH gods already granted. They are rare, always
+// offered at Epic or above, and read as the run's payoff.
+export const DUOS = [
+  { id: 'duo.zeus.poseidon', gods: ['zeus', 'poseidon'], name: 'Sea Storm', slot: 'passive',
+    base: { dmg: 40 }, text: v => `Foes knocked back are struck by lightning for ${v.dmg} damage.`,
+    apply: (m, v) => { m.wallSlamDmg += v.dmg; m.status.shock += 0.5; } },
+  { id: 'duo.zeus.artemis', gods: ['zeus', 'artemis'], name: 'Fully Loaded', slot: 'passive',
+    base: { crit: 10 }, text: v => `Lightning strikes can Critically hit for +${v.crit}%.`,
+    apply: (m, v) => { m.critChance += v.crit / 100; } },
+  { id: 'duo.ares.aphrodite', gods: ['ares', 'aphrodite'], name: 'Curse of Longing', slot: 'passive',
+    base: { dmg: 55 }, text: v => `Doom on Weakened foes deals ${v.dmg} extra damage.`,
+    apply: (m, v) => { m.doomDmg += v.dmg; m.status.doom += 0.6; } },
+  { id: 'duo.ares.artemis', gods: ['ares', 'artemis'], name: 'Hunting Blades', slot: 'passive',
+    base: { dmg: 34 }, text: v => `Critical hits open a Blade Rift for ${v.dmg} damage.`,
+    apply: (m, v) => { m.critMul += 0.5; m.doomDmg += v.dmg; } },
+  { id: 'duo.dionysus.aphrodite', gods: ['dionysus', 'aphrodite'], name: 'Low Tolerance', slot: 'passive',
+    base: { dmg: 6 }, text: v => `Weakened foes take +${v.dmg}% damage per Hangover stack.`,
+    apply: (m, v) => { m.hangoverAmp += v.dmg / 100; m.status.weak += 0.5; } },
+  { id: 'duo.hecate.selene', gods: ['hecate', 'selene'], name: 'Moonstruck', slot: 'passive',
+    base: { dmg: 28 }, text: v => `Chilled foes shatter under moonlight for ${v.dmg} arcane damage.`,
+    apply: (m, v) => { m.status.chill += 0.8; m.shatterDmg += v.dmg; } },
+  { id: 'duo.athena.hermes', gods: ['athena', 'hermes'], name: 'Sure Footing', slot: 'passive',
+    base: { dodge: 12 }, text: v => `While deflecting, gain +${v.dodge}% dodge and move freely.`,
+    apply: (m, v) => { m.dodge += v.dodge / 100; m.deflect += 0.3; } },
+  { id: 'duo.poseidon.hermes', gods: ['poseidon', 'hermes'], name: 'Rip Current', slot: 'passive',
+    base: { spd: 18 }, text: v => `Knockback carries you: move ${v.spd}% faster after a slam.`,
+    apply: (m, v) => { m.moveMul *= (1 + v.spd / 100); m.knockback += 1.5; } },
+];
+
+// ═══════════════════════════════════════════════════════ MODIFIER STATE ════
+export function emptyMods() {
+  return {
+    // multiplicative
+    dmgMul: 1, attackMul: 1, specialMul: 1, castMul: 1, callMul: 1,
+    attackSpeed: 1, castSpeed: 1, moveMul: 1, manaRegenMul: 1, callCharge: 1,
+    damageTaken: 1,
+    // additive
+    critChance: 0, critMul: 0, dodge: 0, expose: 0, knockback: 0,
+    maxHealthAdd: 0, maxManaAdd: 0, iframeAdd: 0, deflect: 0,
+    castRadius: 0, castTicks: 0, castForks: 0, castSeek: 0, castBeam: 0,
+    dashRadius: 0, doomDmg: 0, shatterDmg: 0, wallSlamDmg: 0, clearHeal: 0,
+    hangoverAmp: 0, retaliate: 0, retaliateDmg: 0,
+    // per-slot riders
+    rider: { attack: null, special: null, cast: null, dash: null, call: null },
+    // status potency multipliers, keyed to the combat system's own statuses
+    status: { burn: 1, chill: 1, shock: 1, doom: 1, weak: 1 },
+  };
+}
+
+/**
+ * The run's boon loadout. Cheap to query: `ctx.boons.mods.attackMul`.
+ * Rebuilt only when a boon is granted.
+ */
+export class BoonState {
+  constructor(ctx) {
+    this.ctx = ctx || null;
+    this.granted = [];               // [{boon, rarity, values, god, slot}]
+    this.byId = new Map();
+    this.mods = emptyMods();
+    this.godCount = {};
+  }
+
+  has(id) { return this.byId.has(id); }
+  /** Gods with at least one boon — the duo requirement and the HUD tray. */
+  gods() { return Object.keys(this.godCount); }
+  list() { return this.granted; }
+  /** The rider a slot's hit should carry, or null. Zero-alloc read. */
+  rider(slot) { return this.mods.rider[slot]; }
+
+  grant(entry) {
+    if (!entry || !entry.boon) return null;
+    const rec = {
+      boon: entry.boon, rarity: entry.rarity || 'common',
+      values: entry.values || valuesFor(entry.boon, entry.rarity || 'common'),
+      god: entry.boon.god || (entry.boon.gods && entry.boon.gods[0]),
+      slot: entry.boon.slot || 'passive',
+      duo: !!entry.boon.gods,
+    };
+    const prev = this.byId.get(rec.boon.id);
+    if (prev) {                                  // upgrade in place
+      this.granted[this.granted.indexOf(prev)] = rec;
+    } else {
+      this.granted.push(rec);
+    }
+    this.byId.set(rec.boon.id, rec);
+    if (rec.boon.gods) { for (const g of rec.boon.gods) this.godCount[g] = (this.godCount[g] || 0) + 1; }
+    else this.godCount[rec.god] = (this.godCount[rec.god] || 0) + 1;
+    this.rebuild();
+    this.ctx?.events?.emit?.('boon.granted', { boon: rec.boon, rarity: rec.rarity, values: rec.values, record: rec });
+    return rec;
+  }
+
+  rebuild() {
+    const m = emptyMods();
+    for (const rec of this.granted) {
+      try { rec.boon.apply(m, rec.values, this.ctx); } catch (e) { /* a bad boon must never kill the run */ }
+    }
+    // Status potency folds into rider stacks so combat needs no extra query.
+    for (const k in m.rider) {
+      const r = m.rider[k];
+      if (r && r.status && m.status[r.status] > 1) r.stacks = Math.max(1, Math.round(r.stacks * m.status[r.status]));
+    }
+    this.mods = m;
+    return m;
+  }
+
+  /** Which duos are currently unlockable given the gods already met. */
+  availableDuos() {
+    return DUOS.filter(d => !this.byId.has(d.id) && d.gods.every(g => this.godCount[g]));
+  }
+
+  // ── offering ─────────────────────────────────────────────────────────────
+  /**
+   * Roll `count` distinct boon offers. Deterministic: pass ctx.rng (or a fork).
+   * `god` forces a single god (a chamber is usually one god's offer).
+   */
+  roll(rng, o = {}) {
+    const count = o.count || 3;
+    const pickR = () => {
+      if (o.rarity) return o.rarity;
+      const total = RARITIES.reduce((s, r) => s + RARITY_WEIGHT[r], 0);
+      let x = (rng ? rng.f() : 0.5) * total;
+      for (const r of RARITIES) { x -= RARITY_WEIGHT[r]; if (x <= 0) return r; }
+      return 'common';
+    };
+    const out = [];
+    // a duo, if earned, always takes the first slot — it is the run's reward
+    const duos = this.availableDuos();
+    if (duos.length && (o.allowDuo !== false) && (rng ? rng.f() : 1) < (o.duoChance != null ? o.duoChance : 0.18)) {
+      const d = rng ? rng.pick(duos) : duos[0];
+      out.push(this.offer(d, (rng ? rng.f() : 0) < 0.5 ? 'epic' : 'heroic'));
+    }
+    const gods = o.god ? [o.god] : GOD_KEYS;
+    const pool = BOONS.filter(b => gods.includes(b.god) && !this.byId.has(b.id));
+    const src = pool.length >= count ? pool : BOONS.filter(b => gods.includes(b.god));
+    const used = new Set(out.map(x => x.boon.id));
+    let guard = 0, seq = 0;
+    while (out.length < count && guard++ < 400) {
+      // random draw first; after a few misses walk the pool so a small or
+      // degenerate rng stream can never return fewer cards than asked for
+      const b = (rng && guard < 40) ? rng.pick(src) : src[seq++ % src.length];
+      if (!b || used.has(b.id)) continue;
+      used.add(b.id);
+      out.push(this.offer(b, pickR()));
+    }
+    return out;
+  }
+
+  /** Package a boon + rarity into the object the UI renders and grant() takes. */
+  offer(boon, rarity = 'common') {
+    const values = valuesFor(boon, rarity);
+    const god = boon.god || (boon.gods && boon.gods[0]);
+    return {
+      id: boon.id, boon, rarity, values,
+      god, gods: boon.gods || [god],
+      slot: boon.slot || 'passive',
+      name: boon.name,
+      text: (() => { try { return boon.text(values); } catch (e) { return ''; } })(),
+      color: GOD_INFO[god] ? GOD_INFO[god].color : '#f2c14e',
+      duo: !!boon.gods,
+      status: boon.status || null,
+    };
+  }
+}
+
+export const ALL_BOONS = BOONS;
+export default { BOONS, DUOS, BoonState, GOD_INFO, SLOTS, RARITIES, valuesFor };

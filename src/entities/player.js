@@ -9,8 +9,13 @@
 //   * DASH is the core verb: fixed distance, i-frames, cooldown with a visible
 //     ready tell, dash-cancel out of attack recovery, and an input buffer so a
 //     dash pressed during recovery fires the instant recovery ends.
-//   * A 3-hit combo with buffering, cancel windows, root motion on the
-//     committed frames, and hit-stop on connect.
+//   * THE ARSENAL IS NOT HERE. entities/weapons.js owns every number that
+//     decides what a swing does — windup, active frames, cancel marks, hitbox
+//     shape, damage, knockback, hit-stop, VFX and SFX — and WeaponRuntime owns
+//     the state machine that plays them. This file forwards the BUTTON and
+//     maps the runtime's current step onto a pose. It never duplicates a
+//     combat timing, which is why all four arms are reachable from one input
+//     path instead of only the blade.
 //   * Feel: anticipation on every action, lean into acceleration, squash on
 //     landing, micro-shake, knockback with spring recovery.
 //
@@ -41,21 +46,16 @@ export const TUNING = {
   dashGhosts: 3,
   dashGhostLife: 0.26,
 
-  // ── combo ───────────────────────────────────────────────────────────────
-  attackBuffer: 0.24,
-  attackDur: [0.46, 0.44, 0.68],
-  attackActive: [[0.135, 0.245], [0.105, 0.215], [0.235, 0.375]],
-  attackChain: [0.235, 0.215, 0.42],   // earliest time the next swing may start
-  attackCancel: [0.285, 0.265, 0.45],  // dash may cancel from here
-  attackTurnLock: 0.10,
-  attackDamage: [14, 14, 26],
-  attackRange: [2.15, 2.15, 2.65],
-  attackArc: [125, 135, 200],
-  attackKnock: [3.4, 3.6, 7.0],
-  hitStopMs: [58, 64, 96],
+  // ── input ───────────────────────────────────────────────────────────────
+  // Attack and Special are NOT buffered here — WeaponRuntime has its own,
+  // per-weapon buffer (weapons.js `buffer`), and two buffers stacked on one
+  // button is how you get a swing you did not ask for. This is only for the
+  // two verbs this file still owns.
+  actionBuffer: 0.22,
+  steerLambdaCommit: 15,   // facing damp inside an attack's turn window
+  steerLambdaAim: 24,      // facing damp while charging or guarding
 
-  // ── abilities ───────────────────────────────────────────────────────────
-  specialDur: 0.54, specialActive: [0.2, 0.32], specialCost: 0,
+  // ── cast (weapon-agnostic: combat.js owns the bolt) ─────────────────────
   castDur: 0.60, castRelease: 0.30, castCost: 25,
 
   // ── survivability ───────────────────────────────────────────────────────
@@ -65,6 +65,36 @@ export const TUNING = {
   manaRegen: 6.0,
   deathDur: 1.7,
 };
+
+// ---------------------------------------------------------------------------
+// THE RUNTIME -> POSE MAP.
+//
+// weapons.js names every combo step ('cut1', 'poke2', 'spin', 'loose'...) and
+// WeaponRuntime publishes which one is live plus how long it lasts. That is
+// everything an animator needs, so the mapping is a table, not a switch: a
+// weapon key, a step name, a clip. The `_` entries cover the machine's
+// non-combo states (charge / block / rush) and the fallback.
+//
+// TIME-SCALING, not re-authoring: each clip is played at
+// `speed = clip.dur / step.dur`, so a clip authored once lands its
+// anticipation on the step's WINDUP and its commit inside the step's ACTIVE
+// window whatever weapons.js says those are today. Retuning a weapon retimes
+// its animation for free, and no arm can ever play at another arm's rhythm.
+// A weapon that plays the blade's clip is a bug, so every entry below is a
+// pose authored for that arm — see anim.js §ARSENAL CLIPS.
+// ---------------------------------------------------------------------------
+const WEAPON_ANIM = {
+  blade:  { _fallback: 'attack1', _charge: 'attack3', _block: 'guard', _rush: 'dash',
+            cut1: 'attack1', cut2: 'attack2', lunge: 'attack3', dashcut: 'attack1', sweep: 'special' },
+  spear:  { _fallback: 'thrust1', _charge: 'throwWind', _block: 'guard', _rush: 'rush',
+            poke1: 'thrust1', poke2: 'thrust2', spin: 'spin', loose: 'throw' },
+  bow:    { _fallback: 'loose', _charge: 'draw', _block: 'guard', _rush: 'rush',
+            loose: 'loose', kick: 'special' },
+  shield: { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
+            punch1: 'bash1', punch2: 'bash2' },
+};
+/** 1..4 pick an arm directly; X / C cycle. */
+const WEAPON_KEYS = { Digit1: 'blade', Digit2: 'spear', Digit3: 'bow', Digit4: 'shield' };
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -87,7 +117,10 @@ export class Player {
     this.state = 'move';
     this.act = { name: null, t: 0, dur: 0, index: 0, hit: false, fired: false };
     this.dash = { t: 0, dir: new THREE.Vector2(0, 1), travelled: 0, cd: 0, ready: true, readyPulse: 0 };
-    this.buf = { dash: 0, attack: 0, special: 0, cast: 0, summon: 0 };
+    this.buf = { dash: 0, cast: 0, summon: 0 };
+    this.weapon = null;          // the live WeaponRuntime (combat.js owns it)
+    this.blocking = null;        // set by WeaponRuntime while the guard is up
+    this._animKey = null;        // last (weapon|state|step) we played a clip for
     this.knock = new THREE.Vector3();
     this.aimDir = new THREE.Vector2(0, 1);
     this.aimPoint = new THREE.Vector3(0, 0, 1);
@@ -149,6 +182,36 @@ export class Player {
     this.root.add(this.readyRing);
 
     ctx.combat?.register?.(this);
+
+    // ── THE ARSENAL ────────────────────────────────────────────────────────
+    // One runtime, owned by combat.js (it ticks every runtime in its own
+    // update, BEFORE this system runs, so by the time we animate below the
+    // machine's step is already the current one).
+    this.weapon = ctx.combat?.runtimeFor?.(this, ctx.combat.weaponId) || null;
+
+    // RECONCILING `playerDrivesBlade`. The flag existed because this file used
+    // to run its own hardcoded blade combo AND call combat.special() on the
+    // same frame, so the table's version of the swing had to be suppressed or
+    // the blade dealt double damage. That private path is gone: the runtime
+    // now drives all four arms and nothing here applies damage. Leaving the
+    // flag true would keep a live special-case that silently no-ops
+    // `ctx.combat.special({source: player})` for one weapon out of four — a
+    // trap for the next caller. Clearing it restores AGENT-COMBAT's stated
+    // design ("Every other arm is ours end to end") for the blade as well.
+    if (ctx.combat) ctx.combat.playerDrivesBlade = false;
+
+    if (!ctx.CAPTURE) {
+      this._onKey = (e) => {
+        if (e.repeat || !this.ctx?.combat) return;
+        const pick = WEAPON_KEYS[e.code];
+        if (pick) this.ctx.combat.equip?.(pick);
+        else if (e.code === 'KeyX' || e.code === 'KeyC') this.ctx.combat.cycleWeapon?.();
+        else return;
+        this._animKey = null;
+      };
+      addEventListener('keydown', this._onKey);
+    }
+
     ctx.events.on('damage.dealt', (info) => { if (info && info.target === this) this._onHurt(info); });
     ctx.events.on('entity.died', (info) => { if (info && info.entity === this) this._onDeath(); });
     ctx.events.on('capture.state', ({ name }) => this._captureState(name, ctx));
@@ -184,7 +247,7 @@ export class Player {
     if (name === 'combat') {
       // deterministic mid-combo impact frame — the pose the shot list asks for
       this._captureFreeze = { clip: 'attack2', t: 0.19 };
-      this.state = 'attack'; this.act = { name: 'attack', t: 0.19, dur: 0.44, index: 1, hit: true, fired: true };
+      this.state = 'weapon'; this.act = { name: 'cut2', t: 0.19, dur: 0.44, index: 1, hit: true, fired: true };
       this.combatHeat = 1;
       this.facing.set(0.42, 0.91).normalize();
       const d = new THREE.Vector3(this.facing.x, 0, this.facing.y);
@@ -273,12 +336,28 @@ export class Player {
     }
     for (const k in this.buf) this.buf[k] = Math.max(0, this.buf[k] - dt);
     const inp = ctx.input;
-    const acting = this.state !== 'move';
-    if (inp.pressed('dash')) { if (acting) this.act.dashQueued = true; else this.buf.dash = T.dashBuffer; }
-    if (inp.pressed('attack')) { if (this.state === 'attack') this.act.queued = true; else this.buf.attack = T.attackBuffer; }
-    if (inp.pressed('special')) this.buf.special = T.attackBuffer;
-    if (inp.pressed('cast')) this.buf.cast = T.attackBuffer;
-    if (inp.pressed('summon')) this.buf.summon = T.attackBuffer;
+    // THE ATTACK BUTTON GOES STRAIGHT TO THE ARM. press/release both matter:
+    // the bow and the spear charge on hold, the shield guards on hold, and the
+    // blade ignores the release entirely — that difference is data, not code.
+    const W = this.weapon = ctx.combat?.runtimeFor
+      ? ctx.combat.runtimeFor(this, ctx.combat.weaponId) : null;
+    if (W && this.alive && this.state !== 'dead' && this.state !== 'hurt') {
+      if (inp.pressed('attack')) W.press('attack');
+      if (inp.pressed('special')) W.press('special');
+      // WeaponRuntime.release() does not look at WHICH button was let go — it
+      // just ends whatever hold is live. Forwarding both edges would therefore
+      // let the ATTACK button drop a raised shield. Only the button that can
+      // start a hold on this arm is allowed to end one, which is a property of
+      // the weapon table (block.action / charge.action), not of this file.
+      const hold = W.weapon.block ? 'special' : (W.weapon.charge && W.weapon.charge.action);
+      if (hold && inp.released(hold)) W.release(hold);
+    }
+    if (inp.pressed('swap')) { ctx.combat?.cycleWeapon?.(); this._animKey = null; }
+    // A committed step can run longer than a normal buffer, and eating the
+    // dash that gets you out of it is the worst thing this controller can do.
+    if (inp.pressed('dash')) this.buf.dash = (W && W.busy) ? 0.55 : T.dashBuffer;
+    if (inp.pressed('cast')) this.buf.cast = T.actionBuffer;
+    if (inp.pressed('summon')) this.buf.summon = T.actionBuffer;
 
     this.mana = Math.min(this.maxMana, this.mana + T.manaRegen * dt);
     this.combatHeat = Math.max(0, this.combatHeat - dt * 0.55);
@@ -293,38 +372,32 @@ export class Player {
     }
 
     // ── action requests: dash first, it cancels almost everything ─────────
-    const i = this.act.index;
+    // WHO decides an attack is cancellable: the WEAPON. `cancellable` reads the
+    // live step's own `cancel` mark, so a blade's 3rd hit and a spear's spin
+    // open at different times without this file knowing either number.
+    const wFree = !W || W.cancellable;
     const canDash = this.dash.ready && (
       this.state === 'move' ||
-      (this.state === 'attack' && this.act.t >= T.attackCancel[i]) ||
-      ((this.state === 'special' || this.state === 'cast') && this.act.t >= this.act.dur * 0.60) ||
+      (this.state === 'weapon' && wFree) ||
+      (this.state === 'cast' && this.act.t >= this.act.dur * 0.60) ||
       (this.state === 'hurt' && this.act.t >= 0.13));
-    if (canDash && (this.buf.dash > 0 || this.act.dashQueued)) this._startDash(ctx);
-    else {
-    // special / cast may also CANCEL an attack once its cancel window opens —
-    // otherwise a button pressed mid-combo is silently eaten, which feels like
-    // the game ignored you.
-    const canCancel = this.state === 'move' ||
-      (this.state === 'attack' && this.act.t >= T.attackCancel[i]);
-    if (canCancel && this.buf.attack > 0 && this.state === 'move') this._startAttack(ctx, 0);
-    else if (canCancel && this.buf.special > 0) this._startAbility(ctx, 'special');
-    else if (canCancel && this.buf.cast > 0) this._startAbility(ctx, 'cast');
-    else if (this.state === 'move' && this.buf.summon > 0) {
-      this.buf.summon = 0;
-      ctx.combat?.summon?.({ source: this, pos: this.position.clone(), dir: this.facing.clone() });
-      ctx.events.emit('player.summon', { pos: this.position.clone() });
-    }
+    if (canDash && this.buf.dash > 0) this._startDash(ctx);
+    else if ((this.state === 'move' || this.state === 'weapon') && (!W || !W.busy)) {
+      if (this.buf.cast > 0) this._startCast(ctx);
+      else if (this.buf.summon > 0) {
+        this.buf.summon = 0;
+        ctx.combat?.summon?.({ source: this, pos: this.position.clone(), dir: this.facing.clone() });
+        ctx.events.emit('player.summon', { pos: this.position.clone() });
+      }
     }
 
     // ── per-state ─────────────────────────────────────────────────────────
     let wishScale = 1;
     switch (this.state) {
       case 'dash': this._dashStep(dt, ctx); wishScale = 0; break;
-      case 'attack': this._attackStep(dt, ctx); wishScale = this.act.t > T.attackCancel[this.act.index] ? 0.35 : 0.04; break;
-      case 'special':
-      case 'cast': this._abilityStep(dt, ctx); wishScale = this.act.t > this.act.dur * 0.72 ? 0.3 : 0.02; break;
+      case 'cast': this._castStep(dt, ctx); wishScale = this.act.t > this.act.dur * 0.72 ? 0.3 : 0.02; break;
       case 'hurt': this.act.t += dt; wishScale = 0.12; if (this.act.t >= this.act.dur) { this.state = 'move'; this._animLock = 0.05; } break;
-      default: this._locomotion(dt, ctx); break;
+      default: wishScale = this._weaponStep(dt, ctx, W); break;
     }
 
     // ── integrate, animate, resolve ───────────────────────────────────────
@@ -332,7 +405,11 @@ export class Player {
     this._feel(dt, ctx);
     this._applyRoot();
     const rd = this.animator.update(dt);
-    if (rd.lengthSq() > 1e-9) {
+    // CLIP root motion is only allowed when the WEAPON is not doing its own.
+    // weapons.js `step.root` displaces the actor along an ease-out curve during
+    // the active window; the blade's clips carry a root track from the days
+    // this file drove them, and applying both doubled every lunge.
+    if (this.state !== 'weapon' && rd.lengthSq() > 1e-9) {
       const a = Math.atan2(this.facing.x, this.facing.y), ca = Math.cos(a), sa = Math.sin(a);
       this.position.x += rd.x * ca + rd.z * sa;
       this.position.z += -rd.x * sa + rd.z * ca;
@@ -363,7 +440,13 @@ export class Player {
   // ─────────────────────────────────────────────────────────────── dash ────
   _startDash(ctx) {
     const T = this.tune;
-    this.buf.dash = 0; this.buf.attack = 0;
+    this.buf.dash = 0;
+    // THE DASH IS THE ANSWER TO EVERY MISTAKE (weapons.js, verbatim). Tell the
+    // arm first: it kills its own live hitbox, drops the guard and clears any
+    // charge, so a dash out of a swing cannot leave damage in the world.
+    this.weapon?.press?.('dash');
+    this.blocking = null;
+    this._animKey = null;
     const w = this._wish(ctx, _v);
     if (w > 0.15) this.dash.dir.set(_v.x, _v.z).normalize();
     else this.dash.dir.copy(this.facing);
@@ -410,111 +493,130 @@ export class Player {
     }
   }
 
-  // ────────────────────────────────────────────────────────────── combo ────
-  _startAttack(ctx, i) {
-    const T = this.tune;
-    this.buf.attack = 0;
-    this.state = 'attack';
-    this.act = { name: 'attack', t: 0, dur: T.attackDur[i], index: i, hit: false, fired: false, queued: false, dashQueued: false };
-    this.animator.play('attack' + (i + 1), { fade: i === 0 ? 0.055 : 0.04, restart: true });
-    const w = this._wish(ctx, _v);
-    if (w > 0.15) this.facing.set(_v.x, _v.z).normalize();
-    else if (this._mouseSeen) this.facing.copy(this.aimDir);
-    this.combatHeat = Math.min(1.5, this.combatHeat + 0.42);
-    this.squash = -0.03;
-    ctx.events.emit('camera.shake', { amp: 0.028 + 0.012 * i, dur: 0.10, freq: 34 });
-    ctx.audio?.sfx?.('swing', { pos: this.position, pitch: 1 + 0.07 * i });
-  }
-  _attackStep(dt, ctx) {
-    const T = this.tune, i = this.act.index;
-    this.act.t += dt;
-    if (this.act.t < T.attackTurnLock) {
-      const w = this._wish(ctx, _v);
-      if (w > 0.2) {
-        const a = Math.atan2(_v.x, _v.z), cur = Math.atan2(this.facing.x, this.facing.y);
-        const na = dampAngle(cur, a, 16, dt);
-        this.facing.set(Math.sin(na), Math.cos(na));
-      }
+  // ──────────────────────────────────────────────────────────── arsenal ────
+  /**
+   * The weapon state, every frame. Returns the movement scale.
+   *
+   * This is the whole of what used to be _startAttack/_attackStep/_swing. The
+   * runtime already advanced itself inside combat.update() this frame, so all
+   * that is left is: pick the player state, decide whether the character may
+   * still steer, and put the right pose on the right arm.
+   */
+  _weaponStep(dt, ctx, W) {
+    const st = W ? W.state : 'idle';
+    const busy = st !== 'idle';
+    this.state = busy ? 'weapon' : 'move';
+    this._syncWeaponAnim(ctx, W);
+    if (!busy) { this._locomotion(dt, ctx); return 1; }
+
+    // STEERING. A charge or a guard must track the aim — a bow you cannot
+    // re-aim while drawn is a bow you never draw. A committed swing must not:
+    // that is the contract the enemy reads when it sidesteps you.
+    // NOTE the `st === 'attack'` guard: the runtime does not null `step` when
+    // it enters a rush, so testing the step alone would let you steer a shield
+    // charge off its own line for the first few frames.
+    const s = st === 'attack' ? W.step : null;
+    if (st === 'charge' || st === 'block') this._steer(dt, ctx, this.tune.steerLambdaAim);
+    else if (st === 'attack' && (!s || W.t < s.turnLock || W.t >= s.cancel)) {
+      this._steer(dt, ctx, this.tune.steerLambdaCommit);
     }
-    if (!this.act.fired && this.act.t >= T.attackActive[i][0]) { this.act.fired = true; this._swing(ctx, i); }
-    if (this.act.queued && i < 2 && this.act.t >= T.attackChain[i]) { this._startAttack(ctx, i + 1); return; }
-    if (this.act.t >= this.act.dur) { this.state = 'move'; this._animLock = 0.05; }
-  }
-  _swing(ctx, i, o) {
-    const T = this.tune;
-    const range = o?.range ?? T.attackRange[i];
-    const arc = o?.arc ?? T.attackArc[i];
-    const dmg = o?.damage ?? T.attackDamage[i];
-    const knock = o?.knock ?? T.attackKnock[i];
-    const ms = o?.hitstop ?? T.hitStopMs[i];
-    const color = o?.color ?? (i === 2 ? '#ffd27a' : '#ffe9a8');
-    const dir3 = new THREE.Vector3(this.facing.x, 0, this.facing.y);
-    ctx.vfx?.slash?.(this.position.clone().setY(1.05), dir3, { arc, radius: range, color, width: 0.42 + 0.12 * i });
-    ctx.audio?.sfx?.('slash', { pos: this.position, pitch: 1 + 0.07 * i });
-    const list = (ctx.enemies && ctx.enemies.list) || [];
-    const cosHalf = Math.cos(arc * 0.5 * Math.PI / 180);
-    let hits = 0;
-    for (const e of list) {
-      if (!e || e === this || e.dead || e.alive === false || !e.position) continue;
-      _v.set(e.position.x - this.position.x, 0, e.position.z - this.position.z);
-      const d = _v.length();
-      if (d < 1e-4 || d > range + (e.radius || 0.5)) continue;
-      _v.multiplyScalar(1 / d);
-      if (_v.x * this.facing.x + _v.z * this.facing.y < cosHalf) continue;
-      hits++;
-      ctx.combat?.applyDamage?.({
-        target: e, amount: dmg, type: 'physical', crit: false,
-        dir: _v.clone(), pos: e.position.clone(), source: this, knockback: knock,
-      });
-      ctx.vfx?.impact?.(e.position.clone().setY(0.95), _v.clone().negate(), { type: 'physical', scale: 0.8 + 0.28 * i, color });
-    }
-    if (hits > 0) {
-      this.act.hit = true;
-      ctx.events.emit('hit.stop', { ms });
-      ctx.events.emit('camera.shake', { amp: 0.10 + 0.06 * i, dur: 0.22, freq: 30 });
-      this.combatHeat = Math.min(1.7, this.combatHeat + 0.3);
-      ctx.audio?.sfx?.('hit', { pos: this.position });
-    }
-    return hits;
+
+    // keep `act` truthful for anything reading the controller (camera, UI)
+    this.act.name = s ? s.name : st;
+    this.act.t = W.t; this.act.dur = W.dur || 0; this.act.index = W.stepIndex;
+    return W.moveScale;
   }
 
-  // ─────────────────────────────────────────────────────────── abilities ───
-  _startAbility(ctx, kind) {
-    const T = this.tune;
-    if (kind === 'cast') {
-      if (this.mana < T.castCost) { this.buf.cast = 0; ctx.ui?.toast?.('Not enough mana', { color: '#5fd0ff' }); return; }
-      this.mana -= T.castCost;
-      ctx.ui?.setMana?.(this.mana, this.maxMana);
+  /** damp the facing toward the move stick, or the aim if there is no stick. */
+  _steer(dt, ctx, lambda) {
+    const w = this._wish(ctx, _v);
+    let a;
+    if (w > 0.2) a = Math.atan2(_v.x, _v.z);
+    else if (this._mouseSeen) a = Math.atan2(this.aimDir.x, this.aimDir.y);
+    else return;
+    const cur = Math.atan2(this.facing.x, this.facing.y);
+    const na = dampAngle(cur, a, lambda, dt);
+    this.facing.set(Math.sin(na), Math.cos(na));
+  }
+
+  /**
+   * Map (weapon, runtime state, step) onto a clip, once per transition.
+   *
+   * The key includes the step INDEX as well as its name so a combo that loops
+   * back to its own first step still restarts the pose, and includes the
+   * weapon id so a mid-fight swap re-poses on the next frame.
+   */
+  _syncWeaponAnim(ctx, W) {
+    if (!W) return;
+    const st = W.state, s = st === 'attack' ? W.step : null;
+    const key = W.weaponId + '|' + st + '|' + (s ? s.name : '-') + '|' + W.stepIndex;
+    if (key === this._animKey) return;
+    this._animKey = key;
+    if (st === 'idle') { this._animLock = 0; return; }   // locomotion resumes
+
+    const map = WEAPON_ANIM[W.weaponId] || WEAPON_ANIM.blade;
+    const chg = W.weapon && W.weapon.charge;
+    let clip = null, span = 0;
+    if (st === 'attack') {
+      clip = (s && map[s.name]) || map._fallback;
+      span = s ? s.dur : 0.4;
+    } else if (st === 'charge') {
+      clip = map._charge;
+      // the pose reaches full commitment exactly when the charge does
+      span = Math.max(0.18, (chg && chg.fullHold) || 0.6);
+    } else if (st === 'block') {
+      clip = map._block; span = 0;                       // a loop; play at 1x
+    } else if (st === 'rush') {
+      clip = map._rush;
+      span = (W._rushTime || 0.22) + ((chg && chg.recovery) || 0.3);
     }
-    this.buf[kind] = 0;
-    this.state = kind;
-    this.act = { name: kind, t: 0, dur: kind === 'cast' ? T.castDur : T.specialDur, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
-    this.animator.play(kind, { fade: 0.06, restart: true });
+    if (!clip || !this.animator.clips[clip]) clip = map._fallback;
+    if (!this.animator.clips[clip]) return;
+
+    const cd = this.animator.duration(clip);
+    const speed = span > 0.02 ? clamp(cd / span, 0.3, 4.0) : 1;
+    // chained combo steps cut in hard; a fresh action gets a real blend
+    const fade = (st === 'attack' && W.stepIndex > 0) ? 0.04 : 0.075;
+    this.animator.play(clip, { fade, restart: true, speed });
+    this._animLock = 0.05;
+    if (st === 'attack' || st === 'rush') {
+      this.combatHeat = Math.min(1.6, this.combatHeat + 0.42);
+      this.squash = -0.03;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────── cast ────
+  // The CAST is the one offensive verb that is NOT a weapon: combat.cast()
+  // fires the same arcane bolt whatever you are holding, so its timing lives
+  // here and duplicates nothing in weapons.js.
+  _startCast(ctx) {
+    const T = this.tune;
+    if (this.mana < T.castCost) { this.buf.cast = 0; ctx.ui?.toast?.('Not enough mana', { color: '#5fd0ff' }); return; }
+    this.mana -= T.castCost;
+    ctx.ui?.setMana?.(this.mana, this.maxMana);
+    this.buf.cast = 0;
+    this.weapon?.cancel?.(); this.blocking = null;
+    this.state = 'cast';
+    this.act = { name: 'cast', t: 0, dur: T.castDur, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
+    this._animKey = null;
+    this.animator.play('cast', { fade: 0.06, restart: true });
     const w = this._wish(ctx, _v);
     if (w > 0.15) this.facing.set(_v.x, _v.z).normalize();
     else if (this._mouseSeen) this.facing.copy(this.aimDir);
     this.combatHeat = Math.min(1.5, this.combatHeat + 0.5);
     ctx.events.emit('camera.shake', { amp: 0.035, dur: 0.12, freq: 30 });
   }
-  _abilityStep(dt, ctx) {
+  _castStep(dt, ctx) {
     const T = this.tune;
     this.act.t += dt;
-    const rel = this.state === 'cast' ? T.castRelease : T.specialActive[0];
-    if (!this.act.fired && this.act.t >= rel) {
+    if (!this.act.fired && this.act.t >= T.castRelease) {
       this.act.fired = true;
       const dir3 = new THREE.Vector3(this.facing.x, 0, this.facing.y);
       const origin = this.position.clone().setY(1.12);
-      if (this.state === 'cast') {
-        ctx.combat?.cast?.({ source: this, origin, dir: dir3, power: 1 });
-        ctx.events.emit('player.cast', { pos: origin, dir: dir3 });
-        ctx.vfx?.burst?.(origin, { count: 18, color: '#5fd0ff', speed: 9, spread: 0.35, kind: 'spark' });
-        ctx.events.emit('camera.shake', { amp: 0.07, dur: 0.18, freq: 28 });
-      } else {
-        ctx.combat?.special?.({ source: this, origin, dir: dir3 });
-        ctx.events.emit('player.special', { pos: origin, dir: dir3 });
-        ctx.vfx?.shockwave?.(this.position.clone().setY(0.1), { radius: 3.1, color: '#ffb070', life: 0.4 });
-        this._swing(ctx, 1, { range: 3.1, arc: 230, damage: 24, knock: 8.5, hitstop: 104, color: '#ffb070' });
-      }
+      ctx.combat?.cast?.({ source: this, origin, dir: dir3, power: 1 });
+      ctx.events.emit('player.cast', { pos: origin, dir: dir3 });
+      ctx.vfx?.burst?.(origin, { count: 18, color: '#5fd0ff', speed: 9, spread: 0.35, kind: 'spark' });
+      ctx.events.emit('camera.shake', { amp: 0.07, dur: 0.18, freq: 28 });
     }
     if (this.act.t >= this.act.dur) { this.state = 'move'; this._animLock = 0.05; }
   }
@@ -665,6 +767,7 @@ export class Player {
     ctx.ui?.setHealth?.(this.health, this.maxHealth);
     if (this.health <= 0) return;                 // the death handler takes it
     this.iframes = Math.max(this.iframes, T.hurtIFrames);
+    this.weapon?.cancel?.(); this.blocking = null; this._animKey = null;
     this.state = 'hurt';
     this.act = { name: 'hurt', t: 0, dur: T.hurtDur, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
     this.animator.play('hurt', { fade: 0.035, restart: true });
@@ -683,6 +786,7 @@ export class Player {
   _onDeath() {
     const ctx = this.ctx;
     this.alive = false; this.dead = true; this.state = 'dead';
+    this.weapon?.cancel?.(); this.blocking = null; this._animKey = null;
     this.act = { name: 'death', t: 0, dur: this.tune.deathDur, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
     this.animator.play('death', { fade: 0.05, restart: true });
     this.animator.ikEnabled = false;
@@ -696,6 +800,7 @@ export class Player {
   respawn(pos) {
     this.health = this.maxHealth; this.mana = this.maxMana;
     this.alive = true; this.dead = false; this.state = 'move';
+    this.weapon?.cancel?.(); this.blocking = null; this._animKey = null;
     this.iframes = 1.0; this.knock.set(0, 0, 0); this.velocity.set(0, 0, 0);
     if (pos) this.position.copy(pos);
     this.animator.ikEnabled = true;
@@ -722,6 +827,7 @@ export class Player {
   }
 
   dispose() {
+    if (this._onKey) { removeEventListener('keydown', this._onKey); this._onKey = null; }
     this.rig?.dispose?.();
     this.readyRing?.geometry?.dispose?.();
     this.readyMat?.dispose?.();
