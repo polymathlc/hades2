@@ -49,7 +49,7 @@ export const ENVIRONMENT_LOOK = {
   // veto below is what keeps it off the floor.
   // §9.6 raised again: the rim is the frame's designated complement source and
   // the single strongest "light the EDGES, not the faces" device we have.
-  rimStrength: 0.56,
+  rimStrength: 0.68,
   // POSITIVE Z: see the note in render/lighting.js. A rim aimed away from the
   // shipping camera is a rim nobody ever sees.
   rimDir: [-0.62, 0.34, 0.70],

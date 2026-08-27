@@ -83,14 +83,20 @@ const RIGS = {
     // as huge soft lozenges (§9.7 "stains, not shadows"). At 38deg they are
     // still long enough to describe the form and short enough to read as cast
     // shapes with an end.
-    key:    { color: '#ff8a58', intensity: 62.0, dir: [0.646, -0.615, -0.452] },
+        // §2 puts the Tartarus key at #ff5a3c. #ff8a58 was a bleached compromise
+    // and it is what made every lit stone in the chamber read SALMON — one hue
+    // family across the whole frame (§9.6). #ff7048 is most of the way back to
+    // the authored crimson; the intensity is raised to hold the same luminance
+    // (a saturated key delivers ~0.83x the luma of a pale one at equal power,
+    // and materials/library.js _keyRef() tracks that automatically).
+    key:    { color: '#ff7048', intensity: 75.0, dir: [0.646, -0.615, -0.452] },
     // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
     // saturated periwinkle sky this was the brightest thing landing on the
     // floor after the key, and it is what turned every cast shadow into a
     // lilac stain instead of an ink shape. The fill is now a WHISPER in the
     // authored plum, and the cool note in the frame is carried by the RIM and
     // by real cyan practicals instead of by a wash.
-    hemi:   { sky: '#3a2a6e', ground: '#170d26', intensity: 1.50 },
+    hemi:   { sky: '#31336e', ground: '#170d26', intensity: 1.50 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
     bounce: { color: '#8a3a34', intensity: 2.00, size: [11, 11], y: 1.6 },
@@ -98,7 +104,7 @@ const RIGS = {
     // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
     // The rim is now the second-strongest light in the frame by design: it is
     // what draws every vertical edge in the chamber.
-    rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 7.6, power: 1.35, wrap: 0.55 },
+    rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 9.2, power: 1.30, wrap: 0.55 },
     ambient:{ color: '#241238', intensity: 0.50 },
     godrayAnchor: [0.22, 1.06],
     // §9.5 "ornament carries the light": keyGain drives the sharp specular lobe
@@ -132,11 +138,11 @@ const RIGS = {
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
       // these do both jobs at once, and they are aimed at surfaces the floor
       // barely sees (floor.tartarus litGain keeps what does reach it negligible).
-      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 900, distance: 17, speed: 0.44, flicker: 0.14 },
-      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 800, distance: 17, speed: 0.61, flicker: 0.12 },
-      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 640, distance: 19, speed: 0.31, flicker: 0.09 },
-      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 640, distance: 19, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 720, distance: 17, speed: 0.52, flicker: 0.14 },
+      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 1050, distance: 17, speed: 0.44, flicker: 0.14 },
+      { pos: [-13.4, 4.8,  -7.4], color: '#4fc4f0', intensity: 950, distance: 17, speed: 0.61, flicker: 0.12 },
+      { pos: [ -7.4, 6.6, -13.4], color: '#3fb8ff', intensity: 760, distance: 19, speed: 0.31, flicker: 0.09 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 760, distance: 19, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 860, distance: 17, speed: 0.52, flicker: 0.14 },
     ],
   },
   asphodel: {

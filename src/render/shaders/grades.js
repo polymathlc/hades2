@@ -51,7 +51,7 @@ export const GRADES = {
     // §2 asks for crimson stone and molten gold; the close-ups measured
     // meanSat 0.486-0.497 at mean luma 0.42-0.47, which is the arithmetic
     // definition of pastel. Chroma goes back up now the exposure is off it.
-    agxSat: 0.98,
+    agxSat: 0.94,
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
     contrast: 1.05,
@@ -86,7 +86,7 @@ export const GRADES = {
     // §2 Shadow plum #241238 wants B/R ~1.56. The old #42287e measured 1.08 on
     // screen — magenta, not indigo — so the ink ramp was not being honoured.
     shadowTint: H('#2e2382'),   // ink shadows push INDIGO-violet, never grey
-    midTint:    H('#e0a48f'),
+    midTint:    H('#d8a184'),
     highTint:   H('#ffdcae'),   // highlights toward warm gold
     // 0.86 was desaturating the ONE cool element in the frame (the mandated
     // #5fd0ff rim lives in the shadow band by construction — see painterly.js
@@ -94,8 +94,8 @@ export const GRADES = {
     satShadow: 0.95,
     // measured meanSaturation was 0.68 against a §7 target of 0.28-0.60: jewel
     // tones, not neon. The chroma belongs in the PALETTE, not in the grade.
-    satMid:    0.92,
-    satHigh:   0.80,
+    satMid:    0.86,
+    satHigh:   0.76,
     shadowMix: 0.58, highMix: 0.26, tintStrength: 1.0,
     hueLobes: [
       // narrowed + strengthened: 24% of the frame's chroma was sitting in the
@@ -142,7 +142,7 @@ export const GRADES = {
     // actually measures as. A high threshold with a tight radius puts the same
     // energy into small, genuinely white cores — which is what fills the top
     // luma band without touching the mid-tones.
-    bloom:    { threshold: 3.40, knee: 0.42, intensity: 2.10, tint: H('#ffe0b8'), radius: 0.95, clamp: 8.0 },
+    bloom:    { threshold: 3.40, knee: 0.42, intensity: 1.05, tint: H('#ffe0b8'), radius: 0.82, clamp: 8.0 },
     // §9.7 contact. A 1.75u radius on a 3/4 camera is a soft dirt halo, not an
     // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
     // the ink goes several stops darker so the base of a column reads planted
@@ -175,7 +175,7 @@ export const GRADES = {
     // law needs it, and it flattened the far half of the wide shot into the
     // near half. The atmospheric band now comes from the distance HAZE (which
     // is depth-gated and desaturating) rather than from a thick medium.
-    fog:      { color: H('#1c0b22'), far: H('#170e22'), density: 0.009, height: 0.14, haze: H('#40356a'), hazeStart: 40, hazeEnd: 58, hazeDesat: 0.85, voidSky: 5.20 },
+    fog:      { color: H('#1c0b22'), far: H('#170e22'), density: 0.009, height: 0.14, haze: H('#2f3a72'), hazeStart: 40, hazeEnd: 58, hazeDesat: 0.85, voidSky: 1.74 },
     dof:      { range: 52.0, nearRange: 16.0, maxBlur: 0.36, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 

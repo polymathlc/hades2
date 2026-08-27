@@ -208,7 +208,11 @@ export const RAMPS = {
   'stone.tartarus': [
     S(0.00, '#0b0410'), S(0.16, '#1f0b18'), S(0.34, '#33121f'),
     S(0.52, '#451a26'), S(0.70, '#5c2430'), S(0.85, '#6e2e37'),
-    S(0.94, '#8b4f4c'), S(1.00, '#ad7d6c'),
+    // §2 puts Tartarus "stone light" at #8c3b46. The old top stops (#8b4f4c /
+    // #ad7d6c) were a desaturated putty, and under a warm key that is exactly
+    // what reads as PINK CHALK — the single-hue-family failure §9.6 bans, but
+    // caused by the albedo rather than by the light.
+    S(0.94, '#8c3b46'), S(1.00, '#a1595c'),
   ],
   // cool glaze pass — mixed against the warm ramp for hue variety
   'stone.tartarus.cool': [
@@ -254,8 +258,10 @@ export const RAMPS = {
   // the same brown-violet substance (§1.5).
   'stone.tartarus.column': [
     S(0.00, '#100a18'), S(0.16, '#241723'), S(0.34, '#3b2530'),
-    S(0.52, '#54343c'), S(0.70, '#6e4749'), S(0.85, '#8a5f5a'),
-    S(0.94, '#a87d70'), S(1.00, '#c69f8c'),
+    S(0.52, '#54343c'), S(0.70, '#6e4749'), S(0.85, '#7d4d4c'),
+    // still a PALER stone than the wall (§1.5 material hierarchy) — just not a
+    // near-neutral putty that the key can only turn salmon.
+    S(0.94, '#96685e'), S(1.00, '#b08578'),
   ],
   'stone.tartarus.column.cool': [
     S(0.00, '#0a0b14'), S(0.20, '#151824'), S(0.42, '#242a38'),

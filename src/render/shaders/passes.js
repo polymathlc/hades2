@@ -194,7 +194,15 @@ void main(){
     // colour is only ever seen at distance, so it can carry a real value while
     // the surface fog stays a whisper. Below the horizon the band darkens, which
     // is what keeps the bottom of frame the darkest third.
-    vec3 sky = mix(uHaze * 0.62, uHaze, smoothstep(0.30, 0.85, up)) * (0.55 + 0.85 * horizon);
+    // THE RAMP IS PLACED, NOT GUESSED. The elevation window it moves through
+    // (up 0.04-0.36, i.e. view directions 45-10 degrees BELOW the horizontal) is
+    // the window the 3/4 play cameras actually look through, so the void gets a
+    // real top-to-bottom value gradient IN FRAME — the far band bright and
+    // hazed, the band under the island near-ink (§1.1, §9.4). Above that window
+    // it saturates, which is what stops a camera that tilts up from turning the
+    // underworld into a lavender daytime sky. Do not flatten this: it is the
+    // only thing separating the top and bottom thirds of the establishing shot.
+    vec3 sky = uHaze * (0.05 + 1.08 * smoothstep(0.08, 0.40, up)) * (0.90 + 0.24 * horizon);
     col += sky * uVoidSky;
   }
   gl_FragColor = vec4(col, 1.0);

@@ -438,15 +438,20 @@ export class World {
       // stone right where the character stands. Inside t 0.42 the floor is a
       // dark plinth; the lit ring runs from 0.56 out to the ornament ring and
       // then dies into the skirt.
-      const ring = sstep(0.42, 0.56, t) * (1 - 0.70 * sstep(0.76, 1.00, t));
-      let v = 0.07 + 1.35 * ring;
+      const ring = sstep(0.38, 0.55, t) * (1 - 0.70 * sstep(0.76, 1.00, t));
+      // The plinth is DARK, not empty: at 0.07 it read as a hole cut in the
+      // floor rather than as unlit stone, and a hole is not a stage. 0.125 is
+      // the level at which the ashlar bed and the ichor staining are still
+      // legible in the shadow while the ground plane stays a full band under
+      // the architecture.
+      let v = 0.125 + 1.45 * ring;
       const dep = Math.min(1, Math.max(0, 0.5 + 0.5 * ((x + z) * 0.70711 / (R + 0.9))));
       // The apron edge is SHARP on purpose and its position is load-bearing:
       // at the shipping camera it falls between the mid-ground band (dep < 0.57)
       // and the bottom-of-frame foreground (dep > 0.62), which is exactly the
       // boundary tools/analyze.mjs measures as depthBands. Softening it merges
       // the two bands back into one and the value law fails again.
-      v *= 1 - 0.945 * sstep(0.54, 0.64, dep);         // the foreground apron
+      v *= 1 - 0.972 * sstep(0.53, 0.63, dep);         // the foreground apron
       v *= 1 - 0.30 * sstep(0.62, 1.00, dep);          // ...and it keeps falling
       v *= 0.74 + 0.26 * sstep(0.04, 0.30, dep);       // far skirt recedes
       // a whisper of the key's own azimuth so the glaze is not purely 1-D

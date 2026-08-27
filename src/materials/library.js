@@ -679,9 +679,18 @@ const RECIPES = {
     // floor value and read only by hue. A modest emissive floor in the AUTHORED
     // gold mid (#c98f2b) self-lights the filigree to the top band even where the
     // key does not reach it, without pushing it over the bloom gate.
-    return { rgb, height: h, rough, metal, normalScale: 0.85, emissive, emissiveIntensity: 0.78,
+    return { rgb, height: h, rough, metal, normalScale: 0.85, emissive, emissiveIntensity: 0.34,
       params: { envMapIntensity: 0.38 },
-      paint: { triplanar: false, macroStrength: 0.16, macroTint: '#7a4f58' } };
+      // §9.2 THE CHARACTER OUT-VALUES THE FLOOR. The rosette is the ornament the
+      // hero stands ON, so it is allowed to be the brightest thing in the play
+      // area's stone — but not by so much that a 120px character cannot beat it.
+      // Measured at the close poses it was reading 0.68 display over the whole
+      // frame, i.e. the hero's plinth was the frame's white point. The gains
+      // below sit ABOVE floor.tartarus (it is ornament, §9.5) and well under a
+      // wall, and the specular cut is what stops a near-white sheen on a 3/4
+      // camera from re-inflating it.
+      paint: { triplanar: false, macroStrength: 0.16, macroTint: '#7a4f58',
+        litGain: 0.46, ambGain: 0.30, specGain: 0.26 } };
   } },
 
   // ======================================================================
