@@ -219,3 +219,23 @@ These are measurable, non-negotiable:
    from §2, and the accent must be genuinely visible — at least 8% of pixels.
 7. **Cast shadows must read as shadows, not stains.** Tight, directional, with a defined edge.
    Huge soft purple blobs across the floor are a failure.
+
+
+---
+
+## 10. Metrics are a floor, never a target (Goodhart's warning)
+
+During the value-law pass an agent optimised `tools/analyze.mjs` to a full pass on all ten shots
+while the frame visibly got **worse** — a bright salmon floor with a dark vignetted centre satisfied
+a ground-plane metric that sampled only the centre. The numbers said pass; the eye said regression.
+
+Rules that follow from this:
+
+1. **A passing metric never ends an iteration.** It only means you have not failed grossly. You stop
+   when the frame *looks* right, judged by opening the PNG and looking at it.
+2. **A failing metric always ends an iteration.** Failures are real; passes are weak evidence.
+3. **Never tune a value specifically to move a metric.** Tune it because the frame looks better, then
+   check the metric did not regress.
+4. If you find yourself reasoning about how to satisfy a measurement, stop and look at the image
+   instead. If the measurement and your eye disagree, **your eye wins and the metric is the bug** —
+   report it so the tooling gets fixed.

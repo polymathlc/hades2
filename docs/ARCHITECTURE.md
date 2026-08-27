@@ -237,6 +237,7 @@ against a local baseline. Raw autocorrelation is high for any smooth image, so a
 this metric reported 0.94 on a perfectly smooth gradient and sent agents chasing a repeat that did
 not exist. It is now validated against synthetic cases: a smooth gradient scores 0, a hard 64px tile
 scores 1.0 at period 64.
+| `groundP90` | < 0.42 | no large blazing regions of floor |
 | `crushedPct` | < 18 | shadows still hold detail |
 | `blownPct` | < 3 | highlights are not clipped |
 

@@ -76,10 +76,15 @@ export function analyze(file){
     bestCorr = Math.max(0, Math.min(1, bestCorr*2.5)); // calibrated so a hard tile repeat lands near 1
   }
   // ground plane proxy: bottom 40% of frame, central 70% horizontally (where the floor sits in our poses)
-  const gvals=[]; const gy0=(h*0.60)|0, gx0=(w*0.15)|0, gx1=(w*0.85)|0;
-  for(let y=gy0;y<h;y+=2) for(let x=gx0;x<gx1;x+=2) gvals.push(Math.pow(lum[y*w+x],1/2.2));
+  // Sample the FULL width of the lower frame. An earlier version sampled only the central 70%,
+  // which a dark vignetted centre could satisfy while the actual floor blazed at the edges —
+  // the metric passed while the eye said the floor still dominated. We also track the 90th
+  // percentile so a floor that is dark on average but has large blown-out regions still fails.
+  const gvals=[]; const gy0=(h*0.55)|0;
+  for(let y=gy0;y<h;y+=2) for(let x=0;x<w;x+=2) gvals.push(Math.pow(lum[y*w+x],1/2.2));
   gvals.sort((a,b)=>a-b);
   const groundLuma = gvals.length? gvals[(gvals.length/2)|0] : 0;
+  const groundP90  = gvals.length? gvals[Math.min(gvals.length-1,(gvals.length*0.90)|0)] : 0;
   const allSorted = Array.from(lum).map(v=>Math.pow(v,1/2.2)).sort((a,b)=>a-b);
   const frameMedian = allSorted[(allSorted.length/2)|0];
   const bandMed = (y0,y1)=>{ const v=[]; for(let y=y0;y<y1;y+=3) for(let x=0;x<w;x+=3) v.push(Math.pow(lum[y*w+x],1/2.2));
@@ -96,6 +101,7 @@ export function analyze(file){
   return {
     file: path.basename(file), w, h,
     groundLuma: +groundLuma.toFixed(3),
+    groundP90: +groundP90.toFixed(3),
     frameMedian: +frameMedian.toFixed(3),
     groundVsFrame: +(groundLuma/(frameMedian||1e-6)).toFixed(2),
     depthBands: { top:+dTop.toFixed(3), mid:+dMid.toFixed(3), bottom:+dBot.toFixed(3), spread:+depthSpread.toFixed(3) },
@@ -114,8 +120,13 @@ export function analyze(file){
   };
 }
 
+// Composition laws apply to shots that FRAME the game. Deliberate close-up texture-inspection
+// shots (04_material, 05_floor, anything with 'detail') are lit and posed to show a surface, so the
+// ground-plane law does not apply — their whole subject IS the ground.
+const INSPECTION = /(material|floor|detail|texture)/i;
 function verdict(m){
   const bad=[];
+  const inspection = INSPECTION.test(m.file);
   if(m.bands.shadow < 0.12) bad.push('too few dark pixels — no ink shadow band');
   if(m.bands.highlight < 0.02) bad.push('no highlight band — frame never reaches bright values');
   if(m.deepShadowPresent < 0.01) bad.push('no true blacks');
@@ -126,8 +137,11 @@ function verdict(m){
   if(m.blownPct > 4) bad.push('highlights blown out');
   if(m.detailDensity < 0.004) bad.push('almost no surface detail — flat/untextured');
   if(m.tiling.strength > 0.55) bad.push(`strong tiling repetition at ~${m.tiling.periodPx}px`);
-  if(m.groundVsFrame > 1.0) bad.push(`VALUE LAW BROKEN: ground plane (${m.groundLuma}) is BRIGHTER than the frame median (${m.frameMedian}) — the floor must be the dark stage`);
-  if(m.groundLuma > 0.18) bad.push(`VALUE LAW: ground luma ${m.groundLuma} exceeds 0.18 — darken the floor`);
+  if(!inspection){
+    if(m.groundVsFrame > 1.0) bad.push(`VALUE LAW BROKEN: ground plane (${m.groundLuma}) is BRIGHTER than the frame median (${m.frameMedian}) — the floor must be the dark stage`);
+    if(m.groundLuma > 0.18) bad.push(`VALUE LAW: ground luma ${m.groundLuma} exceeds 0.18 — darken the floor`);
+    if(m.groundP90 > 0.42) bad.push(`VALUE LAW: the brightest tenth of the floor reaches ${m.groundP90} — large regions of the ground are still blazing even if the median passes`);
+  }
   if(m.bands.highlight < 0.04) bad.push('VALUE LAW: no highlight band (<4%) — frame never reaches bright');
   if(m.depthBands.spread < 0.18) bad.push(`VALUE LAW: depth luma spread only ${m.depthBands.spread} — no separated value bands (need >=0.18)`);
   if(m.secondaryHueFrac < 0.08) bad.push(`MONOCHROME: only ${(m.secondaryHueFrac*100).toFixed(0)}% of saturated pixels sit outside the dominant hue — needs an opposing accent hue`);
@@ -138,6 +152,6 @@ const target = process.argv[2] || 'shots/latest';
 const files = fs.statSync(target).isDirectory()
   ? fs.readdirSync(target).filter(f=>f.endsWith('.png')).sort().map(f=>path.join(target,f))
   : [target];
-const out = files.map(f=>{ try{ const m=analyze(f); return {...m, warnings:verdict(m)}; }
+const out = files.map(f=>{ try{ const m=analyze(f); return {...m, shotKind: INSPECTION.test(path.basename(f))?'inspection':'composition', warnings:verdict(m)}; }
   catch(e){ return { file:path.basename(f), error:String(e.message) }; } });
 console.log(JSON.stringify(out, null, 1));
