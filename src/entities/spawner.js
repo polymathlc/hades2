@@ -73,7 +73,11 @@ export class Spawner {
   }
 
   init(ctx, mgr) {
-    this.ctx = ctx; this.mgr = mgr;
+    // The engine's system contract is init(ctx) — it never passes a second argument, so taking
+    // the manager as a parameter left this.mgr undefined and beginRoom threw on the first
+    // room.entered. Resolve it from the context, keeping the explicit form for direct callers.
+    this.ctx = ctx; this.mgr = mgr || ctx.enemies;
+    if (!this.mgr) { console.warn('[spawner] no EnemyManager on ctx.enemies — encounters disabled'); return this; }
     this.rng = ctx.rng.fork ? ctx.rng.fork('spawner') : ctx.rng;
     ctx.events.on('room.built', (e) => { this._room = e; if (!ctx.CAPTURE) this.beginRoom(e && e.biome, ctx.run ? ctx.run.depth : 0); });
     ctx.events.on('room.entered', (e) => { if (!ctx.CAPTURE) this.beginRoom(e && e.biome, (e && e.depth) ?? (ctx.run ? ctx.run.depth : 0)); });
