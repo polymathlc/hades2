@@ -84,11 +84,29 @@ for(const p of pairs){
     }
   };
   blit(L, 0); blit(R, PANEL_W+GUT);
+  // A pair whose panels are identical carries no information, and a critic asked to prefer one
+  // will confabulate. Measure it and record it, so a dead comparison is visible up front.
+  let diffPx = 0, samples = 0;
+  for (let y = 0; y < PANEL_H; y += 3) for (let x = 0; x < PANEL_W; x += 3) {
+    const a = (y*PANEL_W+x)*4;
+    if (Math.abs(L.data[a]-R.data[a]) > 6 || Math.abs(L.data[a+1]-R.data[a+1]) > 6 || Math.abs(L.data[a+2]-R.data[a+2]) > 6) diffPx++;
+    samples++;
+  }
+  key.diffPct = key.diffPct || {};
+  key.diffPct[p.id] = +(100*diffPx/samples).toFixed(1);
   // draw a 5x7 bitmap "LEFT" / "RIGHT" label band so the critic can name the panel unambiguously
   drawText(out, W, 'LEFT',  (PANEL_W/2-70)|0, 14, 4);
   drawText(out, W, 'RIGHT', (PANEL_W+GUT+PANEL_W/2-88)|0, 14, 4);
   fs.writeFileSync(path.join(OUT, p.id+'.png'), encodePNG({ width:W, height:H, data:out }));
 }
 fs.writeFileSync(path.join(OUT,'KEY.json'), JSON.stringify(key,null,2));
-console.log(JSON.stringify({ pairs: pairs.length, out: OUT, note: 'KEY.json holds the answer sheet — do not show it to the critic.' }, null, 1));
+const dead = Object.entries(key.diffPct || {}).filter(([,v]) => v < 1.0).map(([k]) => k);
+console.log(JSON.stringify({
+  pairs: pairs.length, out: OUT,
+  diffPct: key.diffPct,
+  deadPairs: dead,
+  note: dead.length
+    ? `WARNING: ${dead.length} pair(s) are near-identical and carry no information — do not ask a critic to prefer one: ${dead.join(', ')}`
+    : 'All pairs carry a real difference.',
+}, null, 1));
 
