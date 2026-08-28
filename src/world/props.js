@@ -457,7 +457,7 @@ const KIND_CFG = {
   chunk:   { mat: 'rubble', scale: [0.65, 1.35], radius: 0.42, tilt: 0.14, tint: '#c3a094' },
   slab:    { mat: 'rubble', scale: [0.75, 1.30], radius: 0.85, tilt: 0.20, sink: -0.04 },
   drum:    { mat: 'rubble', scale: [0.85, 1.25], radius: 0.62, tilt: 0.06, blocks: true },
-  urn:     { mat: 'rubble', scale: [0.78, 1.10], radius: 0.40, tilt: 0.05 },
+  urn:     { mat: 'ceramic', scale: [0.78, 1.10], radius: 0.40, tilt: 0.05 },
   bones:   { mat: 'bone',   scale: [0.80, 1.30], radius: 0.44, tilt: 0.04, tint: '#cfc0a2' },
   capital: { mat: 'rubble', scale: [0.85, 1.20], radius: 0.66, tilt: 0.05, blocks: true },
 };

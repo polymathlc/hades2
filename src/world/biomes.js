@@ -35,9 +35,10 @@ export const BIOMES = {
       trim: 'gold.filigree',
       leaf: 'gold.leaf',
       metal: 'bronze.tartarus',
-      iron: 'iron.dark',
+      iron: 'iron.tartarus',
       rock: 'obsidian',
       rubble: 'rubble.tartarus',
+      ceramic: 'ceramic.tartarus',
       bone: 'bone.tartarus',
       cloth: 'banner.crimson',
       crystal: 'crystal.violet',
@@ -75,7 +76,10 @@ export const BIOMES = {
     voidColor: '#0a0713',
     voidRim: '#3a1330',
     ember: { color: '#ff8a44', accent: '#5fd0ff', count: 58, rise: false, speed: 0.55 },
-    chains: { count: 12, drop: 13, sag: 1.6 },
+    // Rim chains can pass between the orbiting camera and the arena. Their
+    // alternating tube radius then blooms into huge dotted light bands across
+    // the whole screen, so Tartarus keeps the abyss readable without them.
+    chains: { count: 0, drop: 13, sag: 1.6 },
     shards: { count: 34, spread: [4, 22], drop: [2, 14] },
 
     hazard: 'spikes',
@@ -116,6 +120,7 @@ export const BIOMES = {
       iron: 'iron.dark',
       rock: 'obsidian',
       rubble: 'obsidian',
+      ceramic: 'stone.asphodel',
       bone: 'bone',
       cloth: 'banner.crimson',
       crystal: 'crystal.violet',
@@ -178,6 +183,7 @@ export const BIOMES = {
       iron: 'iron.dark',
       rock: 'obsidian',
       rubble: 'marble.elysium',
+      ceramic: 'marble.elysium',
       bone: 'bone',
       cloth: 'banner.crimson',
       crystal: 'crystal.violet',

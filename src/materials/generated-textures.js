@@ -1,4 +1,4 @@
-// Five image-generated atlases supply the authored colour and brushwork for every
+// Six image-generated atlases supply the authored colour and brushwork for every
 // named material recipe. The procedural baker still owns height-derived normals,
 // roughness, metalness, AO, emissive masks, and the stochastic anti-tiling pass.
 // Keeping those jobs separate gives the game hand-painted source art without
@@ -10,6 +10,7 @@ import biomesUrl from '../assets/textures/generated/biomes-atlas.jpg';
 import propsUrl from '../assets/textures/generated/props-atlas.jpg';
 import charactersUrl from '../assets/textures/generated/characters-atlas.jpg';
 import tartarusV2Url from '../assets/textures/generated/tartarus-materials-v2-atlas.jpg';
+import creaturesPropsV3Url from '../assets/textures/generated/creatures-props-v3-atlas.jpg';
 
 const GRID_COLS = 3;
 const GRID_ROWS = 2;
@@ -83,6 +84,20 @@ const ATLASES = [
       { col: 0, row: 1, name: 'blackened-bronze-v2', keys: ['bronze.tartarus'], composite: { detail: 0.25, chroma: 0.08, sourceMix: 0.16 } },
       { col: 1, row: 1, name: 'charred-timber-v2', keys: ['wood.tartarus'], composite: { detail: 0.30, chroma: 0.065, sourceMix: 0.18 } },
       { col: 2, row: 1, name: 'tartarus-rubble-v2', keys: ['rubble.tartarus'], composite: { detail: 0.32, chroma: 0.08, sourceMix: 0.16 } },
+    ],
+  },
+  {
+    // Focused third pass: enemy-specific keys attach authored hide and keratin
+    // directly to the moving hound meshes; the lower row replaces the few
+    // remaining flat Tartarus prop surfaces without touching other biomes.
+    name: 'creatures-props-v3', url: creaturesPropsV3Url,
+    tiles: [
+      { col: 0, row: 0, name: 'ember-hound-hide-v3', keys: ['characterrig.hound.hide'], modulator: [0.46, 0.96], composite: { detail: 0.34, chroma: 0.0 } },
+      { col: 1, row: 0, name: 'ember-hound-limbs-v3', keys: ['characterrig.hound.limbs'], modulator: [0.40, 0.92], composite: { detail: 0.36, chroma: 0.0 } },
+      { col: 2, row: 0, name: 'ember-hound-keratin-v3', keys: ['characterrig.hound.keratin'], modulator: [0.44, 0.98], composite: { detail: 0.38, chroma: 0.0 } },
+      { col: 0, row: 1, name: 'tartarus-ceramic-v3', keys: ['ceramic.tartarus'], composite: { detail: 0.30, chroma: 0.07, sourceMix: 0.18 } },
+      { col: 1, row: 1, name: 'black-forged-iron-v3', keys: ['iron.tartarus'], composite: { detail: 0.28, chroma: 0.05, sourceMix: 0.14 } },
+      { col: 2, row: 1, name: 'charred-timber-v3', keys: ['wood.tartarus'], composite: { detail: 0.34, chroma: 0.055, sourceMix: 0.18 } },
     ],
   },
 ];
@@ -231,7 +246,7 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
   return texture;
 }
 
-/** Load and slice the five project-bound atlases into recipe-addressable maps. */
+/** Load and slice the six project-bound atlases into recipe-addressable maps. */
 export async function loadGeneratedAlbedos(anisotropy = 8) {
   if (typeof document === 'undefined') return new Map();
   const loader = new THREE.TextureLoader();

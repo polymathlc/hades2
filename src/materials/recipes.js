@@ -2051,6 +2051,15 @@ const RECIPES = {
 RECIPES['bone.tartarus'] = RECIPES.bone;
 RECIPES['bronze.tartarus'] = RECIPES['bronze.verdigris'];
 RECIPES['wood.tartarus'] = RECIPES['wood.dark'];
+RECIPES['iron.tartarus'] = RECIPES['iron.dark'];
+RECIPES['ceramic.tartarus'] = RECIPES['rubble.tartarus'];
+
+// Enemy-specific albedos reuse the proven character PBR support maps. Keeping
+// real keys lets generated artwork bind to the hound alone instead of repainting
+// every cloth, hair and bone surface in the roster.
+RECIPES['characterrig.hound.hide'] = RECIPES['characterrig.cloth'];
+RECIPES['characterrig.hound.limbs'] = RECIPES['characterrig.hair'];
+RECIPES['characterrig.hound.keratin'] = RECIPES['characterrig.hair'];
 
 // aliases the world/props might reasonably ask for
 const ALIASES = {

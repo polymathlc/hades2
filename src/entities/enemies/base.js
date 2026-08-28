@@ -196,14 +196,14 @@ export function charMaterial(ctx, slot, tag, opts = {}) {
   // MeshStandardMaterial — so a per-family material costs one uniform block
   // and no extra draw call (the bodies are already separate meshes). What it
   // buys is a per-family RIM, which §9.2 makes non-optional.
-  const key = 'characterrig.' + slot + (tag ? '.' + tag : '');
+  const key = opts.materialKey || ('characterrig.' + slot + (tag ? '.' + tag : ''));
   // §7: the roster used to strip every map off its materials, same as rig.js
   // did, which is why every enemy shipped as flat colour. `characterrig.*` now
   // resolves to a real baked set (materials/recipes.js) for skin/cloth/hair/
   // metal; `glow` still has no recipe and correctly falls through to the
   // painterly character shader. Where a map exists, the ORM drives roughness
   // and metalness, so those are passed at 1.
-  const mapped = slot === 'skin' || slot === 'cloth' || slot === 'hair';
+  const mapped = !!opts.materialKey || slot === 'skin' || slot === 'cloth' || slot === 'hair';
   let m = ctx.mats && ctx.mats.get ? ctx.mats.get(key, {
     color: '#ffffff',
     roughness: mapped ? 1.0 : (opts.roughness ?? (slot === 'metal' ? 0.34 : 0.72)),

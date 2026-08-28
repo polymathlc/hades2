@@ -1,8 +1,8 @@
 # Generated texture atlas prompts
 
-These five project-bound atlases were produced with the built-in OpenAI image-generation tool.
+These six project-bound atlases were produced with the built-in OpenAI image-generation tool.
 Every prompt requested an exact 3-column by 2-row, 1536×1024 atlas. At runtime, the game slices
-the 512×512 cells, closes opposite seams, and maps them to all 32 named material recipes.
+the 512×512 cells, closes opposite seams, and maps them to the named material recipes.
 
 ## Tartarus atlas
 
@@ -81,4 +81,30 @@ Composition/framing: orthographic flat texture atlas, exact 3:2 overall aspect, 
 Color palette: ink #07060f #120b1e #241238 #3a1d52; crimson #8c3b46 #c81d3c; warm skin; bronze/gold #ffe9a8 #f2c14e #c98f2b #6d4416; linen #efe3cf.
 Constraints: surfaces only—no faces, eyes, hair silhouettes, hands, bodies, garments, weapons, characters, text, UI, border, separator lines, watermark, logos, cast shadows. Keep every tile edge-to-edge and seamless; preserve exact 3 columns by 2 rows.
 Avoid: photoreal skin pores, body parts, cloth folds forming clothing, generic noise, muddy brown, neutral gray shadows, perspective, vignette, scene lighting.
+```
+
+## Creatures and props v3 atlas
+
+Image 1 was the live-game screenshot supplied as a visual reference for palette, materials, and
+on-screen texel scale only; the generated deliverable is a new flat material atlas, not an edit.
+
+```text
+Use case: stylized-concept
+Asset type: exact 3-column by 2-row game texture atlas containing six seamless square albedo textures.
+Input images: Image 1 is a visual reference for the current live Tartarus scene, its dark oxblood/blackened-bronze palette, painterly material language, and isometric gameplay texel scale only. Do not recreate or edit the scene.
+Primary request: Generate a focused third-pass texture atlas that upgrades the Ember Hound enemies and the weakest Tartarus props while remaining dark, tactile, and non-emissive.
+Composition/framing: one exact 3:2 landscape atlas, three equal square cells across and two equal square cells down, crisp cell boundaries, no gutters, no frames, no labels, every cell filled edge-to-edge and designed to tile seamlessly on all four edges.
+Top row left-to-right:
+1. Ember Hound body hide: short coarse oxblood-black fur over scarred leathery skin, broad directional brush clumps, charcoal recesses, restrained burnt-crimson ridges, no glow;
+2. Ember Hound lower-limb hide: near-black soot fur with long downward strands, worn dark-red hock patches, subtle dusty paws, no body parts or silhouette;
+3. Ember Hound horn and spine keratin: layered smoky-black horn grain with aged ivory edge wear and sparse muted bronze cracks, no isolated horns.
+Bottom row left-to-right:
+4. Tartarus amphora and censer ceramic: dark fired clay with uneven hand-painted oxblood slip, fine crazing, soot in pores, sparse worn geometric brush marks distributed evenly;
+5. Tartarus blackened forged iron: blue-black hammer marks, deep plum oxidation, tiny restrained rusty edge wear, extremely low reflectance, no bright metal;
+6. Tartarus ancient timber: charred umber-black hand-adzed grain, split fibers, old crimson resin staining, muted worn ridges.
+Style/medium: premium hand-painted mythic action-game material art, confident directional brushwork, readable at an isometric gameplay camera, simplified macro detail with tactile micro detail, rich dark values and selective muted midtone accents; not photographic, not flat vector.
+Lighting/mood: neutral material reference lighting only, even exposure; no baked spotlight, no glow, no flame, no volumetric rays, no vignette.
+Color palette: ink black #08070d, charcoal plum #18121f, deep oxblood #4b202a, dark crimson #6d2935, soot brown #2b1b1b, muted ivory #b9aa8e, restrained bronze #79613a, subtle cold iron #26313b.
+Constraints: flat material surfaces only; exact 3-by-2 grid; every cell square; seamless edges; no text, UI, border, separator line, watermark, logos, isolated objects, cast shadows, scene perspective, characters, dogs, body parts, amphora objects, chains, logs, bright orange fields, electric violet fields, or near-white highlights.
+Avoid: fluorescent color, generic noisy grunge, obvious repetition, perspective, baked directional lighting, large focal motifs, glossy plastic, emissive edges.
 ```
