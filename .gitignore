@@ -7,3 +7,6 @@ shots/
 .dist-*/
 
 refs/
+
+desktop/app/
+release/

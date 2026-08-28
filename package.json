@@ -7,13 +7,59 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173 --strictPort",
-    "shot": "node tools/capture.mjs"
+    "shot": "node tools/capture.mjs",
+    "desktop": "npm run build && node scripts/stage-desktop.mjs && electron desktop/main.cjs",
+    "dist:win": "npm run build && node scripts/stage-desktop.mjs && electron-builder --win portable --x64",
+    "dist:linux": "npm run build && node scripts/stage-desktop.mjs && electron-builder --linux AppImage --x64",
+    "dist:mac": "npm run build && node scripts/stage-desktop.mjs && electron-builder --mac zip"
   },
   "dependencies": {
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
     "playwright": "^1.62.1",
     "vite": "^8.2.2"
+  },
+  "main": "desktop/main.cjs",
+  "build": {
+    "appId": "dev.erebus.descent",
+    "productName": "EREBUS Descent",
+    "directories": {
+      "output": "release",
+      "buildResources": "desktop"
+    },
+    "files": [
+      "desktop/main.cjs",
+      "desktop/app/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "EREBUS-Descent-${version}-win-x64.exe",
+      "signAndEditExecutable": false
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game",
+      "artifactName": "EREBUS-Descent-${version}-linux-x86_64.AppImage"
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.games"
+    },
+    "compression": "maximum",
+    "npmRebuild": false
   }
 }
