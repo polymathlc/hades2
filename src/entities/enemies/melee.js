@@ -252,31 +252,175 @@ const BRUTE_PALETTE = {
   glow: '#ff8c1a',
 };
 
-/** the tower shield: a hard rectangle, the whole point of the silhouette. */
-function buildShield(ctx) {
-  const parts = [];
-  const face = new THREE.BoxGeometry(1.34, 1.86, 0.13, 1, 1, 1);
-  face.translate(0, 0, 0);
-  parts.push({ g: face, c: '#8c1f2e' });
-  // gold rim: four flat bars around the edge -> the arris that catches light
-  const rimT = new THREE.BoxGeometry(1.44, 0.13, 0.2); rimT.translate(0, 0.93, 0.01);
-  const rimB = new THREE.BoxGeometry(1.44, 0.13, 0.2); rimB.translate(0, -0.93, 0.01);
-  const rimL = new THREE.BoxGeometry(0.12, 1.98, 0.2); rimL.translate(-0.67, 0, 0.01);
-  const rimR = new THREE.BoxGeometry(0.12, 1.98, 0.2); rimR.translate(0.67, 0, 0.01);
-  const boss = new THREE.SphereGeometry(0.27, 16, 12); boss.scale(1, 1, 0.62); boss.translate(0, 0, 0.12);
-  const stud = new THREE.TorusGeometry(0.42, 0.045, 6, 24); stud.rotateY(0); stud.translate(0, 0, 0.09);
-  const metal = mergeGeometries([rimT, rimB, rimL, rimR, boss, stud], false);
-  parts.push({ g: metal, c: '#f0bb52', top: '#ffe9a8', metal: true });
+/**
+ * THE TOWER SHIELD.
+ *
+ * §7 bans "untextured programmer art boxes/cylinders left visible", and the
+ * previous build shipped exactly that at the focal centre of the frame: a
+ * BoxGeometry(1.34, 1.86, 0.13) painted one flat vertex colour with a
+ * SphereGeometry stuck on the front. At 3x it was unmistakably a bevelled cube
+ * with a ball on it, and it occupied ~8% of the shipped HUD frame.
+ *
+ * What replaces it, and why each piece is there:
+ *
+ *  1. A CHAMFERED PLATE, not a box. ExtrudeGeometry with a real bevel gives
+ *     the rim an arris — a narrow 45-degree face that catches the key light
+ *     as a bright line all the way round the silhouette. That single lit edge
+ *     is what separates a carried object from a rendered primitive; a box has
+ *     three flat faces and no transition between them.
+ *  2. A DRAWN OUTLINE. The plate is not a rectangle: rounded shoulders, a
+ *     waisted middle and a blunt point at the foot, so the silhouette is a
+ *     shield rather than a door.
+ *  3. A BAKED MATERIAL. `shield.brute` in materials/recipes.js is authored in
+ *     FACE SPACE (u,v across the plate), so the meander band, the fillet
+ *     frame, the bead ring and the rivets are PLACED ornament cut into the
+ *     height and filled with gold — not a tiling swatch and not flat colour.
+ *     The UVs are remapped below so that recipe lands where it was authored.
+ *  4. RELIEF ON THE UMBO. The boss is a spun profile with a collar and a
+ *     ring of proud beads around it, so it reads as a struck bronze umbo at
+ *     3x instead of a sphere.
+ */
+function shieldOutline() {
+  const s = new THREE.Shape();
+  const W = 0.67, H = 0.93;                 // half extents
+  const sh = 0.13;                          // shoulder round
+  s.moveTo(-W + sh, H);
+  s.lineTo(W - sh, H);
+  s.quadraticCurveTo(W, H, W * 1.005, H - sh);
+  s.bezierCurveTo(W * 1.02, H * 0.25, W * 0.99, -H * 0.18, W * 0.92, -H * 0.55);
+  s.quadraticCurveTo(W * 0.86, -H * 0.86, 0, -H);
+  s.quadraticCurveTo(-W * 0.86, -H * 0.86, -W * 0.92, -H * 0.55);
+  s.bezierCurveTo(-W * 0.99, -H * 0.18, -W * 1.02, H * 0.25, -W * 1.005, H - sh);
+  s.quadraticCurveTo(-W, H, -W + sh, H);
+  return s;
+}
 
-  const group = new THREE.Group();
-  for (const p of parts) {
-    paintGeo(p.g, p.c, { y0: -1.0, y1: 1.0, aoLow: p.metal ? 0.6 : 0.45, top: p.top });
-    const m = new THREE.Mesh(p.g, charMaterial(ctx, p.metal ? 'metal' : 'cloth', 'brute'));
-    m.castShadow = true; m.frustumCulled = false;
-    group.add(m);
+/** Remap a geometry's UVs so its XY bounding box spans 0..1 — the face-space
+ *  the `shield.brute` recipe is authored in. Without this ExtrudeGeometry's
+ *  world-unit UVs would put the meander band somewhere off the plate. */
+function faceUV(g) {
+  g.computeBoundingBox();
+  const b = g.boundingBox;
+  const sx = 1 / Math.max(1e-4, b.max.x - b.min.x), sy = 1 / Math.max(1e-4, b.max.y - b.min.y);
+  const p = g.getAttribute('position');
+  const uv = new Float32Array(p.count * 2);
+  for (let i = 0; i < p.count; i++) {
+    uv[i * 2] = (p.getX(i) - b.min.x) * sx;
+    uv[i * 2 + 1] = (p.getY(i) - b.min.y) * sy;
   }
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  return g;
+}
+
+/** A spun umbo: collar, dome, and a nipple — a profile, not a sphere. */
+function umboGeo() {
+  const pts = [];
+  const R = 0.30;
+  for (let i = 0; i <= 14; i++) {
+    const t = i / 14;
+    // flat collar out to 0.34, then a struck dome that flattens at the crown
+    const r = R * (t < 0.22 ? (1 - t / 0.22) * 0.0 + 1.0 : Math.cos((t - 0.22) / 0.78 * Math.PI * 0.5));
+    const y = t < 0.22 ? t * 0.10 : 0.022 + Math.sin((t - 0.22) / 0.78 * Math.PI * 0.5) * 0.17;
+    pts.push(new THREE.Vector2(Math.max(0.004, r), y));
+  }
+  const g = new THREE.LatheGeometry(pts, 24);
+  g.rotateX(-Math.PI / 2);                 // spin axis onto +Z (out of the face)
+  return g;
+}
+
+function buildShield(ctx) {
+  const group = new THREE.Group();
+
+  // ── 1. the chamfered plate ────────────────────────────────────────────
+  const plate = new THREE.ExtrudeGeometry(shieldOutline(), {
+    depth: 0.10, bevelEnabled: true, bevelThickness: 0.030, bevelSize: 0.036,
+    bevelSegments: 3, curveSegments: 14, steps: 1,
+  });
+  plate.translate(0, 0, -0.05);
+  plate.computeVertexNormals();
+  faceUV(plate);
+  // a gentle vertical AO in vertex colour under the painted albedo: the plate
+  // is carried low and its foot never sees the key.
+  paintGeo(plate, '#ffffff', { y0: -1.0, y1: 1.0, aoLow: 0.58, top: '#ffffff' });
+  const plateMat = shieldFaceMaterial(ctx);
+  const pm = new THREE.Mesh(plate, plateMat);
+  pm.castShadow = true; pm.frustumCulled = false;
+  group.add(pm);
+
+  // ── 2. the proud metal: rails, umbo, beads ────────────────────────────
+  const metalParts = [];
+  // top and foot rails — chamfered bars, sitting PROUD of the face so they
+  // throw their own contact shadow instead of being a painted stripe
+  const railT = new THREE.ExtrudeGeometry(roundedBar(1.30, 0.085), {
+    depth: 0.055, bevelEnabled: true, bevelThickness: 0.018, bevelSize: 0.020, bevelSegments: 2, steps: 1,
+  });
+  railT.translate(0, 0.845, 0.052);
+  const railB = railT.clone(); railB.translate(0, -1.62, 0);
+  metalParts.push(railT, railB);
+  // the umbo and its collar
+  const umbo = umboGeo(); umbo.translate(0, 0.02, 0.055);
+  metalParts.push(umbo);
+  const collar = new THREE.TorusGeometry(0.335, 0.030, 8, 30);
+  collar.translate(0, 0.02, 0.062);
+  metalParts.push(collar);
+  // a ring of proud beads — the ornament the recipe also draws, in real relief
+  for (let i = 0; i < 18; i++) {
+    const a = (i / 18) * Math.PI * 2;
+    const b = new THREE.SphereGeometry(0.037, 8, 6);
+    b.scale(1, 1, 0.72);
+    b.translate(Math.cos(a) * 0.455, 0.02 + Math.sin(a) * 0.455, 0.048);
+    metalParts.push(b);
+  }
+  // rivets on the quarters
+  for (const [rx, ry] of [[-0.44, 0.66], [0.44, 0.66], [-0.44, -0.62], [0.44, -0.62]]) {
+    const r = new THREE.SphereGeometry(0.048, 8, 6);
+    r.scale(1, 1, 0.62); r.translate(rx, ry, 0.052);
+    metalParts.push(r);
+  }
+  // mergeGeometries refuses a mixed batch: ExtrudeGeometry is NON-indexed while
+  // Sphere/Torus/Lathe are indexed, and the mismatch returns null (which would
+  // then throw in paintGeo). Normalise everything to non-indexed first.
+  const metal = mergeGeometries(metalParts.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+  paintGeo(metal, '#c98f2b', { y0: -0.95, y1: 0.95, aoLow: 0.52, top: '#ffe9a8' });
+  const mm = new THREE.Mesh(metal, charMaterial(ctx, 'metal', 'brute'));
+  mm.castShadow = true; mm.frustumCulled = false;
+  group.add(mm);
+
   group.scale.setScalar(0.92);
   return group;
+}
+
+/** a bar with rounded ends, for the shield rails */
+function roundedBar(len, thick) {
+  const s = new THREE.Shape();
+  const hx = len * 0.5, hy = thick * 0.5;
+  s.moveTo(-hx + hy, -hy);
+  s.lineTo(hx - hy, -hy);
+  s.quadraticCurveTo(hx, -hy, hx, 0);
+  s.quadraticCurveTo(hx, hy, hx - hy, hy);
+  s.lineTo(-hx + hy, hy);
+  s.quadraticCurveTo(-hx, hy, -hx, 0);
+  s.quadraticCurveTo(-hx, -hy, -hx + hy, -hy);
+  return s;
+}
+
+/**
+ * The plate's material: the baked `shield.brute` recipe (albedo + normal +
+ * ORM) through the painterly CHARACTER variant, so it keeps the roster's rim
+ * and 3-step ramp while finally carrying real texture. If the library cannot
+ * supply it for any reason we fall back to the old painted-vertex-colour path
+ * rather than dropping to grey.
+ */
+function shieldFaceMaterial(ctx) {
+  let m = null;
+  if (ctx && ctx.mats && ctx.mats.get) {
+    m = ctx.mats.get('shield.brute', { variant: 'character', roughness: 1.0, metalness: 1.0, specGain: 0.8 });
+  }
+  if (!m || !m.map) return charMaterial(ctx, 'cloth', 'brute');
+  m.vertexColors = true;
+  m.dithering = false;
+  m.needsUpdate = true;
+  return m;
 }
 
 export const BRUTE = {

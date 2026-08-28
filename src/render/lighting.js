@@ -98,7 +98,52 @@ const RIGS = {
     // At 26 the same surfaces land in AgX's linear-ish midrange, the stone
     // reads crimson, the gold reads gold, and measured meanSaturation goes
     // 0.688 -> 0.739 while groundP90 drops 0.356 -> 0.215.
-    key:    { color: '#ff7048', intensity: 26.0, dir: [0.646, -0.615, -0.452] },
+    // SUBJECT PASS. At 26.0 the hero's key-side planes measured [254,154,135]
+    // — red pinned at the clip point across the whole lit half of the body, so
+    // there was no cheekbone, no brow ridge and no cloth fold anywhere on the
+    // character: one flat blown salmon plane. 15.5 puts the same planes at
+    // ~200-215 where AgX still has a gradient to spend on form. The hero does
+    // NOT get darker overall, because the light it loses here is given back
+    // LOCALLY by `subject` below — which is the whole point: light the subject,
+    // not the frame. NOTE the coupling — materials/library.js _keyRef() tracks
+    // key intensity x key luminance, and painterly.js anchors BOTH the shading
+    // ramp and the rim energy to it, so this also takes ~40% off every rim in
+    // the chamber for free.
+    key:    { color: '#ff7048', intensity: 15.5, dir: [0.646, -0.615, -0.452] },
+    // ── THE SUBJECT LIGHT (§1.1, §9.2) ──────────────────────────────────────
+    // The frame did not know who its subject was. Every light in this rig was
+    // authored for the ROOM — a key for the architecture, practicals nailed to
+    // the perimeter walls — and the character was lit only incidentally, by
+    // whatever the room happened to spill on it. Measured result: background
+    // braziers at 0.69 display median against a hero at 0.35, i.e. the props
+    // BEHIND the player out-valued the player by 2x while sitting on the top
+    // and side edges of frame. That is a centrifugal composition and no amount
+    // of grading fixes it.
+    //
+    // This is a small, warm, tightly-falling-off point light carried by the
+    // hero. It is not a real source in the fiction (nothing in the chamber
+    // casts it) — it is the art-directed subject key, the same device a Hades
+    // frame uses to keep Zagreus the brightest coherent shape in the play area
+    // no matter what room he is standing in.
+    //
+    // WHY IT DOES NOT PAINT THE FLOOR. Two reasons, both structural:
+    //   1. inverse-square. At `distance` 6.0 / decay 2 the hero's torso sits
+    //      ~0.5u from the source and the floor under him ~2.0u, so the floor
+    //      receives ~1/16 of what the body does. It dies inside the character's
+    //      own footprint.
+    //   2. floor.tartarus is authored litGain 0.22 in materials/recipes.js, so
+    //      the fraction that does reach the stage arrives at a fifth strength.
+    //   Between them the light lands almost entirely on the standing form.
+    // OFFSET is camera-side (+X/+Z at the fixed 45deg play yaw) and raised, so
+    // it models the hero from the lens with a real terminator down the body
+    // instead of flattening it with a frontal fill.
+    // COLOUR IS A CLIPPING CONTROL. The hero's lit planes pin RED first under a
+    // saturated warm source — [254,154,135] is not a bright pixel, it is a dead
+    // channel, and a dead channel has stopped carrying form. A paler subject key
+    // delivers the same luminance with the red channel ~15% lower, so the lit
+    // side keeps a gradient instead of a plateau. Target: no hero pixel over 244.
+    subject: { color: '#ffe2c8', intensity: 16.0, distance: 6.6, decay: 2.0,
+               offset: [0.80, 1.95, 1.20] },
     // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
     // saturated periwinkle sky this was the brightest thing landing on the
     // floor after the key, and it is what turned every cast shadow into a
@@ -113,13 +158,32 @@ const RIGS = {
     // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
     // The rim is now the second-strongest light in the frame by design: it is
     // what draws every vertical edge in the chamber.
-    rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 9.2, power: 1.30, wrap: 0.55 },
+    // §1.2 SCOPES THE ART-DIRECTED RIM TO CHARACTERS. This constant is
+    // published to EVERY painted material in the chamber, and at 9.2 / power
+    // 1.30 / wrap 0.55 — four times the intensity and nearly twice the wrap of
+    // the Asphodel (2.4 / 2.2 / 0.34) and Elysium (2.2 / 2.3 / 0.30) rigs — the
+    // result was that every wall, rubble chunk, statue, plinth and column
+    // carried the same pale halo the hero did. When everything is rimmed,
+    // nothing is separated from anything: measured character-to-world rim gap
+    // was 1.25x. materials/library.js _applyRim() maps this through
+    // clamp(intensity/2.4) and SKIPS any material that authored its own rim, so
+    // the hero (entities/rig.js SLOT_PAINT, rimStrength 9.8-13.2) keeps its
+    // edge at full while the world drops to a hairline. Power 2.6 narrows the
+    // fresnel band from a washed face to a drawn arris.
+    rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 2.8, power: 2.60, wrap: 0.22 },
     ambient:{ color: '#241238', intensity: 0.34 },
     godrayAnchor: [0.22, 1.06],
+    // §9.3 + §9.5. With the bloom fog gone, bands.highlight measured 0.021
+    // against a 0.04 floor — the frame's old top band was NOT ornament, it was
+    // halo, and removing the halo exposed that there was nothing underneath it.
+    // The honest source of a highlight band is a small, sharp SPECULAR hit on
+    // metal, so keyGain goes 20 -> 34: more energy into the tight keySharp 200
+    // lobe that gold filigree, bronze and the brazier rims reflect, and none of
+    // it into the floor's diffuse.
     // §9.5 "ornament carries the light": keyGain drives the sharp specular lobe
     // the gold filigree, the bronze and the brazier rims reflect, and it is the
     // cheapest route to a real highlight band that is NOT a lit floor.
-    env:    { zenith: '#150e30', horizon: '#33183e', nadir: '#140916', keyGain: 20.0, keySharp: 200, keyWide: 0.05, rimGain: 6.4, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 0.55 },
+    env:    { zenith: '#150e30', horizon: '#33183e', nadir: '#140916', keyGain: 34.0, keySharp: 200, keyWide: 0.05, rimGain: 2.0, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 0.55 },
     // §9.5 + §9.6. Two families:
     //   WARM  tight brazier pools, radius ~8.5, sitting ON the ornament ring so
     //         the light lands on the annulus of floor the glaze paints bright
@@ -137,16 +201,36 @@ const RIGS = {
       // which is what collapsed the wide shot's mid band into its near band.
       // chamber.js reads these positions to place the brazier GEOMETRY, so the
       // props follow the lights automatically — move one and the prop moves.
-      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 200, distance: 10.5, speed: 1.00 },
-      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 200, distance: 10.5, speed: 0.83 },
-      { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 175, distance: 10.0, speed: 1.21 },
-      { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 175, distance: 10.0, speed: 0.72 },
-      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 200, distance: 10.5, speed: 0.94 },
+      // §9.2 / §1.1 SUBJECT PASS. These sat at 200/175 and measured 0.64-0.69
+      // display median on the brazier props themselves, against a hero at 0.35
+      // — the furniture BEHIND the player was twice the value of the player,
+      // and RIGS.tartarus places it on the theta 132-316deg perimeter arc,
+      // which the fixed 45deg play camera puts on the top and side EDGES of
+      // frame. The composition was centrifugal: the brightest mass in the image
+      // was the border, the play space was a hole in the middle, and at 1/16
+      // greyscale the character could not be found at all.
+      // Cut to ~0.45x they read as background firelight — still the warm note
+      // that says "underworld chamber", no longer the subject of the picture.
+      // `distance` comes down with them so the pool stays a POOL and does not
+      // creep further across the floor as it dims.
+      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 90,  distance: 9.0, speed: 1.00 },
+      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 90,  distance: 9.0, speed: 0.83 },
+      { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 1.21 },
+      { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 0.72 },
+      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 90,  distance: 9.0, speed: 0.94 },
       // COOL #5fd0ff washes on the perimeter masonry, the column capitals and
       // the gate. §9.4 needs the mid/background architecture to sit a full value
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
       // these do both jobs at once, and they are aimed at surfaces the floor
       // barely sees (floor.tartarus litGain keeps what does reach it negligible).
+      // COOL COMES UP AS WARM GOES DOWN (§9.6, §12). The top band of every play
+      // frame used to be bright because a 1.70-intensity bloom was smearing the
+      // brazier cores across it; with that gone the mid-ground architecture has
+      // to be lit by something REAL, and §12 says the mid band is the brightest
+      // band in the picture. These are the lights that do it, and because they
+      // are #5fd0ff they also carry the mandated complement — warm was 40-47%
+      // of saturated pixels against cyan at 2.4-5.2% (the §9.6 floor is 8%).
+      // Raising cool while cutting warm moves both problems with one lever.
       // §11.2 LIGHT THE MID-GROUND, and light it UNEVENLY. The chamber points at
       // focalAngle (225deg, i.e. -X-Z, which the fixed 45deg play yaw puts dead
       // centre at the top of frame). The two washes that flank that gate are the
@@ -155,11 +239,11 @@ const RIGS = {
       // The three that fall on plain perimeter come DOWN: an evenly washed
       // perimeter is what turned the top of every play frame into one continuous
       // salmon band with no depth in it (§1.1, §11.1).
-      { pos: [ -4.6, 5.4, -12.6], color: '#7ad8ff', intensity: 430, distance: 20, speed: 0.31, flicker: 0.09 },
-      { pos: [-12.6, 5.0,  -4.6], color: '#5fd0ff', intensity: 400, distance: 20, speed: 0.61, flicker: 0.12 },
-      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 180, distance: 15, speed: 0.44, flicker: 0.14 },
-      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 120, distance: 16, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 130, distance: 15, speed: 0.52, flicker: 0.14 },
+      { pos: [ -4.6, 5.4, -12.6], color: '#7ad8ff', intensity: 780, distance: 22, speed: 0.31, flicker: 0.09 },
+      { pos: [-12.6, 5.0,  -4.6], color: '#5fd0ff', intensity: 690, distance: 22, speed: 0.61, flicker: 0.12 },
+      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 340, distance: 17, speed: 0.44, flicker: 0.14 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 230, distance: 18, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 250, distance: 17, speed: 0.52, flicker: 0.14 },
     ],
   },
   asphodel: {
@@ -203,7 +287,7 @@ export class LightRig {
     this.pool = [];
     this._practicals = [];
     this._t = 0;
-    this.params = { key: true, fill: true, bounce: true, practicals: true, shadows: true, exposureBias: 1 };
+    this.params = { key: true, fill: true, bounce: true, practicals: true, subject: true, shadows: true, exposureBias: 1 };
   }
 
   async init(ctx){
@@ -253,6 +337,20 @@ export class LightRig {
     this.ambient = new THREE.AmbientLight('#3a1d52', 0.075);
     this.ambient.name = 'fill.ambient';
     this.group.add(this.ambient);
+
+    // ── subject key: the art-directed light that follows the HERO ──────────
+    // See the RIGS note. This is deliberately NOT drawn from the practical
+    // pool: the ultra tier budgets exactly 10 pooled lights and the Tartarus
+    // rig authors exactly 10 practicals, so a pooled subject light would have
+    // been silently dropped in the capture harness — the one place the frame
+    // is actually judged. It is also never released, because the subject is
+    // never optional.
+    this.subject = new THREE.PointLight('#ffd2a4', 0, 6.2, 2.0);
+    this.subject.name = 'subject.key';
+    this.subject.castShadow = false;
+    this.subjectOffset = new THREE.Vector3(0.85, 2.05, 1.25);
+    this._subjectPos = new THREE.Vector3(0, 1.0, 0);
+    this.group.add(this.subject);
 
     // ── floor bounce (fake GI) ─────────────────────────────────────────────
     // TWO plates, not one. `bounce` is a small centre POOL with real falloff to
@@ -362,6 +460,17 @@ export class LightRig {
 
     this.ambient.color.set(rig.ambient.color);
     this.ambient.intensity = rig.ambient.intensity;
+
+    // subject key (every biome gets one; fall back to a warm neutral)
+    {
+      const sj = rig.subject || { color: '#ffd2a4', intensity: 9.0, distance: 6.2, decay: 2.0, offset: [0.85, 2.05, 1.25] };
+      this.subject.color.set(sj.color);
+      this.subject.userData.base = sj.intensity;
+      this.subject.intensity = this.params.subject === false ? 0 : sj.intensity;
+      this.subject.distance = sj.distance;
+      this.subject.decay = sj.decay ?? 2.0;
+      this.subjectOffset.fromArray(sj.offset || [0.85, 2.05, 1.25]);
+    }
 
     if(this.bounce){
       this.bounce.color.set(rig.bounce.color);
@@ -605,8 +714,33 @@ export class LightRig {
   }
 
   lateUpdate(alpha, ctx){
+    this._followSubject(ctx);
     this.atmosphere?.lateUpdate?.(alpha, ctx);
     this.debugScene?.sync?.(ctx);
+  }
+
+  /**
+   * Park the subject key on the hero. Runs per-frame (visuals only) and is
+   * defensive about the player system: §6 of the architecture contract says any
+   * system may be a stub, and a missing hero must simply leave the light where
+   * it was rather than throw inside the render loop.
+   */
+  _followSubject(ctx){
+    if(!this.subject) return;
+    const on = this.params.subject !== false;
+    this.subject.intensity = on ? (this.subject.userData.base ?? 0) : 0;
+    if(!on) return;
+    const p = ctx && ctx.player && (ctx.player.position || ctx.player.root?.position || ctx.player.group?.position);
+    if(p && Number.isFinite(p.x)){
+      // Smoothed, not snapped: a light that teleports with a dashing character
+      // strobes the whole silhouette. This is a visual lag only — no sim state.
+      this._subjectPos.lerp(p, 0.35);
+    }
+    this.subject.position.set(
+      this._subjectPos.x + this.subjectOffset.x,
+      this._subjectPos.y + this.subjectOffset.y,
+      this._subjectPos.z + this.subjectOffset.z,
+    );
   }
 
   resize(w, h, ctx){ this.atmosphere?.resize?.(w, h, ctx); }

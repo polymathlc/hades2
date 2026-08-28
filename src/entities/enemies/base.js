@@ -197,14 +197,25 @@ export function charMaterial(ctx, slot, tag, opts = {}) {
   // and no extra draw call (the bodies are already separate meshes). What it
   // buys is a per-family RIM, which §9.2 makes non-optional.
   const key = 'characterrig.' + slot + (tag ? '.' + tag : '');
+  // §7: the roster used to strip every map off its materials, same as rig.js
+  // did, which is why every enemy shipped as flat colour. `characterrig.*` now
+  // resolves to a real baked set (materials/recipes.js) for skin/cloth/hair/
+  // metal; `glow` still has no recipe and correctly falls through to the
+  // painterly character shader. Where a map exists, the ORM drives roughness
+  // and metalness, so those are passed at 1.
+  const mapped = slot === 'skin' || slot === 'cloth' || slot === 'hair';
   let m = ctx.mats && ctx.mats.get ? ctx.mats.get(key, {
     color: '#ffffff',
-    roughness: opts.roughness ?? (slot === 'metal' ? 0.34 : 0.72),
-    metalness: opts.metalness ?? (slot === 'metal' ? 0.92 : 0.04),
+    roughness: mapped ? 1.0 : (opts.roughness ?? (slot === 'metal' ? 0.34 : 0.72)),
+    metalness: mapped ? 1.0 : (opts.metalness ?? (slot === 'metal' ? 0.92 : 0.04)),
+    ...(mapped ? { repeat: slot === 'cloth' ? 3 : 2 } : {}),
     ...(slot === 'glow' ? { glowKey: opts.glowKey || '#8ef0d0' } : {}),
   }) : null;
   if (!m) m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0.05 });
-  if (m.map || m.normalMap || m.roughnessMap) { m.map = null; m.normalMap = null; m.roughnessMap = null; m.needsUpdate = true; }
+  if (!m.map) {
+    m.roughness = opts.roughness ?? (slot === 'metal' ? 0.34 : 0.72);
+    m.metalness = opts.metalness ?? (slot === 'metal' ? 0.92 : 0.04);
+  }
   m.vertexColors = true;
   m.dithering = false;
   if (opts.doubleSide) { m.side = THREE.DoubleSide; m.shadowSide = THREE.DoubleSide; }

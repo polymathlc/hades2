@@ -429,9 +429,12 @@ function aoAt(x, y, z, H) {
 
 const SLOTS = ['skin', 'cloth', 'hair', 'metal', 'glow'];
 const SLOT_MAT = {
-  skin: { roughness: 0.60, metalness: 0.0 },
-  cloth: { roughness: 0.88, metalness: 0.0 },
-  hair: { roughness: 0.50, metalness: 0.02 },
+  // `repeat` is how many times the baked set wraps across a limb's 0..1
+  // cylindrical unwrap. A weave that wraps once around a forearm is a printed
+  // pattern; three times is cloth.
+  skin: { roughness: 0.60, metalness: 0.0, repeat: 2, mapped: true },
+  cloth: { roughness: 0.88, metalness: 0.0, repeat: 3, mapped: true },
+  hair: { roughness: 0.50, metalness: 0.02, repeat: 2, mapped: true },
   // metalness 0.95 + roughness 0.24 under a key of 38 turns a 60cm blade into
   // a 400px bloom blob. Metal here is ART metal: broad, warm, controlled.
   metal: { roughness: 0.34, metalness: 0.78 },
@@ -996,17 +999,25 @@ function slotMaterial(ctx, slot, spec) {
   // branch AND stays in mats.cache, so setBiome()/setRim() still reach us.
   let m = null;
   const key = 'characterrig.' + slot + (spec.matTag ? '.' + spec.matTag : '');
+  // ── §7 / §1.4  THE CHARACTER IS A PAINTED ASSET ─────────────────────────
+  // This block used to null out map/normalMap/roughnessMap/metalnessMap/aoMap
+  // on every character material, on the reasoning that "the hero is shaded by
+  // vertex colour + the painted ramp" and an unauthored texture was worse than
+  // none. The result was a figure with no weave, no leather grain, no metal
+  // wear, no painted crevice AO and no hand-placed highlight anywhere on it —
+  // a critic panel measured it as the single biggest reason the build reads as
+  // untextured, and it is a §7 auto-fail in its own right.
+  //
+  // The maps now EXIST and are art-directed: `characterrig.skin/cloth/hair/
+  // metal` in materials/recipes.js. They are authored as MODULATORS around a
+  // high-key neutral, so vertex colour still carries every family's identity
+  // hue and the texture supplies value and material. cfg.repeat is how many
+  // times that set wraps across a limb's cylindrical unwrap.
+  if (cfg.repeat) opts.repeat = cfg.repeat;
+  if (cfg.mapped) { opts.roughness = 1.0; opts.metalness = 1.0; }   // let ORM drive
   if (ctx && ctx.mats && ctx.mats.get) m = ctx.mats.get(key, opts);
   if (!m) m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: cfg.roughness, metalness: cfg.metalness });
-  // Belt and braces: the hero is shaded by vertex colour + the painted ramp.
-  // If any map ever arrives through the library, drop it rather than ship a
-  // texture we did not art-direct.
-  if (m.map || m.normalMap || m.roughnessMap || m.metalnessMap || m.aoMap) {
-    m.map = null; m.normalMap = null; m.roughnessMap = null; m.metalnessMap = null; m.aoMap = null;
-    m.roughness = cfg.roughness; m.metalness = cfg.metalness;
-    m.color.setRGB(1, 1, 1);
-    m.needsUpdate = true;
-  }
+  if (!m.map) { m.roughness = cfg.roughness; m.metalness = cfg.metalness; }
   m.vertexColors = true;
   // DITHERING OFF. MaterialLibrary.character() enables three's ordered dither,
   // which is correct for an 8-bit backbuffer and catastrophic here: it adds

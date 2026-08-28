@@ -247,11 +247,27 @@ function buildSpeckle() {
   return flecks;
 }
 function buildBurst() {
+  // ── §5 "effects read as SHAPES" / §7 "programmer art" ────────────────────
+  // This cell was 15 rays at a half-width of 0.030-0.062 of the cell radius —
+  // 3-6%, i.e. a HAIRLINE. Fifteen hairlines radiating from a point is not a
+  // bold shape, it is line-art, and at the impact scale the burst is drawn at
+  // it read as a scribbled asterisk: the critic panel described the boss
+  // impact as "a literal ball of overlapping hand-drawn circles".
+  //
+  // Seven rays at 0.10-0.19 (>= 9% of the cell radius, and up to 19% on the
+  // long ones) is a star with SIDES. The unequal lengths and the deliberate
+  // 2:1 long/short alternation stop it reading as a mechanical asterisk, and
+  // the taper (see shBurst) brings every arm to an actual point instead of
+  // stopping it dead at 20% width the way the old profile did.
   const rng = new RNG('erebus:burst');
   const rays = [];
-  for (let i = 0; i < 15; i++) {
-    const a = i * TAU / 15 + rng.range(-0.10, 0.10);
-    rays.push([a, rng.range(0.42, 0.95), rng.range(0.030, 0.062)]);
+  const N = 7;
+  for (let i = 0; i < N; i++) {
+    const a = i * TAU / N + rng.range(-0.16, 0.16);
+    const long = (i % 2) === 0;
+    rays.push([a,
+      long ? rng.range(0.82, 1.00) : rng.range(0.44, 0.62),
+      long ? rng.range(0.135, 0.190) : rng.range(0.100, 0.140)]);
   }
   return rays;
 }
@@ -329,22 +345,43 @@ function shChevron(x, y) {
 }
 
 function shBurst(x, y, r, th) {
-  let b = 0, c = 0;
+  // THE THREE LAYERS ARE NOT EQUAL PARTNERS (§5.2). The old cell put the CORE
+  // (which the shader tints toward white) on the full length of every ray and
+  // gave the GLOW a flat 0.7 blob, so the sprite delivered white line work
+  // with a grey halo and almost no saturated body. Now:
+  //   BODY  — the whole star, filled, at full amplitude. This is the layer the
+  //           god colour rides on and it has to carry the shape on its own.
+  //   CORE  — the hub and the first third of each arm ONLY. Small and hot.
+  //   GLOW  — wide, following the STAR, not a circle: a round halo under a
+  //           spiked body is what turns an impact into a fuzzy ball.
+  let b = 0, c = 0, gl = 0;
   for (let i = 0; i < RAYS.length; i++) {
     const R = RAYS[i];
     let da = th - R[0];
     da = Math.atan2(Math.sin(da), Math.cos(da));
     const f = 1 - r / R[1];
     if (f <= 0) continue;
-    const w = R[2] * (0.20 + 0.80 * f);
-    const v = Math.exp(-(da * da * r * r) / (w * w)) * Math.pow(f, 0.9);
+    // TAPER TO A POINT: width goes to ~2% of nominal at the tip instead of the
+    // old 20% floor, which left every arm ending in a blunt stub.
+    const t = Math.pow(f, 0.62);
+    const w = R[2] * (0.02 + 0.98 * t);
+    const arc = da * Math.max(r, 0.06);
+    // a firm-edged arm, not a gaussian smudge: raising the profile to a power
+    // pulls the falloff in and gives the arm a readable silhouette edge
+    const prof = Math.pow(Math.exp(-(arc * arc) / (w * w)), 1.7);
+    const v = prof * Math.pow(f, 0.5);
     if (v > b) b = v;
-    if (r < R[1] * 0.42 && v > c) c = v;
+    if (f > 0.84 && v > c) c = v;              // hot only in the first sixth
+    const gw = w * 2.0;
+    const g = Math.exp(-(arc * arc) / (gw * gw)) * Math.pow(f, 1.05);
+    if (g > gl) gl = g;
   }
-  const hub = Math.pow(Math.max(0, 1 - r / 0.17), 2.0);
-  out.b = clamp01(b + hub);
-  out.c = clamp01(c * 0.6 + Math.pow(Math.max(0, 1 - r / 0.085), 1.5));
-  out.g = Math.pow(Math.max(0, 1 - r / 0.9), 3.0) * 0.7;
+  const hub = Math.pow(Math.max(0, 1 - r / 0.215), 1.6);
+  out.b = clamp01(b * 1.15 + hub);
+  // CORE stays tiny — §5.2. A wide core is what turned every impact into a
+  // white blob once AgX desaturated it.
+  out.c = clamp01(c * 0.34 + Math.pow(Math.max(0, 1 - r / 0.082), 1.5));
+  out.g = clamp01(gl * 0.40 + Math.pow(Math.max(0, 1 - r / 0.80), 2.8) * 0.42);
 }
 
 function shDiamond(x, y, r, th) {
@@ -410,7 +447,12 @@ export function shapeAtlas() {
   paintCell(data, SHAPE.ember, (x, y) => shEmber(x, y));
   paintCell(data, SHAPE.spark, (x, y) => shSpark(x, y));
   paintCell(data, SHAPE.puff, (x, y, r, t) => shPuff(x, y, r, t));
-  paintCell(data, SHAPE.rune, (x, y) => shStrokes(x, y, RUNE_SEGS, 0.014, 0.012));
+  // §5 SILHOUETTE FIRST. At 0.014 the sigil's strokes were a hairline, and a
+  // handful of them overlapping read as a scribble of white line-art rather
+  // than a drawn sigil (the critic panel's 'ball of overlapping hand-drawn
+  // circles'). A painted glyph has WEIGHT: a fat body stroke with a thin hot
+  // line running inside it.
+  paintCell(data, SHAPE.rune, (x, y) => shStrokes(x, y, RUNE_SEGS, 0.052, 0.013));
   paintCell(data, SHAPE.crack, (x, y) => shStrokes(x, y, CRACK_SEGS, 0.012, 0.010));
   paintCell(data, SHAPE.splatter, (x, y) => shSplatter(x, y));
   paintCell(data, SHAPE.shard, (x, y) => shShard(x, y));

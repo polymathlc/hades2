@@ -148,7 +148,10 @@ export class VFX {
       ramp: [S(0, '#fff0b0'), S(0.25, '#ffb04a'), S(0.6, '#e0431a'), S(1, '#2a0710')],
       alpha: [[0, 0], [0.10, 1], [0.7, 0.8], [1, 0]],
       size: [[0, 0.4], [0.22, 1], [1, 0.35]],
-      size0: 0.10, size1: 0.22, life: [0.9, 1.8], speed: [0.5, 1.9],
+      // §7: the ember field is the emitter a critic traced the 'evenly spaced
+      // identical circles' to. A 2.2x uniform band is not a size distribution;
+      // 6.7x sampled through the skew is.
+      size0: 0.045, size1: 0.30, life: [0.7, 2.2], speed: [0.35, 2.6],
       emit: 'cone', spread: 0.75, gravity: -1.15, drag: 0.8, turb: 1.6, turbFreq: 0.9,
       core: 1.0, rotVel: [-1.2, 1.2],
     });
@@ -206,7 +209,7 @@ export class VFX {
       ramp: [S(0, '#ffffff'), S(0.3, GOLD.highlight), S(0.75, '#ff8a3c'), S(1, '#2a0a12')],
       alpha: [[0, 0], [0.14, 0.30], [0.6, 0.17], [1, 0]],
       size: [[0, 0.4], [0.3, 1.1], [1, 0.5]],
-      size0: 0.50, size1: 0.92, life: [0.35, 0.7], speed: [0.4, 1.8],
+      size0: 0.22, size1: 0.98, life: [0.28, 0.82], speed: [0.3, 2.4],
       emit: 'sphere', spread: 0.5, drag: 3.2, core: 0.45,
     });
     P.define('rune', {
@@ -214,8 +217,12 @@ export class VFX {
       ramp: [S(0, '#ffffff'), S(0.25, GODS.hecate), S(0.7, '#2f7f9c'), S(1, INK.violet)],
       alpha: [[0, 0], [0.15, 0.85], [0.6, 0.5], [1, 0]],
       size: [[0, 0.5], [0.3, 1.0], [1, 1.35]],
-      size0: 0.7, size1: 1.0, life: [0.6, 0.95], speed: [0.2, 0.9],
-      emit: 'disc', spread: 0.6, gravity: -0.5, drag: 2.0, core: 1.1, rotVel: [-0.5, 0.5],
+      size0: 0.62, size1: 1.15, life: [0.6, 0.95], speed: [0.2, 0.9],
+      // core was 1.1 — the sigil's every stroke went near-white and the layer
+      // stopped carrying the god colour at all (§5.2 wants the BODY saturated
+      // and the core tiny). 0.42 leaves a hot inner line and a teal glyph.
+      emit: 'disc', spread: 0.6, gravity: -0.5, drag: 2.0, core: 0.42, rotVel: [-0.5, 0.5],
+      aVar: 0.55,
     });
   }
 

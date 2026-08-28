@@ -37,7 +37,13 @@ export const ENVIRONMENT_LOOK = {
   // power 3.1 makes the fresnel band a couple of pixels wide (invisible on a
   // column at play distance) and strength 0.54 is a whisper against a key of
   // 12.0. A wide band at 1.9 with real energy is what draws an EDGE.
-  rimPower: 1.6,
+  // §1.2 SCOPES THE ART-DIRECTED RIM TO CHARACTERS. A power of 1.6 is a very
+  // wide fresnel band — on a wall or a statue face that is not an edge light,
+  // it is a WASH across the whole grazing half of the surface. 2.4 draws an
+  // arris: a hairline on the actual silhouette of a form and nothing on its
+  // faces. CHARACTER_LOOK deliberately keeps the wide 1.5 band, because a hero
+  // ~120px tall needs a rim you can see at the §5 silhouette test.
+  rimPower: 2.4,
   // CALIBRATED TO THE GRADE. AgX bleaches anything more than ~3 stops over
   // middle grey toward white, and with the corrected exposure middle grey is
   // scene-linear 0.018 — so a rim of 1.15 arrived as a white edge, not a CYAN
@@ -49,7 +55,16 @@ export const ENVIRONMENT_LOOK = {
   // veto below is what keeps it off the floor.
   // §9.6 raised again: the rim is the frame's designated complement source and
   // the single strongest "light the EDGES, not the faces" device we have.
-  rimStrength: 0.68,
+  // MEASURED CHARACTER-TO-WORLD RIM GAP: 1.25x. With 0.68 here against 0.85 on
+  // CHARACTER_LOOK, and library.js _applyRim() mapping the rig's rim.intensity
+  // through a clamp that SATURATED at 1.75 for environments and 1.45 for
+  // characters, every wall, rubble chunk, plinth and statue in the chamber was
+  // carrying essentially the same halo as the hero. When everything is rimmed,
+  // nothing is separated from anything — which is the single most common way a
+  // Hades-like frame loses its subject. 0.30 opens the preset gap to ~3.7x, and
+  // the shipped hero (entities/rig.js SLOT_PAINT authors 9.8-13.2 and declares
+  // it in paintOverrides so _applyRim leaves it alone) sits far above that.
+  rimStrength: 0.30,
   // POSITIVE Z: see the note in render/lighting.js. A rim aimed away from the
   // shipping camera is a rim nobody ever sees.
   rimDir: [-0.62, 0.34, 0.70],
@@ -93,7 +108,11 @@ export const CHARACTER_LOOK = {
   // it vanishes at the 1/8-resolution silhouette test §5 demands. Wider band,
   // hotter, and wrapped further round the form.
   rimPower: 1.5,
-  rimStrength: 0.85,
+  // Raised with ENVIRONMENT_LOOK's cut so the preset gap is a real 3.7x rather
+  // than the measured 1.25x. This is the value setBiomeLook() re-asserts over
+  // every character material, so it is what enemies and NPCs get; the player
+  // overrides it per slot in entities/rig.js.
+  rimStrength: 1.10,
   rimGate: [-0.42, 0.55],
   rampSoftness: 0.11,
   rampStrength: 0.82,           // flatter, more graphic bands

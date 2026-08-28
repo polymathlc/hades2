@@ -45,7 +45,15 @@ export const GRADES = {
     // with the other two biomes. Anything scene-referred that is NOT a light —
     // emissive intensities, the flame/portal quads, the atmosphere layers —
     // carries the same 2.42x.
-    exposure: 1.25,
+    // +4% to hold the frame's overall level after the key came down from 26 to
+    // 15.5 (render/lighting.js). Deliberately a SMALL lift: the rest of the
+    // hero's lost light is given back locally by the subject key, because a
+    // global exposure lift would hand the same stops to the ground plane, which
+    // is exactly what §9.1 forbids. NOTE for whoever tunes this next — the
+    // number in postfx.js `uExposure: { value: 1.06 }` is only an initialiser;
+    // _syncUniforms overwrites it from THIS field every frame, so this is the
+    // real exposure knob for Tartarus.
+    exposure: 1.36,
     agxSlope: [1.06, 1.0, 0.96],
     agxPower: [1.16, 1.18, 1.24],
     // §2 asks for crimson stone and molten gold; the close-ups measured
@@ -161,7 +169,27 @@ export const GRADES = {
     // shadows". At clamp 3.0 the same core keeps a genuinely white centre and
     // a halo you can see the brazier rim through, which is what §5's core /
     // body / glow construction actually asks for.
-    bloom:    { threshold: 1.85, knee: 0.42, intensity: 1.70, tint: H('#ffe0b8'), radius: 0.34, clamp: 3.0 },
+    // §7 HARD BAN: "bloom fog across the entire frame", and §1.7 "bloom must
+    // never wash out the ink shadows". At 5x on a brazier the surrounding
+    // flagstone plaza was a single flat salmon value with ZERO surface
+    // structure — the halo had eaten ~200px of stone in every direction and
+    // destroyed the material work under it. That is not a paint layer, it is a
+    // fog layer, and it is also the mechanism by which the perimeter braziers
+    // took over the composition: each one injected a wide pedestal that raised
+    // the whole top band of frame.
+    // Four levers, all four moved, because any one of them alone just trades:
+    //   threshold 1.85 -> 3.10  (exposure-anchored — see postfx._anchor — so
+    //                            this is ~2.4 DISPLAY-referred: emissive cores,
+    //                            the portal and real gold speculars only)
+    //   intensity 1.70 -> 0.72  how much the halo is allowed to spend
+    //   radius    0.34 -> 0.20  the same energy CONCENTRATED is a highlight;
+    //                           spread wide it is a pedestal
+    //   clamp     3.0  -> 1.7   how much a single blazing texel may inject into
+    //                           mip0 before six tent blurs smear it
+    // §9.3's bands.highlight >= 0.04 must still be met — and it is met the way
+    // the law actually intends: from emissive CORES and gold speculars that are
+    // genuinely bright, not from a smeared halo sitting over everything.
+    bloom:    { threshold: 3.10, knee: 0.42, intensity: 1.15, tint: H('#ffe0b8'), radius: 0.20, clamp: 1.7 },
     // §9.7 contact. A 1.75u radius on a 3/4 camera is a soft dirt halo, not an
     // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
     // the ink goes several stops darker so the base of a column reads planted

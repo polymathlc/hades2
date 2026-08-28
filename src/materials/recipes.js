@@ -239,7 +239,275 @@ function warp1Lo(n, fbmOpts, warpOpts, div = 2) {
 //   emissive Float32Array n*n*3, 0..255 sRGB  (optional)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// CHARACTER MODULATION RAMPS.
+// Deliberately high-key and near-neutral: rig.js paints the roster's identity
+// hue into VERTEX COLOUR and the albedo multiplies it, so a saturated ramp
+// here would double the hue and a dark one would sink the hero below the
+// floor — which §9.2 makes the one unforgivable error in this project.
+// Mean value sits around 0.85 so the texture reads as material, not as a
+// second shadow pass.
+// ---------------------------------------------------------------------------
+const R_ = (t, c) => ({ t, c });
+const SKIN_WARM = [R_(0, '#a89086'), R_(0.30, '#d0b6a8'), R_(0.58, '#ecd6c8'), R_(0.80, '#f8ebe0'), R_(1, '#fffcf7')];
+const SKIN_COOL = [R_(0, '#9a8a8c'), R_(0.32, '#c0b0b2'), R_(0.62, '#ded2d3'), R_(0.85, '#f2ebeb'), R_(1, '#fdfafa')];
+const CLOTH_N   = [R_(0, '#6c626a'), R_(0.26, '#948890'), R_(0.55, '#b8acb2'), R_(0.80, '#dcd2d6'), R_(1, '#f8f4f5')];
+const CLOTH_C   = [R_(0, '#5d5e6c'), R_(0.28, '#84869a'), R_(0.58, '#adaebf'), R_(0.82, '#d6d8e3'), R_(1, '#f4f6fb')];
+const HAIR_R    = [R_(0, '#4d4249'), R_(0.30, '#786a71'), R_(0.62, '#a2939a'), R_(0.86, '#ccbec3'), R_(1, '#f2e9eb')];
+const METAL_R   = [R_(0, '#41382f'), R_(0.24, '#75664f'), R_(0.52, '#a8957a'), R_(0.78, '#dbcdb2'), R_(1, '#fffaee')];
+
 const RECIPES = {
+
+  // ======================================================================
+  // CHARACTER SURFACES  (§4, §1.4)
+  // ----------------------------------------------------------------------
+  // rig.js used to null out map/normalMap/roughnessMap/metalnessMap/aoMap on
+  // every character material "rather than ship a texture we did not
+  // art-direct". The result was exactly what the critic panel measured: at 3x
+  // the hero is flat skin, flat charcoal cloth and a white contour, with no
+  // weave, no grain, no wear, no painted crevice AO and no hand-placed
+  // highlight anywhere on the figure.
+  //
+  // These four sets are that missing art direction. The critical design point
+  // is that they are MODULATORS, not skins: the roster's colour identity lives
+  // in VERTEX COLOUR (rig.js paints it per slot, per family), so the albedo
+  // here is authored around neutral and its job is to swing VALUE — the way a
+  // painted cloth fold does — while leaving hue to the rig. That is why one
+  // cloth set can dress the hero, the shade, the brute and the hound without
+  // any of them reading as the same character.
+  //
+  // They tile: rig.js's limb tubes carry a cylindrical 0..1 unwrap and ask for
+  // a repeat, so every generator used here is periodic.
+  // ======================================================================
+  'characterrig.skin': { size: MID, build(n, rng, seed) {
+    // These ramps are declared inline rather than by name: TG.lut() silently
+    // falls back to the ASH ramp for an unknown key, so a typo'd ramp name
+    // would dress the hero in dark violet and never raise an error.
+    // dermis: a slow subsurface mottle, a fine pore break-up, and the
+    // capillary warmth that keeps flesh from reading as painted plastic
+    let deep = TG.fbm(n, { freq: 3, octaves: 5, seed, type: 'value' });
+    deep = TG.warp2(deep, n, { amp: 0.12, freq: 2, seed: seed + 1 });
+    const pore = TG.worleyField(n, { freq: 46, mode: 'f1', seed: seed + 2, jitter: 1, res: n >> 1 });
+    const fine = TG.fbm(n, { freq: 30, octaves: 3, seed: seed + 3, ppc: 3 });
+    const h = combine(n, [[deep, 0.62], [invField(pore), 0.20], [fine, 0.18]]);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] * 0.34 + 0.42);
+    const cav = TG.cavityMask(h, n, Math.max(2, n * 0.010), 4.5);
+    const edge = TG.edgeMask(h, n, Math.max(1, n * 0.005), 5.0);
+    const v = F(n);
+    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.72 + (deep[i] - 0.5) * 0.30 + fine[i] * 0.10 - cav[i] * 0.26);
+    // temperature: warm across the mass, cool where the form turns away
+    const temp = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 2.2, octaves: 4, seed: seed + 11 }), r, { amp: 0.10, freq: 2, seed: seed + 12 }), n >> 2);
+    const rgb = TG.applyRamp2(v, temp, n, SKIN_WARM, SKIN_COOL);
+    const rough = TG.artisticRoughness(n, {
+      base: 0.62, height: h, cavity: cav, edge, polish: 0.34, dry: 0.08, variation: 0.14,
+      seed: seed + 21, min: 0.30, max: 0.86,
+    });
+    return { rgb, height: h, rough, metal: 0, normalScale: 0.34,
+      paint: { variant: 'character' } };
+  } },
+
+  'characterrig.cloth': { size: MID, build(n, rng, seed) {
+    // A REAL WEAVE, then brushwork over it. The weave alone is a fabric
+    // swatch; what makes a fold swing value the way a painted one does is the
+    // loaded-brush pass laid along a flow field, which is what paintValue's
+    // stroke layer does — so it is turned up hard here.
+    const wv = TG.weave(n, { threads: 52, seed: seed + 1 });
+    const slub = TG.fbm(n, { freq: 7, octaves: 4, seed: seed + 2, type: 'value' });
+    const nap = TG.fbm(n, { freq: 44, octaves: 2, seed: seed + 3, ppc: 3 });
+    const h = combine(n, [[wv, 0.52], [slub, 0.30], [nap, 0.18]]);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] * 0.62 + 0.20);
+    const cav = TG.cavityMask(h, n, Math.max(2, n * 0.009), 6.5);
+    const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 7.0);
+    const v = F(n);
+    for (let i = 0; i < v.length; i++) {
+      v[i] = 0.66 + (slub[i] - 0.5) * 0.42 + (wv[i] - 0.5) * 0.30 - cav[i] * 0.40 + edge[i] * 0.24;
+    }
+    const temp = TG.lowFreq(n, (r) => TG.fbm(r, { freq: 2.6, octaves: 4, seed: seed + 8 }), n >> 2);
+    // HAND-PLACED HIGHLIGHT. highlight 1.2 is deliberately past the value used
+    // on architecture: a garment is the one surface on a character allowed a
+    // scrubbed, obviously-brushed top light.
+    paintValue(v, n, { rng, seed: seed + 9, temp, cavity: cav, cavityAmt: 0.30, edge, edgeAmt: 0.26, flowBase: 0.42, swirl: 2.6, flowFreq: 2.1, highlight: 1.20 });
+    const rgb = TG.applyRamp2(v, temp, n, CLOTH_N, CLOTH_C);
+    const rough = TG.artisticRoughness(n, {
+      base: 0.90, height: h, cavity: cav, edge, polish: 0.10, dry: 0.26, variation: 0.20,
+      seed: seed + 31, min: 0.52, max: 1.0,
+      strokes: { count: Math.round(n * 0.55), flow: TG.flowField(n, { base: 0.40, swirl: 1.5, freq: 3, seed: seed + 32 }), value: [0.08, 0.30], len: [n * 0.05, n * 0.16], width: [1.4, 3.2], rng },
+      strokeAmount: 0.30,
+    });
+    return { rgb, height: h, rough, metal: 0, normalScale: 0.85,
+      paint: { variant: 'character' } };
+  } },
+
+  'characterrig.hair': { size: BASE, build(n, rng, seed) {
+    // strands: a strongly anisotropic ridged noise combed along v, so a lock
+    // reads as a lock and not as a lump
+    const strand = TG.fbm(n, { freq: 3, octaves: 5, seed, type: 'grad' });
+    const comb = F(n);
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const i = y * n + x;
+        const s = Math.sin((x / n) * Math.PI * 2 * 34 + strand[i] * 9.0);
+        comb[i] = clamp01(0.5 + 0.5 * s);
+      }
+    }
+    const h = combine(n, [[comb, 0.62], [strand, 0.38]]);
+    const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 6.0);
+    const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 7.0);
+    const v = F(n);
+    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.58 + (comb[i] - 0.5) * 0.62 - cav[i] * 0.34 + edge[i] * 0.30);
+    const rgb = TG.applyRamp(v, n, HAIR_R);
+    const rough = TG.artisticRoughness(n, { base: 0.50, height: h, cavity: cav, edge, polish: 0.42, variation: 0.16, seed: seed + 5, min: 0.22, max: 0.80 });
+    return { rgb, height: h, rough, metal: 0, normalScale: 0.70, paint: { variant: 'character' } };
+  } },
+
+  // NOT wired to the rig's `metal` slot, deliberately. Routing metal through a
+  // recipe took it out of MaterialLibrary.character(), which is the only path
+  // that gives it envMapIntensity 0.6 — and a metalness-0.94 surface with a
+  // whisper of IBL goes dead. Measured at 3x: the hero lost every gold glint
+  // on the pauldron ridges and the crown, i.e. the character's entire
+  // highlight band (§9.3/§9.5). Metal stays on the painterly character
+  // material until someone can give it a proper prefiltered environment.
+  'armour.bronze': { size: MID, build(n, rng, seed) {
+    // hammered bronze: a planished dimple field, a brushed direction, edge
+    // wear that goes bright and pitting that goes dark. Metal without wear is
+    // the single loudest "this is a shader, not an object" tell.
+    const dimple = TG.worleyField(n, { freq: 15, mode: 'f1', seed: seed + 1, jitter: 0.85, res: n >> 1 });
+    const brush = TG.fbm(n, { freq: 60, octaves: 2, seed: seed + 2, ppc: 3 });
+    const broad = TG.warp2(TG.fbm(n, { freq: 3, octaves: 5, seed: seed + 3 }), n, { amp: 0.09, freq: 2, seed: seed + 4 });
+    const pit = TG.worleyField(n, { freq: 40, mode: 'f1', seed: seed + 5, jitter: 1, res: n >> 1 });
+    const pits = F(n);
+    for (let i = 0; i < pits.length; i++) pits[i] = clamp01((0.13 - pit[i]) * 8.0) * clamp01((broad[i] - 0.52) * 3.2);
+    const h = combine(n, [[invField(dimple), 0.46], [broad, 0.34], [brush, 0.20]]);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] * 0.70 + 0.16 - pits[i] * 0.30);
+    const cav = TG.cavityMask(h, n, Math.max(2, n * 0.009), 6.0);
+    const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 8.0);
+    const v = F(n);
+    for (let i = 0; i < v.length; i++) {
+      v[i] = clamp01(0.48 + (broad[i] - 0.5) * 0.34 + edge[i] * 0.46 - cav[i] * 0.42 - pits[i] * 0.30 + brush[i] * 0.10);
+    }
+    const rgb = TG.applyRamp(v, n, METAL_R);
+    // verdigris creeping out of the crevices — bronze that has been underground
+    const grime = TG.dirtMask(h, n, { seed: seed + 11, cavity: cav, streak: 0.04, streakStrength: 0.6 });
+    TG.tintRGB(rgb, n, powField(grime, 1.7), C255(GOLD.verdigris), 0.34);
+    TG.tintRGB(rgb, n, powField(pits, 1.2), C255('#20120a'), 0.55);
+    const rough = TG.artisticRoughness(n, {
+      base: 0.38, height: h, cavity: cav, edge, polish: 0.62, dry: 0.10, variation: 0.22,
+      seed: seed + 21, min: 0.13, max: 0.78,
+    });
+    const metal = F(n);
+    for (let i = 0; i < metal.length; i++) metal[i] = clamp01(0.94 - pits[i] * 0.5 - grime[i] * 0.30);
+    return { rgb, height: h, rough, metal, normalScale: 0.55,
+      paint: { variant: 'character' } };
+  } },
+
+  // ======================================================================
+  // SHIELD FACE — the brute's tower shield (§7 "untextured programmer art")
+  // ----------------------------------------------------------------------
+  // This surface is authored in SHIELD-FACE SPACE, not as a tiling material:
+  // u,v run 0..1 across the plate, so the ornament is PLACED — a fillet frame
+  // on the rim, a meander band under the top rail, a bead ring around the
+  // umbo, rivets on the quarters — instead of wallpapered. That is §1.5's
+  // ornament hierarchy applied to a prop the eye lands on.
+  //
+  // Everything that reads as ornament is cut into the HEIGHT first and only
+  // then filled with gold, so the arris catches the key and the undercut goes
+  // dark. Ornament painted as light-on-dark line art is the failure this
+  // replaces.
+  // ======================================================================
+  'shield.brute': { size: MID, build(n, rng, seed) {
+    // ---- boiled-leather field over a timber core ------------------------
+    let base = TG.fbm(n, { freq: 4, octaves: 6, seed, type: 'value' });
+    base = TG.warp2(base, n, { amp: 0.10, freq: 3, seed: seed + 3 });
+    // hide grain: stretched worley cells, elongated along the hide's stretch
+    const grainA = TG.worleyField(n, { freq: 13, mode: 'f2f1', seed: seed + 5, jitter: 0.92, res: n >> 1 });
+    const grainB = TG.fbm(n, { freq: 34, octaves: 3, seed: seed + 6, ppc: 3 });
+    // planked backing showing through where the leather is worn thin
+    const planks = TG.woodGrain(n, { rings: 9, stretch: 9, seed: seed + 7 });
+    const wear = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 3.4, octaves: 5, seed: seed + 8 }), r, { amp: 0.09, freq: 2, seed: seed + 9 }), n >> 2);
+
+    // ---- ORNAMENT, placed in face space --------------------------------
+    const orn = F(n);          // gold ornament mask (raised)
+    const cut = F(n);          // engraved channels (sunken)
+    const M = n * 0.055;       // rim inset
+    // (1) a two-rail gold fillet following the whole rim
+    const lw = Math.max(3, n * 0.017);
+    TG.drawLine(orn, n, M, M, n - M, M, lw, 1.0, 1.4);
+    TG.drawLine(orn, n, M, n - M, n - M, n - M, lw, 1.0, 1.4);
+    TG.drawLine(orn, n, M, M, M, n - M, lw, 1.0, 1.4);
+    TG.drawLine(orn, n, n - M, M, n - M, n - M, lw, 1.0, 1.4);
+    // (2) a meander band inset under the top rail and above the foot
+    const band = F(n);
+    TG.meanderBand(band, n, { y: n * 0.145, height: n * 0.115, cells: 4, lineW: Math.max(3, n * 0.016), value: 1, soft: n * 0.0022 });
+    TG.meanderBand(band, n, { y: n * 0.855, height: n * 0.115, cells: 4, lineW: Math.max(3, n * 0.016), value: 1, soft: n * 0.0022 });
+    for (let i = 0; i < orn.length; i++) { cut[i] = band[i]; orn[i] = clamp01(orn[i] + band[i] * 0.85); }
+    // (3) a bead row ringing the umbo — the small proud member that reads as
+    //     ornament at 30 screen pixels when a flat disc reads as nothing
+    const bead = F(n);
+    const BR = n * 0.215, cx = n * 0.5, cy = n * 0.5;
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * Math.PI * 2;
+      TG.drawDisc(bead, n, cx + Math.cos(a) * BR, cy + Math.sin(a) * BR, n * 0.0165, 1, n * 0.010);
+    }
+    TG.drawArc(orn, n, cx, cy, n * 0.255, 0, Math.PI * 2, Math.max(3, n * 0.013), 0.92, 1.4);
+    TG.drawArc(cut, n, cx, cy, n * 0.176, 0, Math.PI * 2, Math.max(3, n * 0.020), 0.85, 1.5);
+    for (let i = 0; i < orn.length; i++) orn[i] = clamp01(orn[i] + bead[i]);
+    // (4) rivets on the quarters
+    const rivet = F(n);
+    for (const [rx, ry] of [[0.155, 0.155], [0.845, 0.155], [0.155, 0.845], [0.845, 0.845], [0.5, 0.075], [0.5, 0.925]]) {
+      TG.drawDisc(rivet, n, rx * n, ry * n, n * 0.020, 1, n * 0.011);
+    }
+    for (let i = 0; i < orn.length; i++) orn[i] = clamp01(orn[i] + rivet[i]);
+
+    // ---- height: leather quilt, then ornament in relief -----------------
+    const h = combine(n, [[base, 0.40], [grainA, 0.26], [grainB, 0.10], [planks, 0.10]]);
+    for (let i = 0; i < h.length; i++) {
+      const w = clamp01((wear[i] - 0.58) * 3.0);
+      h[i] = clamp01(h[i] * (1 - w * 0.35) + 0.10 + orn[i] * 0.30 - cut[i] * 0.26 - rivet[i] * 0.0);
+    }
+    const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 5.5);
+    const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6.5);
+
+    // ---- value + temperature -------------------------------------------
+    const v = F(n);
+    for (let i = 0; i < v.length; i++) {
+      v[i] = 0.30 + (base[i] - 0.5) * 0.46 + grainA[i] * 0.20 + grainB[i] * 0.08
+        - cut[i] * 0.22 + clamp01((wear[i] - 0.62) * 2.8) * 0.22;
+    }
+    const temp = TG.lowFreq(n, (r) => {
+      const t = TG.warp(TG.fbm(r, { freq: 2.4, octaves: 4, seed: seed + 21 }), r, { amp: 0.08, freq: 2, seed: seed + 22 });
+      for (let i = 0; i < t.length; i++) t[i] = clamp01((t[i] - 0.40) * 2.0);
+      return t;
+    }, n >> 2);
+    paintValue(v, n, { rng, seed, temp, cavity: cav, cavityAmt: 0.36, edge, edgeAmt: 0.20, flowBase: 0.16, swirl: 2.3, highlight: 0.85 });
+
+    const rgb = TG.applyRamp2(v, temp, n, 'banner.crimson', 'blood');
+    // the timber core reads through the worn patches — warm dead wood, not grey
+    const worn = F(n);
+    for (let i = 0; i < worn.length; i++) worn[i] = clamp01((wear[i] - 0.58) * 3.0);
+    TG.tintRGB(rgb, n, powField(worn, 1.6), C255('#3a2016'), 0.38);
+    // soot and dried ichor collecting in the quilting and the engraved channels
+    const grime = TG.dirtMask(h, n, { seed: seed + 31, cavity: cav, streak: 0.05, streakStrength: 0.75 });
+    TG.tintRGB(rgb, n, powField(grime, 1.5), C255('#1b0509'), 0.58);
+    TG.tintRGB(rgb, n, powField(cut, 1.2), C255(INK.plum), 0.40);
+    // ---- GOLD INLAY on the raised ornament ------------------------------
+    const inlayV = F(n);
+    for (let i = 0; i < inlayV.length; i++) {
+      inlayV[i] = clamp01(0.36 + (base[i] - 0.5) * 0.28 + edge[i] * 0.34 + orn[i] * 0.16 - cav[i] * 0.52);
+    }
+    TG.compositeRamp(rgb, n, powField(orn, 1.25), inlayV, 'gold', 0.94);
+
+    const rough = TG.artisticRoughness(n, {
+      base: 0.72, height: h, cavity: cav, edge, polish: 0.30, dry: 0.14, variation: 0.16,
+      seed: seed + 41, min: 0.24, max: 0.96,
+      strokes: { count: Math.round(n * 0.40), flow: TG.flowField(n, { base: 0.14, swirl: 0.7, freq: 3, seed: seed + 42 }), value: [0.10, 0.34], len: [n * 0.05, n * 0.14], width: [1.6, 3.6], rng },
+      strokeAmount: 0.24,
+    });
+    const metal = F(n);
+    for (let i = 0; i < metal.length; i++) { metal[i] = clamp01(orn[i] * 1.2); rough[i] = clamp01(rough[i] * (1 - orn[i] * 0.64)); }
+
+    return { rgb, height: h, rough, metal, normalScale: 0.95,
+      paint: { variant: 'character', variation: 0.16, variationTint: '#8c1f2e', specGain: 0.8 } };
+  } },
 
   // ======================================================================
   // TARTARUS — blood-dark carved stone with gold-inlaid meander seams

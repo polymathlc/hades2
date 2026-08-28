@@ -292,7 +292,27 @@ export class Particles {
       lut: bakeRamp(d.ramp || [{ t: 0, c: '#ffffff' }, { t: 1, c: '#ffffff' }],
         bakeCurve(d.alpha || [[0, 1], [0.72, 0.9], [1, 0]])),
       sizeC: bakeCurve(d.size || [[0, 0.35], [0.14, 1], [1, 0.22]]),
-      size0: d.size0 ?? 0.22, size1: d.size1 ?? 0.42,
+      // ── §7 "particles that are obvious round white dots" ───────────────
+      // The old defaults were size0 0.22 / size1 0.42 — a 1.9x band sampled
+      // UNIFORMLY, which in practice means every particle in a spray lands
+      // within a hair of the same on-screen radius. Add a shared alpha curve
+      // with no per-particle variance and the population becomes N copies of
+      // one disc: the frames shipped strings of identical circles that read
+      // as a debug path visualiser, not as air.
+      //
+      // Three independent variates fix it, and they have to be independent or
+      // the population still marches in step:
+      //   sizeSkew  — the band is now 7x wide and sampled through pow(u, k),
+      //               so most particles are small and a few are large. That is
+      //               what a real spray looks like; a uniform band is not.
+      //   aVar      — per-particle opacity multiplier, uniform 1-aVar .. 1,
+      //               so brightness varies BETWEEN particles and not only
+      //               along one shared life curve.
+      //   coreVar   — per-particle hot-core boost, decorrelated from both.
+      size0: d.size0 ?? 0.05, size1: d.size1 ?? 0.34,
+      sizeSkew: d.sizeSkew ?? 2.1,
+      aVar: d.aVar ?? 0.72,
+      coreVar: d.coreVar ?? 0.85,
       life0: (d.life && d.life[0]) ?? 0.35, life1: (d.life && d.life[1]) ?? 0.6,
       spd0: (d.speed && d.speed[0]) ?? 2, spd1: (d.speed && d.speed[1]) ?? 5,
       emit: d.emit || 'sphere',
@@ -401,15 +421,26 @@ export class Particles {
         const l = Math.hypot(vxx, vyy, vzz) || 1; vxx /= l; vyy /= l; vzz /= l;
       }
 
-      const spd = (o.speed ?? 1) * rng.range(D.spd0, D.spd1);
+      // SPEED: the def's band, widened by a skewed jitter. A band alone leaves
+      // the population travelling as a shell; a long tail is what lets a few
+      // particles outrun the rest and break the arriving-in-lockstep read.
+      const spd = (o.speed ?? 1) * rng.range(D.spd0, D.spd1) * (0.55 + 1.05 * rng.f() * rng.f());
       this.px[i] = sx + px; this.py[i] = sy + py; this.pz[i] = sz + pz;
       this.vx[i] = vxx * spd + (o.vx || 0); this.vy[i] = vyy * spd + (o.vy || 0); this.vz[i] = vzz * spd + (o.vz || 0);
       this.age[i] = sub * (1 - f);              // sub-frame back-integration
       this.life[i] = rng.range(D.life0, D.life1) * (o.lifeMul ?? 1);
       this.rot[i] = rng.range(0, Math.PI * 2);
       this.rotV[i] = rng.range(D.rot0, D.rot1);
-      this.sizeJ[i] = rng.range(D.size0, D.size1) * (o.size ?? 1);
+      // SKEWED size draw (see define()): pow() pushes the mass of the
+      // population toward size0 and leaves a thin tail of big ones, so a spray
+      // has a silhouette instead of a cadence.
+      const su = rng.f();
+      this.sizeJ[i] = (D.size0 + (D.size1 - D.size0) * (su <= 0 ? 0 : Math.pow(su, D.sizeSkew))) * (o.size ?? 1);
       this.seed[i] = rng.f();
+      // life jitter ON TOP of the def's own [life0,life1] band: two particles
+      // born on the same frame must not die on the same frame, or the whole
+      // spray blinks out together and the eye reads a scripted sequence.
+      this.life[i] *= 0.72 + rng.f() * 0.56;
       this.tr[i] = tr; this.tg[i] = tg; this.tb[i] = tb;
       // advance by the sub-frame age so a fast emitter streaks
       if (this.age[i] > 0) {
@@ -462,10 +493,19 @@ export class Particles {
       const r = (lut[o] + (lut[o2] - lut[o]) * f) * this.tr[i];
       const g = (lut[o + 1] + (lut[o2 + 1] - lut[o + 1]) * f) * this.tg[i];
       const b = (lut[o + 2] + (lut[o2 + 2] - lut[o + 2]) * f) * this.tb[i];
-      const al = (lut[o + 3] + (lut[o2 + 3] - lut[o + 3]) * f) * D.opacity;
+      // PER-PARTICLE BRIGHTNESS. `lut` is one alpha curve shared by the whole
+      // definition, so without this every live particle of an emitter sits at
+      // exactly the same opacity for its age — the thing that made a spray
+      // read as a row of stamped circles. seed is uniform [0,1); a second,
+      // decorrelated variate is pulled out of it by a golden-ratio rotation
+      // so size, alpha and core never move together.
+      const sd = this.seed[i];
+      const sd2 = (sd * 1.6180339887 + 0.5) % 1;
+      const al = (lut[o + 3] + (lut[o2 + 3] - lut[o + 3]) * f) * D.opacity
+        * ((1 - D.aVar) + D.aVar * sd);
       if (al <= 0.004) continue;
       const size = this.sizeJ[i] * sampleCurve(D.sizeC, u);
-      const core = D.core * (1 - u * 0.75);
+      const core = D.core * (1 - u * 0.75) * (1 - D.coreVar * 0.5 + D.coreVar * sd2);
       const tgt = D.additive ? A : B;
       tgt.push(this.px[i], this.py[i], this.pz[i],
         this.vx[i], this.vy[i], this.vz[i], D.stretch,
