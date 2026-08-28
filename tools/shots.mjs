@@ -26,9 +26,20 @@ catch(e){ const t = await pg.evaluate(()=>document.body.innerText.slice(0,2000))
   console.log(JSON.stringify({fatal:'capture driver never became ready', body:t, errors},null,1)); await pg.screenshot({path:path.join(OUT,'00_FATAL.png')}); await b.close(); process.exit(2); }
 
 const report = { shots:[], errors:[], perf:null };
+let dirtyState = false;
 for(const s of list.shots){
   if(ONLY && !ONLY.includes(s.id)) continue;
   const pose = list.poses[s.pose];
+  // STATE LEAK: capture.state() sets up a scenario and nothing ever tears it down, so a modal
+  // opened for 10_boons persisted into 11_relief_detail — the one shot written to prove the
+  // carved-relief work captured a UI overlay instead, and the two shipped as near-duplicates.
+  // A critic caught this, not the harness. Reload between shots so every scenario starts clean.
+  if (dirtyState) {
+    await pg.goto(URL_BASE+'?capture=1&seed=1337', { waitUntil:'load', timeout:120000 });
+    await pg.waitForFunction('window.__EREBUS_READY===true', { timeout:120000 });
+    dirtyState = false;
+  }
+  if (s.state) dirtyState = true;
   try{
     const dataUrl = await pg.evaluate(async ({s,pose})=>{
       const c = window.EREBUS.capture;
