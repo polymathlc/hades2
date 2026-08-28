@@ -257,11 +257,11 @@ const RIGS = {
       // that says "underworld chamber", no longer the subject of the picture.
       // `distance` comes down with them so the pool stays a POOL and does not
       // creep further across the floor as it dims.
-      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 90,  distance: 9.0, speed: 1.00 },
-      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 90,  distance: 9.0, speed: 0.83 },
+      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 1.00 },
+      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 0.83 },
       { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 1.21 },
       { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 0.72 },
-      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 90,  distance: 9.0, speed: 0.94 },
+      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 0.94 },
       // COOL #5fd0ff washes on the perimeter masonry, the column capitals and
       // the gate. §9.4 needs the mid/background architecture to sit a full value
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
@@ -391,8 +391,8 @@ const RIGS = {
       // plane remains outside the volume by construction.
       { theta: 138, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#8fd8ff', intensity: 2350, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.29, flicker: 0.08 },
       { theta: 174, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ff9e60', intensity: 2550, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.47, flicker: 0.13 },
-      { theta: 210, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffbe86', intensity: 3450, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.36, flicker: 0.11 },
-      { theta: 246, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffb070', intensity: 3450, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.61, flicker: 0.11 },
+      { theta: 210, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffbe86', intensity: 1850, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.36, flicker: 0.11 },
+      { theta: 246, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffb070', intensity: 1850, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.61, flicker: 0.11 },
       { theta: 282, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#7ad8ff', intensity: 3050, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.41, flicker: 0.09 },
       { theta: 320, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffa668', intensity: 1860, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.53, flicker: 0.12 },
     ],
