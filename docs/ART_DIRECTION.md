@@ -326,3 +326,39 @@ the pattern matters more than any individual bug:
 or by reasoning about what the number physically represents. This is why §10 exists, and why the
 critic panel that judges with its eyes is the gate — the metrics only catch gross failures on the
 way there.
+
+---
+
+## 14. Metric scoreboard, updated after the critic panel
+
+Three more metrics were caught lying, two of them by the agent that had just been told to satisfy
+them. Running total: **ten**.
+
+| # | Metric | Claimed to measure | Actually measured | Caught by |
+|---|---|---|---|---|
+| 6 | `tiling.strength` (again) | floor repetition | the ornament medallion's spoke ring | a critic opening the PNG |
+| 7 | `shotKind` | shot classification | classified a modal-occluded frame as "inspection" by filename | a critic opening the PNG |
+| 8 | `groundLuma`/`groundVsFrame` | the value law | passed a frame whose hero was invisible at 1/16 greyscale — the floor was never the hero's competition | a critic measuring the hero against the braziers |
+| 9 | `groundVsFrame` | floor vs frame | on a wide shot, ~45% of the frame is void, so the ratio measures the void | the light agent |
+| 10 | `bands.highlight` | the frame reaches bright | could not distinguish a paint layer from a fog layer — the §7-banned bloom halo was *paying for* the highlight band, so removing the ban scored as a regression | the light agent |
+
+### The lesson, restated
+
+`bands.highlight` is the sharpest case. A metric written to police §9.3 was actively **rewarding a
+§7 hard ban**, because a wide bloom halo and a tight specular hit look identical to a histogram.
+Killing the ban made the number worse. The agent removed the ban anyway, replaced the highlight
+honestly with a specular lobe on gold, and reported the metric as the bug.
+
+That is the behaviour this project needs. **A metric can only ever falsify, never certify.**
+
+### The subject test (supersedes the ground test for composition)
+
+The ground-plane laws in §9 are necessary but not sufficient, and they passed a frame with no
+findable subject. The real test is the one a critic used:
+
+> Downsample the gameplay frame to ~128px and desaturate it. **Can you find the hero instantly?**
+> If not, the frame has failed, whatever the numbers say.
+
+Measure it as the hero's median luma against the brightest large background element. Before the fix
+that ratio was **0.50 : 1** — the props behind the player were twice as bright as the player. After,
+**2.44 : 1**.
