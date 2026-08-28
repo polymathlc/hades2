@@ -20,7 +20,8 @@
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
     "playwright": "^1.62.1",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vite-plugin-singlefile": "^2.3.3"
   },
   "main": "desktop/main.cjs",
   "build": {
