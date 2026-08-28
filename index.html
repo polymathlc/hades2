@@ -5,9 +5,17 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
 <title>EREBUS — Descent</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Ctext y=%2726%27 font-size=%2726%27%3E%F0%9F%94%B1%3C/text%3E%3C/svg%3E"/>
-<link rel="stylesheet" href="/src/ui/style.css"/>
+<link rel="stylesheet" href="./src/ui/style.css"/>
 </head>
 <body>
-<script type="module" src="/src/main.js"></script>
+<script>
+// GitHub Pages serves this source tree directly; the self-contained build is
+// the supported web entry there. Vite development and production builds still
+// use the live module graph.
+if (location.hostname.endsWith('.github.io')) {
+  location.replace(new URL('./standalone/play.html', location.href).href);
+}
+</script>
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>

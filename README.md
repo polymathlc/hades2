@@ -3,8 +3,10 @@
 An isometric 3/4 rogue-lite action game in Three.js, in the Hades genre: chamber-to-chamber runs,
 god boons, four distinct weapons, a painterly Greek-underworld art direction.
 
-**Everything is procedural.** No external art, audio, model or font files — every texture, mesh,
-animation and sound is generated in code at runtime. ~40k lines.
+The game uses a **hybrid painterly material pipeline**: four image-generated albedo atlases provide
+authored colour and brushwork for every named surface, while code generates the matching normals,
+roughness, metalness, ambient occlusion, emissive masks, anti-tiling projection, meshes, animation,
+and sound at runtime. No downloaded stock textures, models, audio, or fonts. ~40k lines.
 
 ---
 
@@ -69,7 +71,8 @@ authored as data in `src/entities/weapons.js`.
 ## What's in it
 
 - Fixed-timestep engine with hit-stop and slow-mo, seeded RNG, twin-stick + gamepad input
-- Procedural painterly PBR: brush-stroke layers, domain warping, palette ramps, worker-pool baked
+- Hybrid painterly PBR: image-generated albedo atlases, procedural PBR support maps, brush-stroke
+  layers, domain warping, palette ramps, worker-pool baked
 - HDR pipeline: Beer–Lambert haze, multi-mip Karis bloom, god rays, per-biome grade, SMAA
 - Ornate architecture with real carved relief — chamfered profiles, baked contact occlusion that
   survives instancing

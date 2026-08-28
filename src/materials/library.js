@@ -39,6 +39,7 @@ import {
   RECIPES, bakeSet, resolveRecipe, BASE,
 } from './recipes.js';
 import { BakePool } from './bakepool.js';
+import { loadGeneratedAlbedos } from './generated-textures.js';
 
 const clamp01 = TG.clamp01;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
@@ -72,6 +73,7 @@ export class MaterialLibrary {
     this.cache = new Map();       // materialKey -> THREE.Material
     this.texCache = new Map();    // texKey -> THREE.Texture
     this.setCache = new Map();    // name|size -> texture set
+    this.generatedMaps = new Map(); // recipe key -> image-generated albedo
     this.animated = [];
     // ms  = the time boot actually WAITED (wall)
     // cpu = the summed synthesis cost across every thread that did the work
@@ -101,11 +103,15 @@ export class MaterialLibrary {
     // whatever the pool cannot deliver falls through to the sync path in set().
     const t0 = now();
     this._pool = new BakePool(8);
+    // Decode the authored albedo atlases while the worker pool synthesises PBR
+    // support maps. Neither job needs to wait on the other.
+    const generated = this._loadGeneratedAlbedos();
     const baking = this.prebuild(this._bootSets());   // dispatches synchronously
     // the shared world-projected layers, painted here while the pool works
     this.detailTexture = this._detail();
     this.macroTexture = this._macro();
-    await baking;
+    await Promise.all([baking, generated]);
+    this._applyGeneratedAlbedos();
     this.stats.wallMs = now() - t0;
     this.stats.workers = this._pool.available ? this._pool.size : 0;
     const w = this.stats.workers || 1;
@@ -113,11 +119,36 @@ export class MaterialLibrary {
       + ` — boot waited ${this.stats.wallMs.toFixed(0)}ms`
       + ` for ${this.stats.cpu.toFixed(0)}ms of synthesis on ${w} worker${w > 1 ? 's' : ''}`
       + ` (${(this.stats.cpu / Math.max(1, this.stats.wallMs)).toFixed(2)}x parallel)`
-      + `, texScale ${this.scale}`);
+      + `, texScale ${this.scale}, ${this.generatedMaps.size} generated albedo bindings`);
     // Anything that took the synchronous path is a surface nobody predicted:
     // it blocked the main thread. If this list is ever long, add the names to
     // BIOME_SETS / SHARED_SETS above rather than making the recipe cheaper.
     if (this.stats.sync.length) console.info('[mats] sync bakes:', this.stats.sync.join(', '));
+  }
+
+  async _loadGeneratedAlbedos() {
+    try {
+      const renderer = this.ctx && this.ctx.renderer;
+      const max = renderer && renderer.capabilities && renderer.capabilities.getMaxAnisotropy
+        ? renderer.capabilities.getMaxAnisotropy() : 8;
+      this.generatedMaps = await loadGeneratedAlbedos(Math.min(16, Math.max(1, max)));
+      this._applyGeneratedAlbedos();
+    } catch (error) {
+      // Procedural albedo remains a complete fallback for offline/file builds,
+      // constrained browsers, and corrupt asset caches.
+      this.generatedMaps = new Map();
+      console.warn('[mats] generated albedo atlases unavailable; using procedural colour', error);
+    }
+  }
+
+  _applyGeneratedAlbedos() {
+    if (!this.generatedMaps.size) return;
+    for (const set of this.setCache.values()) {
+      const generated = this.generatedMaps.get(set.name);
+      if (!generated || generated === set.map) continue;
+      if (set.map) set.map.dispose();
+      set.map = generated;
+    }
   }
 
   /** The recipe names this biome's first chamber will ask for. */
@@ -158,9 +189,10 @@ export class MaterialLibrary {
   _install(b) {
     const n = b.size, key = b.name;
     if (b.error) console.warn('[mats] recipe failed:', key, b.error);
+    const generated = this.generatedMaps.get(key);
     const set = {
       name: key, size: n,
-      map: TG.byteTexture(b.map, n, { anisotropy: 16, srgb: true }),
+      map: generated || TG.byteTexture(b.map, n, { anisotropy: 16, srgb: true }),
       normalMap: TG.byteTexture(b.normalMap, n, { anisotropy: 16 }),
       ormMap: TG.byteTexture(b.ormMap, n, { anisotropy: 16 }),
       emissiveMap: b.emissiveMap ? TG.byteTexture(b.emissiveMap, n, { anisotropy: 4, srgb: true }) : null,
@@ -642,13 +674,17 @@ export class MaterialLibrary {
 
   dispose() {
     for (const m of this.cache.values()) m.dispose();
+    const disposed = new Set();
     for (const s of this.setCache.values()) {
-      if (s.map) s.map.dispose();
+      if (s.map && !disposed.has(s.map)) { s.map.dispose(); disposed.add(s.map); }
       if (s.normalMap) s.normalMap.dispose();
       if (s.ormMap) s.ormMap.dispose();
       if (s.emissiveMap) s.emissiveMap.dispose();
     }
-    this.cache.clear(); this.texCache.clear(); this.setCache.clear(); this.animated.length = 0;
+    for (const t of this.generatedMaps.values()) {
+      if (!disposed.has(t)) { t.dispose(); disposed.add(t); }
+    }
+    this.cache.clear(); this.texCache.clear(); this.setCache.clear(); this.generatedMaps.clear(); this.animated.length = 0;
   }
 }
 
