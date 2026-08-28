@@ -114,37 +114,43 @@
       "id": "01_arena_wide",
       "pose": "wide",
       "steps": 2.0,
-      "note": "Overall composition, value structure, void framing"
+      "note": "Overall composition, value structure, void framing",
+      "state": "play"
     },
     {
       "id": "02_gameplay",
       "pose": "gameplay",
       "steps": 2.0,
-      "note": "The actual play framing \u2014 the money shot"
+      "note": "The actual play framing \u2014 the money shot",
+      "state": "play"
     },
     {
       "id": "03_hero_char",
       "pose": "hero",
       "steps": 2.0,
-      "note": "Character rendering, rim light, silhouette"
+      "note": "Character rendering, rim light, silhouette",
+      "state": "play"
     },
     {
       "id": "04_material",
       "pose": "detail",
       "steps": 2.0,
-      "note": "Texture quality at close range \u2014 painterly test"
+      "note": "Texture quality at close range \u2014 painterly test",
+      "state": "play"
     },
     {
       "id": "05_floor",
       "pose": "floor",
       "steps": 2.0,
-      "note": "Floor material + tiling test, framed against the arena rim and the void beyond (\u00a71.8)"
+      "note": "Floor material + tiling test, framed against the arena rim and the void beyond (\u00a71.8)",
+      "state": "play"
     },
     {
       "id": "06_architecture",
       "pose": "arch",
       "steps": 2.0,
-      "note": "Ornate architecture, filigree, depth bands"
+      "note": "Ornate architecture, filigree, depth bands",
+      "state": "play"
     },
     {
       "id": "07_combat",
@@ -178,7 +184,8 @@
       "id": "11_relief_detail",
       "pose": "relief",
       "steps": 2.0,
-      "note": "ORNAMENT RELIEF TEST (inspection framing) - the jamb fret, the wall astragal and the cornice at inspection range. A bead must read as a rounded bead and a meander as a cut channel with a lit arris and a dark undercut, not as light-on-dark line-art. Named '..._detail' so tools/analyze.mjs classifies it as an inspection shot: its subject is a wall two metres from camera, so the ground-plane law (which assumes a composition framing) does not apply to it."
+      "note": "ORNAMENT RELIEF TEST (inspection framing) - the jamb fret, the wall astragal and the cornice at inspection range. A bead must read as a rounded bead and a meander as a cut channel with a lit arris and a dark undercut, not as light-on-dark line-art. Named '..._detail' so tools/analyze.mjs classifies it as an inspection shot: its subject is a wall two metres from camera, so the ground-plane law (which assumes a composition framing) does not apply to it.",
+      "state": "play"
     }
   ]
 }

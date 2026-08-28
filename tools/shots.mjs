@@ -44,7 +44,7 @@ for(const s of list.shots){
     const dataUrl = await pg.evaluate(async ({s,pose})=>{
       const c = window.EREBUS.capture;
       c.seed(1337);
-      if(s.state) c.state(s.state);
+      c.state(s.state || 'play');   // always explicit; a missing state must never carry forward
       c.step(s.steps ?? 1.0);
       c.pose(pose);
       c.render();
