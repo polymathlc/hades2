@@ -234,9 +234,9 @@ export const RAMPS = {
   // the player called out. Real stone varies in VALUE and only slightly in hue. This is now the
   // same stone quarried cooler and duller, staying in the plum/taupe family the warm ramp lives in.
   'floor.tartarus.cool': [
-    S(0.00, '#090610'), S(0.20, '#130c17'), S(0.42, '#1d141d'),
-    S(0.62, '#2a1d25'), S(0.80, '#3a2a30'), S(0.93, '#4a373b'),
-    S(1.00, '#584447'),
+    S(0.00, '#0c0812'), S(0.20, '#1a1020'), S(0.42, '#2b1a2c'),
+    S(0.62, '#3f273a'), S(0.80, '#563748'), S(0.93, '#6d4856'),
+    S(1.00, '#835a64'),
   ],
   // VALUE, NOT JUST HUE. The old ramp centred near #210e18 — about 1% linear
   // reflectance. No light rig can pull a 1%-albedo floor up to the 0.34-0.42
@@ -254,9 +254,9 @@ export const RAMPS = {
   // Warmer and slightly richer: a stone that owns a red-brown identity reads as stone under any
   // light, where a near-neutral plum just becomes whatever colour is shining on it.
   'floor.tartarus': [
-    S(0.00, '#0d0710'), S(0.18, '#1b0e15'), S(0.38, '#2b151c'),
-    S(0.58, '#3e1f26'), S(0.76, '#552b31'), S(0.90, '#6b3a3c'),
-    S(0.97, '#7d4747'), S(1.00, '#8d5654'),
+    S(0.00, '#12080f'), S(0.18, '#23101a'), S(0.38, '#391a24'),
+    S(0.58, '#54262e'), S(0.76, '#743439'), S(0.90, '#93453f'),
+    S(0.97, '#ac5745'), S(1.00, '#c06b4e'),
   ],
 
   // The column shafts are a DIFFERENT stone from the wall: quarried paler, less

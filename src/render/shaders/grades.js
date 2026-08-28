@@ -53,7 +53,7 @@ export const GRADES = {
     // number in postfx.js `uExposure: { value: 1.06 }` is only an initialiser;
     // _syncUniforms overwrites it from THIS field every frame, so this is the
     // real exposure knob for Tartarus.
-    exposure: 1.36,
+    exposure: 1.62,
     agxSlope: [1.06, 1.0, 0.96],
     agxPower: [1.16, 1.18, 1.24],
     // §2 asks for crimson stone and molten gold; the close-ups measured
