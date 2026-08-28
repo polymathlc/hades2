@@ -9,7 +9,6 @@ import { CameraRig } from './entities/camera.js';
 import { Player } from './entities/player.js';
 import { CombatSystem } from './entities/combat.js';
 import { EnemyManager } from './entities/enemies/index.js';
-import { Spawner } from './entities/spawner.js';
 import { VFX } from './vfx/index.js';
 import { UI } from './ui/index.js';
 import { Audio } from './audio/index.js';
@@ -38,9 +37,10 @@ async function boot(){
   const combat   = engine.add(new CombatSystem(), 'combat');
   const player   = engine.add(new Player(), 'player');
   const enemies  = engine.add(new EnemyManager(), 'enemies');
-  // The encounter director. run.js calls ctx.spawner.beginRoom() behind a presence guard,
-  // so leaving it unregistered silently produced an empty arena — a walking simulator.
-  const spawner  = engine.add(new Spawner(), 'spawner');
+  // NOTE: the Spawner is deliberately NOT registered here. EnemyManager.init() constructs it,
+  // calls init(ctx, this) with the manager, publishes ctx.spawner and ticks it from its own
+  // update. Registering a second one here created a duplicate that raced the real encounter
+  // director and double-spawned every wave.
   const camRig   = engine.add(new CameraRig(), 'cameraRig');
   const vfx      = engine.add(new VFX(), 'vfx');
   const ui       = engine.add(new UI(), 'ui');
