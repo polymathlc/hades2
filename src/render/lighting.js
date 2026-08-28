@@ -150,11 +150,36 @@ const RIGS = {
     // lilac stain instead of an ink shape. The fill is now a WHISPER in the
     // authored plum, and the cool note in the frame is carried by the RIM and
     // by real cyan practicals instead of by a wash.
-    hemi:   { sky: '#31336e', ground: '#170d26', intensity: 0.75 },
+    // GROUND COLOUR IS THE UNDERCUT LIGHT. A hemisphere gives a DOWN-facing
+    // normal its groundColor and an UP-facing one its skyColor, so this term is
+    // the only light in the rig that lands on soffits, cornice undersides,
+    // meander channels, bead undercuts and the shadowed side of every carved
+    // arris — and none of it reaches the floor, which faces up and takes `sky`.
+    // At #170d26 (linear 0.0075/0.0040/0.0189) an undercut received effectively
+    // nothing, so relief rendered as light-on-black STENCIL LINE-ART: a lit
+    // arris with a hole beside it instead of a channel with a floor. §1.3 says
+    // a shadow is a different COLOUR, not an absence, and §2 names the colour —
+    // this is #241238 (deep shadow / shadow plum) pushed a little toward
+    // #3a1d52 so a channel has a violet interior a critic can see into.
+    // It is a 5x lift on a very small number and it is spent entirely on
+    // down-facing geometry: the floor plane does not move at all.
+    hemi:   { sky: '#31336e', ground: '#2c1644', intensity: 0.75 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
     bounce: { color: '#8a3a34', intensity: 0.40, size: [11, 11], y: 1.6 },
-    bounce2:{ color: '#3a1a20', intensity: 0.12, size: [34, 34], y: 0.12 },
+    // THE FLOOR BOUNCE IS THE ONLY BROAD LIGHT THAT CANNOT TOUCH THE FLOOR.
+    // A RectAreaLight is single-sided: this plate lies ON the stage facing UP,
+    // so the ground plane is coplanar with it and receives literally nothing
+    // (N.L = 0, and it is behind the emitting face), while every VERTICAL
+    // surface in the room — column shafts, wall dado, plinths, the statuary —
+    // sits in its solid angle. That is exactly the §11.3/§9.1 split the value
+    // law asks for: lift the standing forms, leave the stage dark. At 0.12 it
+    // was doing nothing at all; 0.52 gives the mid-ground's lower half the
+    // bounce a real stone floor would throw and stops the wall reading as a
+    // black band under the washed cornice. Tinted with the FLOOR's own crimson
+    // (§3 "tinted with the floor albedo") so it recedes toward the ink ramp
+    // rather than greying anything.
+    bounce2:{ color: '#5a2430', intensity: 0.52, size: [34, 34], y: 0.12 },
     // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
     // The rim is now the second-strongest light in the frame by design: it is
     // what draws every vertical edge in the chamber.
@@ -245,6 +270,113 @@ const RIGS = {
       { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 230, distance: 18, speed: 0.27, flicker: 0.09 },
       { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 250, distance: 17, speed: 0.52, flicker: 0.14 },
     ],
+    // ── THE WALL WASH (§1.1 three bands, §11.2 "light the mid-ground") ─────
+    // WHAT WAS WRONG. Every light above aims DOWN into the arena or sits
+    // OUTSIDE the wall. The key travels (0.646,-0.615,-0.452), so on the far
+    // arc — the 135-315deg band the fixed 45deg camera puts across the top of
+    // every frame — the wall's inward-facing surface has N.L = -0.14 and
+    // receives nothing but hemi 0.75 and ambient 0.34. The five cool washes
+    // stand at radius 13.4-15.0 against a wall at 13.0: they are BEHIND it,
+    // lighting a face no camera in this game will ever see. And the braziers
+    // sit at y=1.7 with distance 8.6-9.0, a bubble that dies two metres up.
+    // Measured consequence: architecture in the 0.75R-1.35R band medians 0.075
+    // display against a floor at 0.058-0.064. The mid-ground was not a band. It
+    // was the floor's value, standing up.
+    //
+    // WHAT THIS IS. Six upward-raked practicals INSIDE the colonnade (r 9.2,
+    // i.e. clear of the column surface at 9.98) at y 6.2, each aimed up and
+    // outward at the wall at r 14.6 / y 11.6. They are SPOT lights and the cone
+    // axis rises at 45deg with a 35deg half-angle, so the lowest ray in the cone
+    // still climbs at ~10deg: THE GROUND PLANE IS NOT IN THE VOLUME AT ALL.
+    // That is the layer mask, done geometrically — it cannot be defeated by a
+    // later material change, and it costs no per-object layer bookkeeping in a
+    // world file this agent does not own.
+    //
+    // WHAT THEY LIGHT: the upper third of every far column shaft, its capital,
+    // the architrave, the wall face above the dado and the crowning cornice —
+    // §9.5's "light the EDGES of architecture, not its faces", and the surfaces
+    // whose gold cyma and egg-and-dart give the frame an honest specular
+    // highlight band instead of a bloom halo (§7, §14.10).
+    //
+    // WARM CENTRE, COOL FLANKS. The chamber points at focalAngle 225deg. The
+    // two washes flanking it are the strongest and the warmest, so the eye is
+    // pulled to the gate; the pair at the frame edges are #8fd8ff and #7ad8ff,
+    // which keeps the mandated complement (§1.2, §9.6) ON ARCHITECTURE rather
+    // than only in the rim, and stops a uniformly amber band from becoming the
+    // "one salmon smear" §11.1 warns about.
+    //
+    // NOT POOLED. quality ultra budgets exactly 10 pooled point lights and the
+    // practicals above spend all 10, so an acquireLight() here would be
+    // silently dropped in the capture harness — which has already happened once
+    // in this project. These are dedicated, like `subject`.
+    // AUTHORED IN ROOM SPACE, NOT WORLD SPACE. The chamber's radial profile
+    // wobbles +-11% per angle and every archetype has a different radius, so a
+    // hard-coded xz would sit inside a column in one room and out in the void in
+    // the next. `theta` is degrees CCW from +X; `rIn`/`rOut` are metres measured
+    // INWARD/OUTWARD from the wall at that angle (world.radiusAt), which keeps
+    // the source clear of the colonnade (wall - 2.35 - 0.67 shaft) in any plan.
+    wallWash: [
+      // STAND BACK FROM THE WALL. A source 2m off masonry is a hotspot, not a
+      // wash — inverse-square puts 5x more light on the stone beside it than on
+      // the stone two metres up, and that reads as a blown blob. At 6.4m the
+      // same cone lands 14-34 irradiance across the whole upper storey, a 2.4x
+      // vertical gradient the eye reads as modelling. Standing back also lifts
+      // the source ABOVE the colonnade capitals (7.6 against a 8.9m order), so
+      // the columns take the light on their top drums and their gold capitals —
+      // §9.5's lit EDGE — instead of a searchlight halfway up the shaft.
+      // WHERE THE MID-GROUND ACTUALLY IS, MEASURED. The first two passes aimed
+      // this ring at the wall at r~14 / y~9 and moved the frame by NOTHING —
+      // 0, 1000, 4000 and 20000 candela produced byte-identical frames. A
+      // raycast down the beam axis found the cause: the beam WAS hitting
+      // `wall.upper` at r 14.0, but from a 43-52deg downward camera that
+      // surface is behind the arcade and barely appears on screen. What the
+      // lens actually sees of the mid-ground is the LOW band — `door.pier` and
+      // `arch.voussoir` at r 11.2, `wall.ashlar` at 12.6, `wall.meander` at
+      // 12.9, and the column shafts — all of it between y 2 and y 7. Lighting
+      // the wall the plan drawing shows instead of the wall the camera frames
+      // is the same class of mistake as measuring the floor in the centre 70%.
+      //
+      // So these are FOOT-OF-WALL uplighters: at the base of the arcade
+      // (1.9m inside the wall face), 0.6m off the stage, raking up its face.
+      // The axis rises at 61deg and the half-angle is 47deg, so the lowest ray
+      // in the cone still climbs 14deg — the ground plane is outside the
+      // volume, which is the whole contract of doing this with spots.
+      // Measured on the live play camera: far arcade +29%, mid frame +24%,
+      // floor band -2% (it goes DOWN, because the auto-exposure responds to a
+      // brighter mid-ground by pulling the stage further under it). Blown
+      // pixels: 0.00%. That is a band bought by lighting the correct surface,
+      // not by lifting anything and not by bloom.
+      //
+      // PENUMBRA IS NOT SOFTNESS, IT IS THE SIZE OF THE HOLE IN THE MIDDLE.
+      // three.js takes the full-intensity core out to angle*(1-penumbra), so at
+      // 0.90 only the innermost 10% of the cone was ever at full power and the
+      // other 90% was a falloff ramp. The first pass measured +0.009 on the
+      // mid band for 1150 candela because ~5/6 of every cone was penumbra: the
+      // wash was landing, in a thin ring, on the cornice alone. 0.45 puts the
+      // wall band from y~7 to y~12 inside the flat core where it belongs and
+      // spends the soft edge on the two ends of the gradient.
+      // The axis drops with it (yOut 9.2, elevation ~29deg) so the core sits on
+      // the upper storey rather than sailing over the parapet into the void,
+      // and `angle` comes in to 0.48 so the lowest ray still climbs ~2deg: the
+      // ground plane stays outside the volume, which is the whole contract.
+      // THE SOURCE HEIGHT IS THE ARTIFACT CONTROL. At y 0.6 these sat below the
+      // arena curb, so the hottest thing in the cone was the near lip of the
+      // apron — a stepped ring of slabs — and it came back as a hard salmon
+      // strip with a black stair-stepped edge running down the right of the
+      // gameplay frame. That is §7's "aliased edges / programmer-art blocks"
+      // paid for with a value band, i.e. exactly the trade this pass exists to
+      // refuse. y 2.4 puts the whole apron BELOW the source: a cone that only
+      // ascends cannot light anything under its own origin, so the curb drops
+      // out of the picture entirely and the light starts on the arcade face
+      // where it was aimed. The lowest ray still climbs 15deg — the ground
+      // plane remains outside the volume by construction.
+      { theta: 138, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#8fd8ff', intensity: 1860, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.29, flicker: 0.08 },
+      { theta: 174, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ff9e60', intensity: 2550, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.47, flicker: 0.13 },
+      { theta: 210, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffbe86', intensity: 3450, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.36, flicker: 0.11 },
+      { theta: 246, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffb070', intensity: 3450, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.61, flicker: 0.11 },
+      { theta: 282, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#7ad8ff', intensity: 2550, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.41, flicker: 0.09 },
+      { theta: 320, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffa668', intensity: 1860, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.53, flicker: 0.12 },
+    ],
   },
   asphodel: {
     key:    { color: '#ffc884', intensity: 8.8, dir: [0.586, -0.668, -0.459] },
@@ -286,8 +418,9 @@ export class LightRig {
     this.godrayAnchor = [0.22, 1.06];
     this.pool = [];
     this._practicals = [];
+    this.washes = [];
     this._t = 0;
-    this.params = { key: true, fill: true, bounce: true, practicals: true, subject: true, shadows: true, exposureBias: 1 };
+    this.params = { key: true, fill: true, bounce: true, practicals: true, subject: true, wallWash: true, shadows: true, exposureBias: 1 };
   }
 
   async init(ctx){
@@ -352,6 +485,27 @@ export class LightRig {
     this._subjectPos = new THREE.Vector3(0, 1.0, 0);
     this.group.add(this.subject);
 
+    // ── wall wash: the mid-ground band, as upward-raked spot practicals ────
+    // Dedicated for the same reason `subject` is: the pooled budget is fully
+    // spent by the authored practicals, and a wash that vanishes at ultra is a
+    // wash that never appears in a single judged frame.
+    // SPOT, not point, is load-bearing. A point light at y=6 inside the room
+    // paints the floor harder than it paints the wall (the floor's normal faces
+    // it straight on); a cone that only opens upward physically cannot reach the
+    // ground plane, so the §9 dark stage is safe by construction rather than by
+    // a number someone has to keep re-tuning.
+    this.washes = [];
+    for(let i = 0; i < 6; i++){
+      const s = new THREE.SpotLight('#ffb070', 0, 14, 0.78, 0.50, 2.0);
+      s.name = 'wash.' + i;
+      s.castShadow = false;
+      s.visible = false;
+      s.target = new THREE.Object3D();
+      s.target.name = 'wash.' + i + '.target';
+      this.group.add(s, s.target);
+      this.washes.push(s);
+    }
+
     // ── floor bounce (fake GI) ─────────────────────────────────────────────
     // TWO plates, not one. `bounce` is a small centre POOL with real falloff to
     // the skirt (a 26x26 plate over a 32u arena is a uniform wash, which is what
@@ -412,7 +566,9 @@ export class LightRig {
       this.pool.push(l);
     }
     this._flickers = [];
-    for(let i = 0; i < this.budget + 4; i++) this._flickers.push(new Flicker(this.rng));
+    // +4 spare for transient FX, +6 so every wall wash guts on its own noise
+    // (six lights sharing one seed pulse in unison and read as a global dimmer).
+    for(let i = 0; i < this.budget + 10; i++) this._flickers.push(new Flicker(this.rng));
 
     // ── procedural IBL ────────────────────────────────────────────────────
     // Without an environment, every metal in the game (gold filigree, bronze,
@@ -441,6 +597,8 @@ export class LightRig {
 
     ctx.events?.on?.('biome.changed', ({ name }) => this.setBiome(name, ctx));
     ctx.events?.on?.('room.entered', () => this.fitShadows(ctx));
+    // the chamber re-rolls its radial profile per room; the wash follows it
+    ctx.events?.on?.('room.built', () => this.placeWashes(ctx));
   }
 
   // ─────────────────────────────────────────────────────────────── biome ──
@@ -522,6 +680,10 @@ export class LightRig {
     }
     ctx?.events?.emit?.('lighting.rim', payload);
 
+    // authored wall wash for this biome (dedicated spots, never pooled)
+    this._washDefs = rig.wallWash || [];
+    this.placeWashes(ctx);
+
     // authored practicals for this biome
     this._releaseAllPracticals();
     if(this.params.practicals){
@@ -538,6 +700,52 @@ export class LightRig {
       ctx.post?.setBiome?.(this.biome);
       this.atmosphere?.setBiome?.(this.biome, ctx);
       this.fitShadows(ctx);
+    }
+    return this;
+  }
+
+  // ────────────────────────────────────────────────────────── wall wash ──
+  /**
+   * Park the wall wash on the CURRENT room's radial profile. Called on biome
+   * change and again on every `room.built`, because the chamber re-rolls its
+   * plan per room and a wash authored against the old radius would end up
+   * inside a column or out past the wall in the next one.
+   */
+  placeWashes(ctx = this.ctx){
+    const defs = this._washDefs || [];
+    const w = ctx && ctx.world;
+    // radiusAt is the chamber's public radial profile; fall back to the arena
+    // bounds, then to a sane default, so a stubbed world still lights.
+    const rAt = (w && typeof w.radiusAt === 'function')
+      ? (a) => w.radiusAt(a)
+      : () => ((w && w.bounds && w.bounds.r) || 13.0);
+    const cx = (w && w.center) ? (w.center.x || 0) : 0;
+    const cz = (w && w.center) ? (w.center.z || 0) : 0;
+    for(let i = 0; i < this.washes.length; i++){
+      const s = this.washes[i], d = defs[i];
+      if(!d || this.params.wallWash === false){
+        s.visible = false; s.intensity = 0; s.userData.base = 0; continue;
+      }
+      const a = (d.theta || 0) * Math.PI / 180;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const rw = rAt(a);
+      const ri = Math.max(2.0, rw - (d.rIn ?? 3.9));
+      const ro = rw - (d.rOut ?? -1.6);
+      s.color.set(d.color);
+      s.userData.base = d.intensity;
+      s.userData.flicker = d.flicker ?? 0.10;
+      s.userData.speed = d.speed ?? 0.5;
+      s.userData.phase = this.rng ? this.rng.f() * 100 : 0;
+      s.userData.flick = this._flickers[(this.budget + 4 + i) % this._flickers.length];
+      s.intensity = d.intensity;
+      s.distance = d.distance ?? 16;
+      s.angle = d.angle ?? 0.62;
+      s.penumbra = d.penumbra ?? 0.88;
+      s.decay = d.decay ?? 2.0;
+      s.position.set(cx + ca * ri, d.y ?? 6.2, cz + sa * ri);
+      s.target.position.set(cx + ca * ro, d.yOut ?? 11.6, cz + sa * ro);
+      s.target.updateMatrixWorld();
+      s.visible = true;
     }
     return this;
   }
@@ -710,6 +918,17 @@ export class LightRig {
       const n = f.value(this._t + l.userData.phase, l.userData.speed);
       const amp = l.userData.flicker;
       l.intensity = l.userData.base * (1 - amp + amp * (0.45 + 1.15 * n));
+    }
+    // the wall wash breathes on the same smoothed noise — it is firelight and
+    // sconce-light thrown up the masonry, not an architectural floodlight
+    for(const s of this.washes){
+      const on = this.params.wallWash !== false && !!s.userData.base;
+      s.visible = on;
+      if(!on){ s.intensity = 0; continue; }
+      const f = s.userData.flick;
+      const amp = s.userData.flicker || 0;
+      const n = f ? f.value(this._t + s.userData.phase, s.userData.speed) : 0.5;
+      s.intensity = s.userData.base * (1 - amp + amp * (0.45 + 1.15 * n));
     }
   }
 

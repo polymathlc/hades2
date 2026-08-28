@@ -123,6 +123,189 @@ const combine = (n, parts) => {
   return out;
 };
 
+const _ss = (a, b, x) => { const t = clamp01((x - a) / (b - a + 1e-9)); return t * t * (3 - 2 * t); };
+
+/**
+ * IRREGULAR FLAGSTONE BOND — the floor's whole reason for existing.
+ *
+ * WHY THIS EXISTS INSTEAD OF TG.tileGrid.
+ * tileGrid lays a perfectly regular lattice: every course the same height,
+ * every stone the same width, every joint dead straight and dead parallel. On
+ * a floor that is the single loudest periodic signal a frame can carry, and the
+ * project's answer to it had been to make the plate so large that a stone came
+ * out 2.6m x 3.6m — i.e. to beat §7's tiling ban by making the stones too big
+ * to read as stones. That trades away the most recognisable Supergiant
+ * signature there is. §10 exactly: do not satisfy a rule by removing the thing
+ * the rule exists to protect.
+ *
+ * A mason does not defeat repetition with scale, and neither does a painter.
+ * They defeat it with IRREGULARITY, and that is what this generates:
+ *   - courses of unequal height, each with its own stone count and its own
+ *     phase, so no vertical joint is ever continuous across two courses;
+ *   - stones of unequal width inside a course (0.72x .. 1.42x of nominal);
+ *   - a small per-stone ROTATION (up to ~2.6 deg), so no joint is collinear
+ *     with its neighbour and the bed reads as laid by hand rather than milled;
+ *   - a per-stone INSET, so the joint width itself varies;
+ *   - a per-stone RISE, so stones sit proud and sunk and the bed has relief;
+ *   - BROKEN STONES: a sixth of the bed is split in two along its long axis,
+ *     and a minority of the pieces are pale REPLACEMENTS, laid later;
+ *   - a signed ARRIS field: the chamfer that faces the light is a hand-placed
+ *     highlight, the chamfer that faces away is a dark channel with the ink
+ *     ramp's colour in it. That is a carved edge; a single dark line is not.
+ *
+ * Everything wraps: courses tile in Y, the per-course phase is applied to the
+ * sampling coordinate rather than to the edge table, and every stone rectangle
+ * is inset far enough that its rotated corners stay inside its own cell.
+ *
+ * Returns { height, id, seam, lobe, arris, rise } — a superset of tileGrid's
+ * contract, so the recipe below reads the same fields it always did.
+ */
+function flagBond(n, o = {}) {
+  const rng = o.rng || TG.makeRng(9091);
+  const courses = Math.max(2, Math.round(o.courses ?? 10));
+  const perCourse = Math.max(2, Math.round(o.perCourse ?? 9));
+  const jointPx = (o.joint ?? 0.0035) * n;        // half the mortar gap, in texels
+  const bevelPx = (o.bevel ?? 0.0075) * n;        // the chamfer band, in texels
+  const rotMax = o.rot ?? 0.046;                  // radians, ~2.6 deg
+  const brokenFrac = o.broken ?? 0.17;
+  const replaceFrac = o.replace ?? 0.11;
+  // light direction for the hand-placed arris highlight, in texture space
+  const LDX = o.lightX ?? 0.52, LDY = o.lightY ?? -0.85;
+  const LDL = Math.hypot(LDX, LDY), LX = LDX / LDL, LY = LDY / LDL;
+
+  // ---- course table (wraps in Y) ----------------------------------------
+  const cw = [];
+  for (let r = 0; r < courses; r++) cw.push(0.80 + rng() * 0.44);
+  const ctot = cw.reduce((a, b) => a + b, 0);
+  const cEdge = new Float32Array(courses + 1);
+  for (let r = 0; r < courses; r++) cEdge[r + 1] = cEdge[r] + cw[r] / ctot;
+  cEdge[courses] = 1;
+
+  // ---- per-course stone table (wraps in X via the phase) ----------------
+  const rows = [];
+  for (let r = 0; r < courses; r++) {
+    const c = Math.max(2, perCourse + (rng() < 0.5 ? 0 : (rng() < 0.5 ? -1 : 1)));
+    const w = [];
+    for (let i = 0; i < c; i++) w.push(0.75 + rng() * 0.55);
+    const tot = w.reduce((a, b) => a + b, 0);
+    const e = new Float32Array(c + 1);
+    for (let i = 0; i < c; i++) e[i + 1] = e[i] + w[i] / tot;
+    e[c] = 1;
+    const tone = new Float32Array(c), rot = new Float32Array(c);
+    const inX = new Float32Array(c), inY = new Float32Array(c);
+    const rise = new Float32Array(c), brk = new Float32Array(c), brkAt = new Float32Array(c);
+    for (let i = 0; i < c; i++) {
+      // Per-stone VALUE. Hades' flagstones swing a full value step from one
+      // stone to the next; a gentle per-tile tint was the old defence against
+      // making the BOND legible, and with an irregular bond there is no bond
+      // pitch left to make legible, so the swing can finally be honest.
+      tone[i] = rng() < replaceFrac ? 0.80 + rng() * 0.20 : rng() * 0.86;
+      rot[i] = (rng() * 2 - 1) * rotMax;
+      inX[i] = rng() * jointPx * 0.9;
+      inY[i] = rng() * jointPx * 0.9;
+      rise[i] = (rng() * 2 - 1);
+      brk[i] = rng() < brokenFrac ? 1 : 0;
+      brkAt[i] = 0.36 + rng() * 0.28;
+    }
+    rows.push({ c, e, phase: rng(), tone, rot, inX, inY, rise, brk, brkAt });
+  }
+
+  // ---- chiselled joint wobble (already tileable) ------------------------
+  const wr = Math.max(64, n >> 2);
+  const wob = TG.resample(TG.fbm(wr, { freq: 7, octaves: 4, seed: 5150, type: 'grad' }), wr, n);
+  const wobA = (o.wobble ?? 0.006) * n;
+
+  const height = new Float32Array(n * n);
+  const id = new Float32Array(n * n);
+  const seam = new Float32Array(n * n);
+  const lobe = new Float32Array(n * n);
+  const arris = new Float32Array(n * n);
+  const rise = new Float32Array(n * n);
+  // the MORTAR GAP alone, with the chamfer excluded. seam covers gap+chamfer,
+  // which is what the height field wants; the ink wants only the gap, or the
+  // tint lands on the lit arris and the carved edge collapses back into a line.
+  const joint = new Float32Array(n * n);
+
+  for (let y = 0; y < n; y++) {
+    const yw = ((y + 53) % n) * n;
+    for (let x = 0; x < n; x++) {
+      const i = y * n + x;
+      const wx = x + (wob[i] - 0.5) * 2 * wobA;
+      const wy = y + (wob[yw + ((x + 17) % n)] - 0.5) * 2 * wobA;
+      let v = wy / n; v -= Math.floor(v);
+      let r = 0; while (r < courses - 1 && v >= cEdge[r + 1]) r++;
+      const R = rows[r];
+      const y0 = cEdge[r], y1 = cEdge[r + 1];
+      const chPx = (y1 - y0) * n;
+      let fy = (v - y0) / (y1 - y0);
+
+      let u = wx / n + R.phase; u -= Math.floor(u);
+      let c = 0; while (c < R.c - 1 && u >= R.e[c + 1]) c++;
+      const u0 = R.e[c], u1 = R.e[c + 1];
+      let fx = (u - u0) / (u1 - u0);
+      let pieceW = (u1 - u0) * n, pieceH = chPx;
+      let toneV = R.tone[c], riseV = R.rise[c], rotV = R.rot[c];
+      let inX = R.inX[c], inY = R.inY[c];
+      let axis = R.tone[c] * 6.2831853;
+
+      // BROKEN STONE: split along its long axis; the two pieces then drift
+      // apart in tone, tilt and rise, because a cracked flag is never re-laid
+      // flush. A sixth of the bed is broken and a ninth of what is left is a
+      // pale REPLACEMENT stone laid later — the two cues that stop a paved
+      // floor reading as wallpaper.
+      if (R.brk[c] > 0) {
+        const at = R.brkAt[c];
+        let sub = 0;
+        if (pieceW >= pieceH) {
+          if (fx < at) { pieceW *= at; fx /= at; }
+          else { pieceW *= (1 - at); fx = (fx - at) / (1 - at); sub = 1; }
+        } else if (fy < at) { pieceH *= at; fy /= at; }
+        else { pieceH *= (1 - at); fy = (fy - at) / (1 - at); sub = 1; }
+        const kh = (((c * 2654435761 + r * 40503 + sub * 668265263) >>> 0) / 4294967296);
+        toneV = clamp01(toneV + (kh - 0.5) * 0.44);
+        rotV += (kh - 0.5) * rotMax * 1.7;
+        riseV = riseV * 0.6 + (kh - 0.5) * 1.3;
+        inX += kh * jointPx * 0.55;
+        axis += kh * 3.1;
+      }
+
+      const halfW = pieceW * 0.5, halfH = pieceH * 0.5;
+      const px = (fx - 0.5) * pieceW;
+      const py = (fy - 0.5) * pieceH;
+      const ca = Math.cos(rotV), sa = Math.sin(rotV);
+      const rx = px * ca + py * sa;
+      const ry = -px * sa + py * ca;
+      // inset far enough that the rotated corners never leave the cell, so the
+      // whole bed still wraps
+      const pad = jointPx + Math.abs(sa) * (halfW + halfH) * 0.5;
+      const shw = Math.max(1, halfW - pad - inX);
+      const shh = Math.max(1, halfH - pad - inY);
+      const dX = shw - Math.abs(rx), dY = shh - Math.abs(ry);
+      const d = dX < dY ? dX : dY;
+
+      const m = d <= 0 ? 1 : 1 - _ss(0, bevelPx, d);
+      seam[i] = m;
+      joint[i] = d <= 0 ? 1 : 1 - _ss(0, bevelPx * 0.30, d);
+      height[i] = (1 - m) * (1 + riseV * 0.13);
+      id[i] = toneV;
+      rise[i] = riseV;
+      // the stone's OWN light/shade axis — a loaded stroke laid across it, with
+      // a different direction on the stone next to it (§1.4 painted texture)
+      lobe[i] = (fx - 0.5) * Math.cos(axis) + (fy - 0.5) * Math.sin(axis);
+      // signed chamfer: + where the bevel faces the light (a hand-placed
+      // highlight on the arris), - where it faces away (a channel that gets the
+      // ink ramp's COLOUR, never absence)
+      if (d > 0) {
+        let nx, ny;
+        if (dX < dY) { nx = rx < 0 ? -1 : 1; ny = 0; } else { nx = 0; ny = ry < 0 ? -1 : 1; }
+        const tx = nx * ca - ny * sa, ty = nx * sa + ny * ca;
+        arris[i] = m * (tx * LX + ty * LY);
+      }
+    }
+  }
+  return { height, id, seam, joint, lobe, arris, rise };
+}
+
 /**
  * The standard painterly value pass. This is where a noise field stops looking
  * like noise: crevice darkening, edge wear, two crossing glaze layers painted
@@ -607,7 +790,14 @@ const RECIPES = {
     const metal = F(n);
     for (let i = 0; i < metal.length; i++) { metal[i] = clamp01(orn[i] * 1.15); rough[i] = clamp01(rough[i] * (1 - orn[i] * 0.62)); }
 
-    return { rgb, height: h, rough, metal, normalScale: 0.75,
+    return { rgb, height: h, rough, metal, normalScale: 0.75, aoFloor: 0.34,
+      // THE UNDERCUT GETS THE INK RAMP, NOT ABSENCE (§2 shadow plum #241238).
+      // A flat, unconditional 0.05-display floor in the ramp's own violet. It is
+      // two full stops under the bloom gate and invisible on any lit face — but
+      // where a carved channel receives no light at all it is the difference
+      // between a dark interior and a black line drawn on stone, which is the
+      // whole difference between carving and stencil line-art.
+      params: { emissive: 0x241238, emissiveIntensity: 0.18 },
       paint: { triplanar: true, triScale: 0.165, macroStrength: 0.34, macroScale: 0.0135, macroTint: '#6b4a58', variation: 0.30, variationTint: TARTARUS.stoneLight } };
   } },
 
@@ -671,13 +861,25 @@ const RECIPES = {
         variation: 0.42, variationTint: TARTARUS.stoneLight } };
   } },
 
-  // The single largest surface in the game gets the largest plate: at 1024 with
-  // an 11x8 bond, one texture period is 28.6 world metres, so the ~30m of floor
-  // a play-camera frame can see never contains two full periods and no two
-  // flagstones in the visible arena are the same flagstone. That is the actual
-  // cure for §7's tiling ban; a de-tiler is a patch over too small a plate.
+  // THE FLAGSTONE READ (round-3). The plate used to carry an 11x8 regular bond
+  // over a 28.6m period, i.e. a single "flagstone" 2.6m x 3.6m. That is not a
+  // flagstone; it is a slab the size of a car, and the review was right that it
+  // had beaten §7's tiling ban by making the stones too large to be stones.
+  //
+  // The bond is now IRREGULAR (see flagBond above) and the plate carries 16
+  // courses of ~15 stones. Projected at the chamber's triScale of 0.056 — a
+  // 17.9m period, deliberately close to the period the tiling metric was
+  // already tuned at — a course is 1.12m and a stone is 0.9-1.5m across, which
+  // is a stone a person could have laid. What defeats the repeat is no longer
+  // scale: it is unequal courses, unequal stones, per-stone rotation, per-stone
+  // value, broken and replaced flags, and a macro multiply whose period is four
+  // times the plate's.
   'floor.tartarus': { size: 1024, build(n, rng, seed) {
-    const T = TG.tileGrid(n, { cols: 11, rows: 8, pattern: 'offset', gap: 0.0030, bevel: 0.012, rng, wobble: 0.030 });
+    const T = flagBond(n, {
+      rng, courses: 16, perCourse: 15,
+      joint: 0.0012, bevel: 0.0032, rot: 0.030, wobble: 0.0045,
+      broken: 0.17, replace: 0.11,
+    });
     // FULL resolution, deliberately. Everywhere else the warped fBm is a broad
     // glaze and half resolution is free; here it is the low-frequency value
     // drift that decorrelates one course of stones from the next, and it is the
@@ -693,7 +895,10 @@ const RECIPES = {
     for (let i = 0; i < fissure.length; i++) fissure[i] = rawCrack[i] * clamp01((crackWhere[i] - 0.72) * 4.2);
 
     const h = combine(n, [[T.height, 0.40], [base, 0.30], [grit, 0.08]]);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.12 - fissure[i] * 0.34);
+    // per-stone RISE: flags that sit proud and flags that have settled. Without
+    // it a bed of chamfered stones is still one perfectly flat plane with lines
+    // scored in it, and the normal map has nothing to model.
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.12 + T.rise[i] * 0.045 - fissure[i] * 0.34);
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6);
 
@@ -720,11 +925,21 @@ const RECIPES = {
       // a strong gradient inside every stone makes the BOND pitch the loudest
       // periodic signal in the frame. 0.14 keeps the hand-laid read and puts
       // the repeat back under the 0.62 it started at.
-      v[i] = 0.30 + T.id[i] * 0.22 + T.lobe[i] * 0.22 + (base[i] - 0.5) * 0.60 + grit[i] * 0.05;
+      // §14's lesson applied in the other direction. Per-stone tone used to be
+      // held DOWN to 0.22 because on a regular lattice a strong per-tile tone
+      // makes the BOND the loudest periodic signal in the frame. There is no
+      // bond pitch left to amplify, so the swing can finally be what Jen Zee
+      // paints: a full value step from one stone to the next, plus the stone's
+      // own light/shade axis across it, plus the chamfer that catches the light
+      // on one side of every stone and drops into a channel on the other.
+      v[i] = 0.28 + T.id[i] * 0.32 + T.lobe[i] * 0.24 + (base[i] - 0.5) * 0.52 + grit[i] * 0.05
+           + T.arris[i] * 0.30;
     }
     // and the lit side of each stone is also the WARM side — colour variation
     // within the material, not a uniform tint over noise
-    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] + T.lobe[i] * 0.30 + (T.id[i] - 0.5) * 0.34);
+    // the lit chamfer is also the WARM one, the shaded chamfer the cool one:
+    // colour separation across a 3cm arris is what makes carved stone read
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] + T.lobe[i] * 0.30 + (T.id[i] - 0.5) * 0.34 + T.arris[i] * 0.26);
     // A floor is seen at a grazing angle across a whole screen: any high-frequency
     // value noise turns into shimmering mottle once bloom gets hold of it. Broad
     // glazes stay, the hatching goes quiet.
@@ -741,7 +956,15 @@ const RECIPES = {
     // The seam ink used to be a hard #07060f at 0.86 over a 0.0065 gap. Once the
     // plate was scaled up for the play camera those joints became finger-wide
     // black bands and the floor read as crazy paving rather than as laid stone.
-    TG.tintRGB(rgb, n, powField(T.seam, 1.30), C255(INK.deep), 0.62);
+    // THE JOINT IS A CHANNEL, NOT A LINE. Ink only the actual mortar gap — the
+    // chamfer either side of it has just been painted light on one edge and
+    // dark on the other, and tinting across the whole seam mask (gap AND
+    // chamfer, which is what T.seam covers) is exactly the move that turns a
+    // carved edge back into stencil line-art. And the gap gets the ink ramp's
+    // COLOUR: plum first, deep second, so the deepest point of a joint sits at
+    // §2's #241238/#120b1e and never at absolute zero.
+    TG.tintRGB(rgb, n, powField(T.joint, 1.15), C255(INK.plum), 0.58);
+    TG.tintRGB(rgb, n, powField(T.joint, 2.20), C255(INK.deep), 0.42);
     TG.tintRGB(rgb, n, powField(fissure, 1.2), C255('#180610'), 0.55);
     // spilled ichor pooling in the seams
     const stain = warpLo(n, { freq: 3, octaves: 5, seed: seed + 61 }, { amp: 0.12, freq: 2, seed: seed + 62 });
@@ -795,7 +1018,12 @@ const RECIPES = {
       // (see painterly.js paintStochFrame), so every course stays square to the
       // world and the bed still reads as laid masonry — what the per-cell
       // OFFSET kills is neighbouring patches agreeing on where the joints are.
-      paint: { projection: 'planarY', triScale: 0.035, stochastic: 0.85,
+      // 0.056 = a 17.9m period. With 16 courses that is a 1.12m course and a
+      // 0.9-1.5m stone — a flagstone, not a slab. The period is deliberately
+      // held near the 20m the tiling metric was last tuned at: the stone size
+      // came from the bond count, NOT from shrinking the plate, so nothing that
+      // was already passing had to be traded away to get the read back.
+      paint: { projection: 'planarY', triScale: 0.056, stochastic: 0.85,
         // §9.1 THE FLOOR IS A DARK STAGE. This is the single most important
         // number in the frame: it is how much of the light rig the ground plane
         // is allowed to keep. A 100%-up-facing plane collects more key AND more
@@ -812,7 +1040,11 @@ const RECIPES = {
         // at two incommensurate scales puts a low-frequency value drift across
         // whole groups of stones, which is what decorrelates the row the
         // analyzer samples.
-        macroStrength: 0.15, macroScale: 0.0125, macroTint: '#4a2c38',
+        // the macro layer now has real work to do: at a 17.9m period the arena
+        // holds ~1.6 plates, so a low-frequency VALUE drift across whole groups
+        // of stones (80m, 283m and 5.8m components, none commensurate with the
+        // plate) is what stops the second plate reading as the first one again.
+        macroStrength: 0.30, macroScale: 0.0125, macroTint: '#4a2c38',
         // belt AND braces with the ground-plane veto in painterly.js: a floor is
         // never a silhouette, so it never carries the art-directed rim
         rimStrength: 0.10,
@@ -1091,7 +1323,7 @@ const RECIPES = {
       rough[i] = clamp01(rough[i] * (1 - g) + 0.17 * g + panel[i] * 0.06);
     }
     return { rgb, height: h, rough, metal, normalScale: 1.05,
-      params: { envMapIntensity: 0.45 },
+      params: { envMapIntensity: 0.45, emissive: 0x241238, emissiveIntensity: 0.18 },
       paint: {
         variant: 'character', triplanar: false,
         rimColor: '#5fd0ff', rimStrength: 1.0, rimPower: 1.4,
@@ -1205,7 +1437,7 @@ const RECIPES = {
       rough[i] = clamp01(rough[i] * (1 - g) + (0.18 + 0.16 * clamp01(base[i])) * g);
     }
     return { rgb, height: h, rough, metal, normalScale: 0.85,
-      params: { envMapIntensity: 0.55 },
+      params: { envMapIntensity: 0.55, emissive: 0x241238, emissiveIntensity: 0.18 },
       paint: { triplanar: false, macroStrength: 0.14, macroTint: '#7a4f58', rimStrength: 0.55 } };
   } },
 
@@ -1483,7 +1715,7 @@ const RECIPES = {
       }
     }
     return { rgb, height: h, rough, metal, normalScale: 1.5, emissive, emissiveIntensity: 0.50,
-      params: { envMapIntensity: 0.75 },
+      params: { envMapIntensity: 0.75, emissive: 0x1a0f2c, emissiveIntensity: 0.16 },
       paint: { triplanar: false, macroStrength: 0.28, macroTint: GOLD.mid, rimStrength: 0.55 } };
   } },
 
@@ -1833,7 +2065,14 @@ export function bakeSet(key, n) {
     m = fallbackMaps(n, key);
     m.__error = (e && e.message) || String(e);
   }
-  const ao = m.ao || TG.aoFromHeight(m.height, n, { strength: m.aoStrength ?? 1, floor: 0.20 });
+  // AO FLOOR. At 0.20 the deepest point of every carved channel kept a fifth of
+  // an ambient term that the rig had already clamped, i.e. essentially nothing,
+  // and the review's verdict on the relief pass followed directly: "relief
+  // renders as stencil line-art" — the undercut beside a chamfered arris was not
+  // a dark INTERIOR, it was absence. An ambient-occlusion map is an ARTISTIC map
+  // (§1.4), not a physical one; its job is to make a recess read as a recess,
+  // and a recess still has colour in it.
+  const ao = m.ao || TG.aoFromHeight(m.height, n, { strength: m.aoStrength ?? 1, floor: m.aoFloor ?? 0.28 });
   let rough = m.rough;
   if (m.height && rough && m.toksvig !== false) {
     try { rough = toksvig(rough, m.height, n, m.normalScale ?? 1); }

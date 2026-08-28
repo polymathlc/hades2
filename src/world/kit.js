@@ -2226,7 +2226,7 @@ export class Kit {
     const g = new THREE.Group();
     g.name = 'censer';
     const metal = this.mat('metal');
-    const geo = this.geo(`censer:${R.toFixed(2)}:${drop.toFixed(2)}`, () => {
+    const geo = this.geo(`censer:${R.toFixed(2)}`, () => {
       const p = new Parts();
       // bowl with a pierced lid
       p.add(lathe([
@@ -2236,28 +2236,42 @@ export class Kit {
         [R * 0.94, R * 0.72], [R * 0.80, R * 0.92], [R * 0.50, R * 1.10], [R * 0.20, R * 1.20],
         [R * 0.14, R * 1.32], [R * 0.22, R * 1.40], [R * 0.08, R * 1.52],
       ], 18));
-      // ---- SUSPENSION -----------------------------------------------------
-      // A CONTINUOUS ROD, not a row of separate torus links. Nine links strung
-      // over a 7m drop put one 10cm bead every 80cm, and the shipped frames
-      // carried three perfectly straight, evenly spaced DOTTED LINES across the
-      // composition — the single most eye-catching thing in four of ten review
-      // frames, and read (correctly) as a debug path or a broken emitter.
-      // A chain at play distance is a LINE. It is drawn as one: a tapered tube
-      // sampled every ~14cm whose radius alternates, so the beading is a
-      // modulation of a continuous silhouette instead of a gap in it.
+      return p.merge();
+    });
+    // ---- SUSPENSION, AS ITS OWN MESH --------------------------------------
+    // §7 AA BAN. chain() below has cast:false with a comment explaining exactly
+    // why — a link is smaller than a shadow texel at chamber scale and resolves
+    // as a hard aliased staircase on whatever it falls across. The censer's
+    // three rods had the same problem and never got the same treatment, because
+    // they were MERGED INTO THE BOWL'S GEOMETRY: one mesh, one castShadow flag,
+    // and the caller could only choose between a bowl that casts no shadow and
+    // rods that do.
+    // The rendered evidence: in 11_relief_detail the arena censer's rods threw a
+    // 16px-wide, PURE BLACK (0,1,1), stair-stepped diagonal ~460px long straight
+    // across the focal Cerberus. The depth buffer is flat across the whole band,
+    // which is the proof it is a cast shadow and not a thin primitive — the
+    // shadow map is resolving a 5cm rod into 1-2 texels and stamping the result
+    // on the subject. Splitting the mesh is the whole fix: the bowl still casts
+    // (it is a metre across and its shadow is real), the rods never do.
+    // The rod radius also comes up off the floor: at the shot list's narrowest
+    // lens a metre subtends 1569/d px, so ~4cm is the smallest radius that can
+    // still resolve at the far framings.
+    const susp = this.geo(`censer.susp:${R.toFixed(2)}:${drop.toFixed(2)}`, () => {
+      const p = new Parts();
       const NL = Math.max(6, Math.round(drop / 0.14));
       for (let i = 0; i < 3; i++) {
         const a = (i / 3) * TAU;
         const links = catenary(
           new THREE.Vector3(Math.cos(a) * R * 0.94, R * 0.72, Math.sin(a) * R * 0.72),
           new THREE.Vector3(0, drop, 0), 0.10, NL);
-        const rad = links.map((_, k) => R * (k % 2 ? 0.052 : 0.030));
-        p.add(taperedTube(links, rad, 5));
+        const rad = links.map((_, k) => Math.max(0.040, R * (k % 2 ? 0.062 : 0.042)));
+        p.add(taperedTube(links, rad, 6));
       }
       p.add(new THREE.TorusGeometry(R * 0.16, R * 0.045, 6, 14), { p: [0, drop, 0], r: [Math.PI / 2, 0, 0] });
       return p.merge();
     });
     g.add(this._mesh(geo, metal, 'censer'));
+    g.add(this._mesh(susp, metal, 'censer.susp', false, false));
     g.userData.flame = new THREE.Vector3(0, R * 0.5, 0);
     return g;
   }

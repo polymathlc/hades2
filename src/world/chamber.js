@@ -726,7 +726,15 @@ export class World {
       // still ~1.8m plates, and the macro layer is pushed hard enough to put
       // a low-frequency value drift across whole GROUPS of stones, which is
       // what actually decorrelates the joint lattice the metric samples.
-      triScale: 0.050, macroStrength: 0.34,
+      // ROUND-3. 0.050 was a 20m period over an 11x8 bond: plates 1.8m x 2.5m,
+      // i.e. still too big to read as a laid stone, which is what the review
+      // called the most damaging finding in the build. The plate now carries a
+      // 16-course IRREGULAR bond (materials/recipes.js flagBond), so the SAME
+      // projection scale yields a 1.12m course and a 0.9-1.5m stone. 0.056
+      // trims the period to 17.9m to bring the stone size onto the mark; the
+      // repeat is answered by the bond's irregularity and the macro drift, not
+      // by hiding the stones.
+      triScale: 0.056, macroStrength: 0.38,
       rimStrength: 0.06,
     });
     const floor = new THREE.Mesh(this._keep(radialFloor(this.profile, 26, shade, { seg: 144 })), floorMat);
@@ -753,7 +761,11 @@ export class World {
     // Off-axis, but only just: far enough that the player is not standing in
     // the dead centre of a target, close enough that the emblem is still the
     // arena's centrepiece and the middle of the room is not empty.
-    const medOff = new THREE.Vector2(Math.cos(G.focalAngle) * R * 0.115, Math.sin(G.focalAngle) * R * 0.115);
+    // ROUND-3: 0.115R put the emblem's centre essentially under the hero's
+    // default mark, so the burst was a halo AROUND the character. 0.21R clears
+    // it — the emblem is still the centrepiece of the room, but the hero now
+    // stands BESIDE it and reads against plain stone.
+    const medOff = new THREE.Vector2(Math.cos(G.focalAngle) * R * 0.21, Math.sin(G.focalAngle) * R * 0.21);
     const medProfile = new Float32Array(NA);
     const mph = f() * TAU;
     for (let i = 0; i < NA; i++) {
@@ -1006,15 +1018,35 @@ export class World {
          [br * 0.98, 0.11], [br * 0.72, 0.17], [br * 0.36, 0.22], [br * 0.14, 0.24], [0.02, 0.25]]
           .map(([r2, y2]) => [r2, y2 * MEDR * 0.17]), 30));
       const rayGeo = kit.geo(`floor.rays:${MEDR.toFixed(2)}`, () => {
+        // §9.2, COMPOSITION NOT PHOTOMETRY. Fourteen equal rays around a
+        // CLOSED torus is a sunburst, and a sunburst sits behind the hero's
+        // default mark as a bigger, more regular, higher-contrast shape than
+        // the hero himself — a squinted thumbnail finds the ring first every
+        // time. Photometric fixes (dimming it) do not help, because what the
+        // eye locks onto is the SHAPE: a complete bright annulus reads as a
+        // halo around whatever stands in it.
+        // So the ring is BROKEN and the burst is made irregular. Three arcs
+        // with real gaps, rays of three different lengths with two of them
+        // missing entirely, and the whole burst turned off-axis so it never
+        // frames the character concentrically. It still reads as ruined gold
+        // ornament at the middle of the room; it no longer reads as a target.
         const p = new Parts();
         const RN = 14;
         for (let i = 0; i < RN; i++) {
-          const a = (i / RN) * TAU;
-          const L = br * (i % 2 ? 1.35 : 0.95);
+          if (i === 3 || i === 4 || i === 10) continue;       // gaps in the burst
+          const a = (i / RN) * TAU + 0.21;
+          const L = br * (i % 3 === 0 ? 1.30 : i % 3 === 1 ? 0.86 : 1.06);
           p.add(new THREE.BoxGeometry(L, MEDR * 0.022, br * 0.155),
             { p: [Math.cos(a) * (br * 1.30 + L * 0.5), MEDR * 0.012, Math.sin(a) * (br * 1.30 + L * 0.5)], r: [0, -a, 0] });
         }
-        p.add(new THREE.TorusGeometry(br * 1.30, MEDR * 0.020, 6, 40), { p: [0, MEDR * 0.014, 0], r: [Math.PI / 2, 0, 0] });
+        // a broken rail, not a closed ring: three arcs of unequal span
+        const arcs = [[0.10, 1.62], [1.95, 2.35], [3.55, 2.05]];
+        for (const [a0, span] of arcs) {
+          // Euler XYZ applies Z first, so the Z term rotates the arc's START
+          // within the torus's own plane before it is laid flat by the X term.
+          p.add(new THREE.TorusGeometry(br * 1.30, MEDR * 0.020, 6, 26, span),
+            { p: [0, MEDR * 0.014, 0], r: [Math.PI / 2, 0, a0] });
+        }
         return p.merge();
       });
       const dome = new THREE.Mesh(domeGeo, this._M(B.mats.metal, {
@@ -1033,7 +1065,9 @@ export class World {
       // matching the character's own top values (measured p95 0.737 vs 0.701) —
       // the one piece of floor ornament allowed to compete with the subject.
       // Set down so the ground plane's specular hit stays a hit, not a rival.
-      const rays = new THREE.Mesh(rayGeo, this._M(B.mats.leaf, { emissiveIntensity: 0.0, specGain: 1.05, litGain: 0.60 }));
+      // and set down again: with the ring broken the burst no longer needs to
+      // be a value rival to stay legible as ornament (§9.5 lights EDGES).
+      const rays = new THREE.Mesh(rayGeo, this._M(B.mats.leaf, { emissiveIntensity: 0.0, specGain: 0.78, litGain: 0.46 }));
       rays.name = 'floor.boss.rays';
       rays.position.set(medOff.x, 0.02, medOff.y);
       rays.receiveShadow = true;
@@ -1219,25 +1253,69 @@ export class World {
     // shadow map spans ~28m, so a hanging chain resolves to 3-4 shadow texels
     // and lands on the back wall as a hard, black, STAIR-STEPPED diagonal
     // ~800px long — a §7 auto-fail. Chains are silhouette dressing.
+    // §7 AA BAN, ROUND-3. The alternating 0.055/0.032 radius put every other
+    // ring of the tube at 6.4cm diameter. At the relief-inspection framing that
+    // is ~2px on screen, and a 2px-wide primitive whose material sat at the
+    // library's iron albedo with no emissive floor rendered as a PURE BLACK
+    // (0,1,1) stair-stepped diagonal 460px long across the focal statue, with a
+    // ONE-pixel transition to the stone behind it. SMAA has nothing to work
+    // with at that width: the geometry never covers enough of a pixel to
+    // produce the gradient the filter searches for, so the staircase survives.
+    //
+    // Three changes, none of which delete the chains (they are the only thing
+    // that describes the drop off the rim):
+    //   1. A HARD WORLD-SPACE FLOOR ON THE RADIUS, derived from the framing:
+    //      at 1600x900 and the narrowest lens the shot list uses (fov 32), one
+    //      metre subtends 1569/d px. MIN_PX / that, at the farthest distance a
+    //      chain is ever seen from, is the smallest radius that is allowed to
+    //      exist. Anything the taper would have driven under it is clamped up.
+    //   2. CULL, DO NOT THIN. If a chain still cannot make MIN_PX it is not
+    //      drawn at all — a missing chain costs nothing, an unresolvable one is
+    //      an auto-fail.
+    //   3. AN EMISSIVE FLOOR IN THE INK RAMP (#120b1e = §2 deep shadow). The
+    //      chain is now the darkest thing in the room but it is no longer BELOW
+    //      the void black, so its edge is a step inside the ramp rather than a
+    //      step off the bottom of it, and the rim can carry its silhouette.
     const ch = B.chains;
     {
+      const MIN_PX = 3.2;                       // §7: below this SMAA cannot resolve an edge
+      const PX_PER_M_AT_1M = 1569;              // 900px tall frame, fov 32
+      const REF_CAM = 36;                       // the wide pose, the farthest framing we ship
       const parts = [];
+      let culled = 0;
       for (let i = 0; i < ch.count; i++) {
         const a = f() * TAU;
         const rr = rAt(a) - 0.1;
+        const outR = rr + 1.2 + f() * 1.6;
         const from = new THREE.Vector3(Math.cos(a) * rr, 0.20, Math.sin(a) * rr);
-        const to = new THREE.Vector3(Math.cos(a) * (rr + 1.2 + f() * 1.6), -ch.drop * (0.6 + f() * 0.8), Math.sin(a) * (rr + 1.2 + f() * 1.6));
+        const to = new THREE.Vector3(Math.cos(a) * outR, -ch.drop * (0.6 + f() * 0.8), Math.sin(a) * outR);
+        // worst-case viewing distance: the camera orbits the arena, so a chain
+        // on the far rim sits REF_CAM + its own radius away from the lens.
+        const dist = REF_CAM + outR;
+        const minRadius = (MIN_PX * dist) / (2 * PX_PER_M_AT_1M);
+        // the beading still modulates the silhouette, but between two radii
+        // that are BOTH above the floor instead of one that is under it
+        const fat = Math.max(minRadius * 1.45, 0.078);
+        const thin = Math.max(minRadius, 0.054);
+        if (thin * 2 * (PX_PER_M_AT_1M / dist) < MIN_PX) { culled++; continue; }
         const n = Math.max(10, Math.round(from.distanceTo(to) / 0.16));
         const pts = catenary(from, to, ch.sag, n);
-        parts.push(taperedTube(pts, pts.map((_, k) => (k % 2 ? 0.055 : 0.032)), 5));
+        parts.push(taperedTube(pts, pts.map((_, k) => (k % 2 ? fat : thin)), 6));
       }
       if (parts.length) {
         const cm = new THREE.Mesh(this._keep(mergeGeos(parts)),
-          this._M(B.mats.iron, { litGain: 0.34, ambGain: 0.30, specGain: 0.9 }));
+          this._M(B.mats.iron, {
+            litGain: 0.42, ambGain: 0.46, specGain: 0.9,
+            // NOT a glow: 0.07 display luma, two stops under the bloom
+            // threshold. This is the ink ramp's floor made unconditional so
+            // the chain can never render at absolute zero against lit stone.
+            emissive: new THREE.Color('#120b1e'), emissiveIntensity: 1.0,
+          }));
         cm.name = 'rim.chains';
         cm.castShadow = false; cm.receiveShadow = false;
         this.root.add(cm);
       }
+      void culled;
     }
   }
 
@@ -2160,7 +2238,12 @@ export class World {
       G.hangPos = [hx, hy + 0.2, hz];
       const big = kit.censer({ drop: (G.wallTop || 14) - hy + 1.0, r: 1.05 });
       big.position.set(hx, hy, hz);
-      big.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      // NOT a blanket traverse. kit.censer() deliberately ships its suspension
+      // rods as a separate, NON-CASTING mesh (§7: a 5cm rod resolves to 1-2
+      // shadow texels and lands as a hard aliased black staircase across
+      // whatever is behind it — it did exactly that across the focal statue).
+      // Turning castShadow on for every mesh in the group put it straight back.
+      big.traverse((o) => { if (o.isMesh && o.name !== 'censer.susp') o.castShadow = true; });
       this.root.add(big);
       this.props.addSway(big, { amp: 0.022, rate: 0.24, phase: 3.1, axis: 'z', drift: 0.8 });
       G.flamePoints.push({ x: hx, y: hy + 0.55, z: hz, seed: 0.62, scale: 0.95 });
@@ -2180,7 +2263,8 @@ export class World {
       const g = cen.clone(true);
       const y = (G.wallTop || 12) - 3.9;
       g.position.set(Math.cos(a) * rr, y, Math.sin(a) * rr);
-      g.traverse((o) => { if (o.isMesh) o.castShadow = true; });
+      // see the arena censer above: the suspension rods never cast
+      g.traverse((o) => { if (o.isMesh && o.name !== 'censer.susp') o.castShadow = true; });
       this.root.add(g);
       this.props.addSway(g, { amp: 0.045, rate: 0.30 + f() * 0.2, phase: f() * 10, axis: 'z', drift: 0.7 });
       G.flamePoints.push({ x: Math.cos(a) * rr, y: y + 0.34, z: Math.sin(a) * rr, seed: (0.4 + i * 0.19) % 1, scale: 0.58 });
