@@ -10,9 +10,22 @@ animation and sound is generated in code at runtime. ~40k lines.
 
 ## Play it
 
+**Easiest — no install of any kind.** Download [`standalone/play.html`](standalone/play.html)
+(1.7 MB, one file) and double-click it. It opens in your browser and runs. Everything is inlined;
+there is no server, no Node, no npm.
+
+**As a desktop app:**
+```bash
+npm install
+npm run desktop      # Electron window
+npm run dist:win     # -> release/EREBUS-Descent-*-win-x64.exe (72 MB portable)
+```
+
+**For development:**
 ```bash
 npm install
 npm run dev          # then open the URL it prints (usually http://localhost:5173)
+npm run standalone   # rebuild standalone/play.html
 ```
 
 First load bakes the procedural texture library on a worker pool. On a slow machine that takes a

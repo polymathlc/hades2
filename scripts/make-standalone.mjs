@@ -13,9 +13,14 @@ const cssSrc = css ? fs.readFileSync(path.join(B, css), 'utf8') : '';
 // Drop every emitted <script>/<link>, then re-add one classic inline script.
 html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/g, '')
            .replace(/<link\b[^>]*rel=["']?stylesheet["']?[^>]*>/g, '');
-if (cssSrc) html = html.replace('</head>', `<style>${cssSrc}</style>\n</head>`);
+// Both substitutions MUST use a replacer FUNCTION. With a replacement STRING, `String.replace`
+// expands $&, $`, $' and $1 inside it — and this bundle contains a `$` regex anchor, which
+// expanded to "everything before the match" and injected the whole HTML head into the middle of
+// the JavaScript. The file parsed as garbage and the game never booted.
+if (cssSrc) html = html.replace('</head>', () => `<style>${cssSrc}</style>\n</head>`);
 // </script> inside the source would close the tag early; the escape is mandatory, not cosmetic.
-html = html.replace('</body>', `<script>${jsSrc.replace(/<\/script>/gi, '<\\/script>')}</script>\n</body>`);
+const safeJs = jsSrc.replace(/<\/script>/gi, '<\\/script>');
+html = html.replace('</body>', () => `<script>${safeJs}</script>\n</body>`);
 fs.mkdirSync('standalone', { recursive: true });
 fs.writeFileSync(OUT, html);
 console.log(`${OUT}  ${(fs.statSync(OUT).size/1048576).toFixed(1)} MB`);
