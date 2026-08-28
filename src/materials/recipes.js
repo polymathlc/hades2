@@ -2045,6 +2045,13 @@ const RECIPES = {
   } },
 };
 
+// Tartarus-specific aliases are real recipe keys rather than ALIASES entries.
+// That lets them reuse the proven procedural PBR channels while receiving
+// distinct generated albedo detail from tartarus-materials-v2-atlas.jpg.
+RECIPES['bone.tartarus'] = RECIPES.bone;
+RECIPES['bronze.tartarus'] = RECIPES['bronze.verdigris'];
+RECIPES['wood.tartarus'] = RECIPES['wood.dark'];
+
 // aliases the world/props might reasonably ask for
 const ALIASES = {
   character: 'character.hero',

@@ -59,7 +59,8 @@ const SHARED_SETS = [
 ];
 const BIOME_SETS = {
   tartarus: ['floor.tartarus', 'stone.tartarus', 'stone.tartarus.bay',
-    'stone.tartarus.column', 'stone.tartarus.arch', 'rubble.tartarus'],
+    'stone.tartarus.column', 'stone.tartarus.arch', 'rubble.tartarus',
+    'bone.tartarus', 'bronze.tartarus', 'wood.tartarus'],
   asphodel: ['floor.asphodel', 'stone.asphodel'],
   elysium: ['floor.elysium', 'marble.elysium'],
 };

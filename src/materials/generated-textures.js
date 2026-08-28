@@ -1,4 +1,4 @@
-// Four image-generated atlases supply the authored colour and brushwork for every
+// Five image-generated atlases supply the authored colour and brushwork for every
 // named material recipe. The procedural baker still owns height-derived normals,
 // roughness, metalness, AO, emissive masks, and the stochastic anti-tiling pass.
 // Keeping those jobs separate gives the game hand-painted source art without
@@ -9,6 +9,7 @@ import tartarusUrl from '../assets/textures/generated/tartarus-atlas.jpg';
 import biomesUrl from '../assets/textures/generated/biomes-atlas.jpg';
 import propsUrl from '../assets/textures/generated/props-atlas.jpg';
 import charactersUrl from '../assets/textures/generated/characters-atlas.jpg';
+import tartarusV2Url from '../assets/textures/generated/tartarus-materials-v2-atlas.jpg';
 
 const GRID_COLS = 3;
 const GRID_ROWS = 2;
@@ -66,6 +67,22 @@ const ATLASES = [
       { col: 0, row: 1, name: 'bronze-armour', keys: ['armour.bronze'], composite: { detail: 0.20, chroma: 0.06 } },
       { col: 1, row: 1, name: 'brute-shield', keys: ['shield.brute'], composite: { detail: 0.22, chroma: 0.06 } },
       { col: 2, row: 1, name: 'hero-linen', keys: ['character.hero'], composite: { detail: 0.20, chroma: 0.04 } },
+    ],
+  },
+  {
+    // Second-pass art is last deliberately: it supersedes only Tartarus-facing
+    // recipe bindings while leaving the original atlases available to the
+    // other biomes. The recipes still supply normals, ORM and palette colour.
+    name: 'tartarus-materials-v2', url: tartarusV2Url,
+    tiles: [
+      { col: 0, row: 0, name: 'oxblood-flagstone-v2', keys: ['floor.tartarus'], composite: { detail: 0.30, chroma: 0.08, sourceMix: 0.18 } },
+      { col: 1, row: 0, name: 'carved-bloodstone-v2', keys: [
+        'stone.tartarus', 'stone.tartarus.bay', 'stone.tartarus.column', 'stone.tartarus.arch',
+      ], composite: { detail: 0.28, chroma: 0.08, sourceMix: 0.14 } },
+      { col: 2, row: 0, name: 'guardian-stone-v2', keys: ['bone.tartarus'], composite: { detail: 0.24, chroma: 0.025, sourceMix: 0.12 } },
+      { col: 0, row: 1, name: 'blackened-bronze-v2', keys: ['bronze.tartarus'], composite: { detail: 0.25, chroma: 0.08, sourceMix: 0.16 } },
+      { col: 1, row: 1, name: 'charred-timber-v2', keys: ['wood.tartarus'], composite: { detail: 0.30, chroma: 0.065, sourceMix: 0.18 } },
+      { col: 2, row: 1, name: 'tartarus-rubble-v2', keys: ['rubble.tartarus'], composite: { detail: 0.32, chroma: 0.08, sourceMix: 0.16 } },
     ],
   },
 ];
@@ -182,6 +199,7 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
   const profile = generated.userData.generatedComposite || DEFAULT_COMPOSITE;
   const detail = profile.detail ?? DEFAULT_COMPOSITE.detail;
   const chroma = profile.chroma ?? DEFAULT_COMPOSITE.chroma;
+  const sourceMix = Math.max(0, Math.min(0.25, profile.sourceMix ?? 0));
   const out = new Uint8Array(base.length);
 
   for (let i = 0; i < out.length; i += 4) {
@@ -191,7 +209,12 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
     for (let c = 0; c < 3; c++) {
       // Chroma is centred around generated luma, so it cannot lift the whole
       // surface or overwrite the recipe hue; it only introduces local colour.
-      const v = base[i + c] * valueMod + (src[i + c] - luma) * chroma;
+      const layered = base[i + c] * valueMod + (src[i + c] - luma) * chroma;
+      // A tightly-capped direct contribution is reserved for generated art
+      // that was authored against the live game reference. It lets the new
+      // oxblood/soot/wood palette read at gameplay distance while the recipe
+      // remains the dominant colour source and prevents atlas-wide repainting.
+      const v = layered * (1 - sourceMix) + src[i + c] * sourceMix;
       out[i + c] = Math.max(0, Math.min(255, Math.round(v)));
     }
     out[i + 3] = 255;
@@ -208,7 +231,7 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
   return texture;
 }
 
-/** Load and slice the four project-bound atlases into recipe-addressable maps. */
+/** Load and slice the five project-bound atlases into recipe-addressable maps. */
 export async function loadGeneratedAlbedos(anisotropy = 8) {
   if (typeof document === 'undefined') return new Map();
   const loader = new THREE.TextureLoader();

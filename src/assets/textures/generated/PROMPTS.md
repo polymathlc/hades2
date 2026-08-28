@@ -1,8 +1,8 @@
 # Generated texture atlas prompts
 
-These four project-bound atlases were produced with the built-in OpenAI image-generation tool.
+These five project-bound atlases were produced with the built-in OpenAI image-generation tool.
 Every prompt requested an exact 3-column by 2-row, 1536×1024 atlas. At runtime, the game slices
-the 512×512 cells, closes opposite seams, and maps them to all 30 named material recipes.
+the 512×512 cells, closes opposite seams, and maps them to all 32 named material recipes.
 
 ## Tartarus atlas
 
@@ -16,6 +16,32 @@ Color palette: #07060f, #120b1e, #241238, #3a1d52, #ff5a3c, #8c3b46, #5a2331, #2
 Materials/textures: deliberate directional strokes, value variation within each material, darkened crevices, hand-painted highlights, consistent texel density.
 Constraints: no text, no symbols, no UI, no border, no separator lines, no watermark, no logos, no objects casting shadows, no single focal object. Keep every tile edge-to-edge and seamless; preserve an exact 3 columns by 2 rows layout.
 Avoid: photoreal grunge, generic noise, muddy brown, neutral gray shadows, visible repetition, perspective, vignette, scene lighting.
+```
+
+## Tartarus materials v2 atlas
+
+Image 1 was the live-game screenshot supplied as a visual reference for palette, materials, and
+on-screen texel scale only; the generated deliverable is a new flat material atlas, not an edit.
+
+```text
+Use case: stylized-concept
+Asset type: exact 3-column by 2-row game texture atlas containing six seamless square albedo textures
+Input images: Image 1 is a visual reference for the current Tartarus game scene, palette, materials, and on-screen scale only; do not recreate the scene.
+Primary request: Generate a darker, richer second-pass Tartarus material atlas that adds clearly readable surface texture without the fluorescent orange/purple clipping visible in earlier versions.
+Composition/framing: one exact 3:2 landscape atlas, three equal square cells across and two equal square cells down, crisp cell boundaries, no gutters, no frames, no labels, each cell filled edge-to-edge and designed to tile seamlessly on all four edges.
+Top row left-to-right:
+1. ancient near-black oxblood flagstone floor, irregular Greek masonry joints, broad worn brush variation, sparse dried-ichor staining, restrained plum undertones;
+2. carved dark bloodstone architecture, deep chisel cuts, shallow Greek meander and palmette relief distributed evenly, charcoal-crimson faces and muted violet recesses;
+3. weathered underworld guardian-statue stone surface only, smoky black marble with fine age cracks, rubbed edges and sparse dull bronze mineral veins, no creature or sculpture.
+Bottom row left-to-right:
+4. blackened hammered bronze brazier metal, soot-dark body, small worn-gold edge flecks, subtle old verdigris collected in pits;
+5. charred ancient timber, long hand-adzed grain, split fibers, deep umber-black and plum shadows, restrained warm worn ridges;
+6. Tartarus rubble stone, broken crimson-black aggregate, chipped planes, bone dust and dark mortar, evenly distributed with no focal rock.
+Style/medium: hand-painted mythic action-game texture, confident directional brushwork, readable at an isometric gameplay camera, tactile material separation, rich dark values with selective midtone detail; not photographic and not flat vector art.
+Lighting/mood: neutral material reference lighting only; no baked spotlight, no glow, no volumetric rays, no vignette.
+Color palette: ink black #08070d, charcoal plum #18121f, muted oxblood #4b202a, dark crimson #6d2935, restrained bronze #8d6936, worn gold #c8a45c, subtle verdigris #3f746c.
+Constraints: surfaces only; exact 3-by-2 grid; every cell is a square; seamless edges; no text, no UI, no border, no separator line, no watermark, no logos, no isolated objects, no cast shadows, no scene perspective, no bright orange fields, no electric violet fields.
+Avoid: fluorescent colors, near-white highlights, generic noisy grunge, obvious repetition, perspective, baked directional lighting, large motifs, characters, statues, braziers, logs, or rubble objects—the cells must remain flat material swatches.
 ```
 
 ## Asphodel and Elysium atlas
@@ -56,4 +82,3 @@ Color palette: ink #07060f #120b1e #241238 #3a1d52; crimson #8c3b46 #c81d3c; war
 Constraints: surfaces only—no faces, eyes, hair silhouettes, hands, bodies, garments, weapons, characters, text, UI, border, separator lines, watermark, logos, cast shadows. Keep every tile edge-to-edge and seamless; preserve exact 3 columns by 2 rows.
 Avoid: photoreal skin pores, body parts, cloth folds forming clothing, generic noise, muddy brown, neutral gray shadows, perspective, vignette, scene lighting.
 ```
-

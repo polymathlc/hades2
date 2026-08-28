@@ -213,7 +213,10 @@ export const GRADES = {
     ao:       { intensity: 1.18, radius: 1.25, power: 2.1, bias: 0.035, ink: H('#180c22') },
         // Godrays are ADDITIVE over the whole frame, so at 0.34 they were a second
     // bloom pedestal sitting on the ground plane. 0.12 keeps the shafts.
-    godrays:  { intensity: 0.035, color: H('#f6a06e'), decay: 0.955, density: 0.72, weight: 0.5 },
+    // No screen-space sky shaft in Tartarus. At the fixed gameplay camera the
+    // off-screen anchor produced a conspicuous vertical white ray unrelated to
+    // any visible source; local braziers and rim lights still shape the room.
+    godrays:  { enabled: false, intensity: 0, color: H('#f6a06e'), decay: 0.955, density: 0.72, weight: 0.5 },
     // §1.1 the background must be LOW value and HAZED. At density 0.030 /
     // hazeStart 26 the arena silhouette met a dead-#000 void at a razor edge
     // with no atmospheric band behind it at all.
