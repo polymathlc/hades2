@@ -76,9 +76,10 @@ function cdamp(cur, vel, target, smoothTime, dt, maxSpeed = Infinity) {
 // compression is preserved) puts the hero at ~18% of frame height, which is
 // where every piece of drapery, pauldron and face work in rig.js starts to
 // exist on screen at all.
-// lookHeight comes down with the distance: at 12.6 an aim point 3.4m above the
-// feet drops the character onto the bottom edge. 3.05 holds them at ~2/3 down
-// the frame with the colonnade still stacked above.
+// lookHeight must keep the player inside the safe gameplay frame at ultra-wide
+// aspect ratios. An aim point above 3m pushed the hero and HUD into the bottom
+// edge on the published 2694x1292 view; 2.25m holds the hero around the lower
+// third while preserving the colonnade and centrepiece above them.
 // PITCH is the number that decides whether the frame HAS a background. At 50deg
 // down with a 34deg lens the TOP of the frame points 33deg BELOW the horizon, so
 // a ray from the lens to the far colonnade lands under the floor: the chamber's
@@ -93,7 +94,7 @@ export const CAM_TUNING = {
   pitchDeg: 46,
   yawDeg: 45,
   distance: 15.4,
-  lookHeight: 3.80,
+  lookHeight: 2.25,
   followTime: 0.185,      // spring smooth time, horizontal
   followTimeY: 0.30,
   deadzone: 0.06,

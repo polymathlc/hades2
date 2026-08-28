@@ -114,7 +114,7 @@ const RIGS = {
     // toward a warm near-white lets each material show ITS colour and leaves hue variety to the
     // coloured practicals — the opposite of raising global saturation, which only amplifies
     // whatever single hue already dominates. See ART_DIRECTION §15.
-    key:    { color: '#ffd8b8', intensity: 21.0, dir: [0.646, -0.615, -0.452] },
+    key:    { color: '#ffe0ca', intensity: 16.0, dir: [0.646, -0.615, -0.452] },
     // ── THE SUBJECT LIGHT (§1.1, §9.2) ──────────────────────────────────────
     // The frame did not know who its subject was. Every light in this rig was
     // authored for the ROOM — a key for the architecture, practicals nailed to
@@ -147,7 +147,7 @@ const RIGS = {
     // channel, and a dead channel has stopped carrying form. A paler subject key
     // delivers the same luminance with the red channel ~15% lower, so the lit
     // side keeps a gradient instead of a plateau. Target: no hero pixel over 244.
-    subject: { color: '#ffe2c8', intensity: 16.0, distance: 6.6, decay: 2.0,
+    subject: { color: '#ffe8d8', intensity: 7.0, distance: 6.2, decay: 2.0,
                offset: [0.80, 1.95, 1.20] },
     // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
     // saturated periwinkle sky this was the brightest thing landing on the
@@ -173,7 +173,7 @@ const RIGS = {
     // while lit stone stayed orange, and a single surface split that far across the colour
     // temperature axis is what reads as artificial rather than as stone. The ink ramp asks for
     // PLUM shadows (#241238), which is a warm violet, not a blue one.
-    hemi:   { sky: '#4a2c48', ground: '#3a1c30', intensity: 0.80 },
+    hemi:   { sky: '#40303f', ground: '#332331', intensity: 0.48 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
     bounce: { color: '#8a3a34', intensity: 0.40, size: [11, 11], y: 1.6 },
@@ -220,7 +220,7 @@ const RIGS = {
     // hero. When painterly.js ships `vec3 rimC = uRimColor;` this goes back to
     // '#5fd0ff' and rig.js's RIM_HEX goes with it — the two must move together.
     rim:    { color: '#8fa4ff', dir: [-0.62, 0.36, 0.70], intensity: 2.8, power: 2.60, wrap: 0.22 },
-    ambient:{ color: '#2e1826', intensity: 0.36 },
+    ambient:{ color: '#2e242f', intensity: 0.22 },
     godrayAnchor: [0.22, 1.06],
     // §9.3 + §9.5. With the bloom fog gone, bands.highlight measured 0.021
     // against a 0.04 floor — the frame's old top band was NOT ornament, it was
@@ -262,11 +262,11 @@ const RIGS = {
       // that says "underworld chamber", no longer the subject of the picture.
       // `distance` comes down with them so the pool stays a POOL and does not
       // creep further across the floor as it dims.
-      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 1.00 },
-      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 0.83 },
-      { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 1.21 },
-      { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 0.72 },
-      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 0.94 },
+      { pos: [ -8.30, 1.7,   9.21], color: '#f7b17f', intensity: 42,  distance: 8.2, speed: 1.00 },
+      { pos: [-12.39, 1.7,   0.43], color: '#f7b17f', intensity: 42,  distance: 8.2, speed: 0.83 },
+      { pos: [ -8.92, 1.7,  -8.61], color: '#f39a68', intensity: 46,  distance: 8.0, speed: 1.21 },
+      { pos: [  0.00, 1.7, -12.40], color: '#f39a68', intensity: 46,  distance: 8.0, speed: 0.72 },
+      { pos: [  8.92, 1.7,  -8.61], color: '#f7b17f', intensity: 42,  distance: 8.2, speed: 0.94 },
       // COOL #5fd0ff washes on the perimeter masonry, the column capitals and
       // the gate. §9.4 needs the mid/background architecture to sit a full value
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
@@ -288,11 +288,11 @@ const RIGS = {
       // The three that fall on plain perimeter come DOWN: an evenly washed
       // perimeter is what turned the top of every play frame into one continuous
       // salmon band with no depth in it (§1.1, §11.1).
-      { pos: [ -4.6, 5.4, -12.6], color: '#b9dcec', intensity: 420, distance: 22, speed: 0.31, flicker: 0.09 },
-      { pos: [-12.6, 5.0,  -4.6], color: '#b3d8ea', intensity: 380, distance: 22, speed: 0.61, flicker: 0.12 },
-      { pos: [  0.0, 4.6, -13.4], color: '#b3d8ea', intensity: 190, distance: 17, speed: 0.44, flicker: 0.14 },
-      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 230, distance: 18, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#b3d8ea', intensity: 150, distance: 17, speed: 0.52, flicker: 0.14 },
+      { pos: [ -4.6, 5.4, -12.6], color: '#b9dcec', intensity: 180, distance: 19, speed: 0.31, flicker: 0.09 },
+      { pos: [-12.6, 5.0,  -4.6], color: '#b3d8ea', intensity: 165, distance: 19, speed: 0.61, flicker: 0.12 },
+      { pos: [  0.0, 4.6, -13.4], color: '#b3d8ea', intensity: 95, distance: 16, speed: 0.44, flicker: 0.14 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#69b8e0', intensity: 110, distance: 16, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#b3d8ea', intensity: 80, distance: 16, speed: 0.52, flicker: 0.14 },
     ],
     // ── THE WALL WASH (§1.1 three bands, §11.2 "light the mid-ground") ─────
     // WHAT WAS WRONG. Every light above aims DOWN into the arena or sits

@@ -39,7 +39,7 @@ import {
   RECIPES, bakeSet, resolveRecipe, BASE,
 } from './recipes.js';
 import { BakePool } from './bakepool.js';
-import { loadGeneratedAlbedos } from './generated-textures.js';
+import { compositeGeneratedAlbedo, loadGeneratedAlbedos } from './generated-textures.js';
 
 const clamp01 = TG.clamp01;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
@@ -145,9 +145,10 @@ export class MaterialLibrary {
     if (!this.generatedMaps.size) return;
     for (const set of this.setCache.values()) {
       const generated = this.generatedMaps.get(set.name);
-      if (!generated || generated === set.map) continue;
-      if (set.map) set.map.dispose();
-      set.map = generated;
+      if (!generated || set.generatedSource === generated) continue;
+      if (set.map && set.map !== set.proceduralMap) set.map.dispose();
+      set.map = compositeGeneratedAlbedo(set.proceduralMap, generated, Math.min(16, generated.anisotropy || 8));
+      set.generatedSource = generated;
     }
   }
 
@@ -190,9 +191,12 @@ export class MaterialLibrary {
     const n = b.size, key = b.name;
     if (b.error) console.warn('[mats] recipe failed:', key, b.error);
     const generated = this.generatedMaps.get(key);
+    const proceduralMap = TG.byteTexture(b.map, n, { anisotropy: 16, srgb: true });
     const set = {
       name: key, size: n,
-      map: generated || TG.byteTexture(b.map, n, { anisotropy: 16, srgb: true }),
+      proceduralMap,
+      map: generated ? compositeGeneratedAlbedo(proceduralMap, generated, 16) : proceduralMap,
+      generatedSource: generated || null,
       normalMap: TG.byteTexture(b.normalMap, n, { anisotropy: 16 }),
       ormMap: TG.byteTexture(b.ormMap, n, { anisotropy: 16 }),
       emissiveMap: b.emissiveMap ? TG.byteTexture(b.emissiveMap, n, { anisotropy: 4, srgb: true }) : null,
@@ -677,6 +681,7 @@ export class MaterialLibrary {
     const disposed = new Set();
     for (const s of this.setCache.values()) {
       if (s.map && !disposed.has(s.map)) { s.map.dispose(); disposed.add(s.map); }
+      if (s.proceduralMap && !disposed.has(s.proceduralMap)) { s.proceduralMap.dispose(); disposed.add(s.proceduralMap); }
       if (s.normalMap) s.normalMap.dispose();
       if (s.ormMap) s.ormMap.dispose();
       if (s.emissiveMap) s.emissiveMap.dispose();

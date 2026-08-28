@@ -29,6 +29,12 @@ export const GRADES = {
   // crimson stone, bone, blood. Warm amber key, cyan rim, plum ink.
   tartarus: {
     name: 'tartarus',
+    // GENERATED-TEXTURE INTEGRATION. The authored atlases already contain
+    // coloured brushwork. The former grade re-saturated that colour three
+    // times (AgX, luminance bands, then full-strength violet/gold re-hues),
+    // producing the fluorescent orange/purple posterisation seen on Pages.
+    // Keep this transform deliberately restrained: material maps carry colour;
+    // the grade only shapes value and gives the very darkest ink a cool bias.
     // §3 "histogram must have real content in the bottom 15% AND top 5%".
     // The old stack had a hard CEILING: white 0.78 clamped the display white
     // point, shoulder 0.18 compressed everything under it, and pivot 0.30 sat
@@ -53,23 +59,23 @@ export const GRADES = {
     // number in postfx.js `uExposure: { value: 1.06 }` is only an initialiser;
     // _syncUniforms overwrites it from THIS field every frame, so this is the
     // real exposure knob for Tartarus.
-    exposure: 1.62,
-    agxSlope: [1.06, 1.0, 0.96],
-    agxPower: [1.16, 1.18, 1.24],
+    exposure: 1.24,
+    agxSlope: [1.01, 1.0, 0.99],
+    agxPower: [1.03, 1.03, 1.05],
     // §2 asks for crimson stone and molten gold; the close-ups measured
     // meanSat 0.486-0.497 at mean luma 0.42-0.47, which is the arithmetic
     // definition of pastel. Chroma goes back up now the exposure is off it.
-    agxSat: 1.10,
+    agxSat: 0.92,
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
-    contrast: 1.05,
+    contrast: 0.96,
     // PIVOT FOLLOWS THE FRAME. The S-curve is a power law about this point, so
     // a pivot ABOVE the frame's tonal centre can only push pixels down — and
     // once §9.1 put the ground plane where it belongs, 0.34 sat two stops over
     // everything except the ornament and collapsed the whole image. 0.29 keeps
     // the architecture on the curve's upper arm and the floor on its lower one,
     // which is exactly the separation the value law is asking for.
-    pivot: 0.245,
+    pivot: 0.28,
     // `black` SUBTRACTS a black point — raising it crushes, it does not protect
     // the darks. What keeps the bottom of the frame off dead #000 is the
     // positive violet `lift` below, which has to survive this subtraction.
@@ -77,11 +83,11 @@ export const GRADES = {
     // hard that gold ornament and brazier cores shared one value with lit
     // stone. §9.3 wants real content in the top band; the roll still preserves
     // hue, it just starts later.
-    black: 0.008, white: 0.86, shoulder: 0.30, hiRoll: 0.86,
+    black: 0.003, white: 0.94, shoulder: 0.18, hiRoll: 0.92,
     // §2: the ink ramp bottoms at #07060f — a VIOLET black, not a neutral zero.
     // A negative blue lift clipped the column bases to dead #000.
-    lift:  [ 0.010,  0.004,  0.026 ],
-    gamma: [ 1.00,  1.02,  1.05 ],
+    lift:  [ 0.010,  0.008,  0.016 ],
+    gamma: [ 1.00,  1.00,  1.01 ],
     // The warm gain was rotating every gold surface toward orange before the
     // hue lobes ever saw it. Keep the grade close to neutral and let the
     // PALETTE carry the warmth.
@@ -89,20 +95,20 @@ export const GRADES = {
     // hue that has stopped being a hue. The grade holds red DOWN a touch and
     // lets the palette carry the warmth (measured clipped-channel coverage has
     // to stay under 1.5% of every shipped frame).
-    gain:  [ 1.00,  1.00,  0.99 ],
-    curveR: 1.00, curveG: 1.02, curveB: 1.08,
+    gain:  [ 1.00,  1.00,  1.00 ],
+    curveR: 1.00, curveG: 1.00, curveB: 1.02,
     // §2 Shadow plum #241238 wants B/R ~1.56. The old #42287e measured 1.08 on
     // screen — magenta, not indigo — so the ink ramp was not being honoured.
-    shadowTint: H('#2e2382'),   // ink shadows push INDIGO-violet, never grey
-    midTint:    H('#d8a184'),
-    highTint:   H('#ffdcae'),   // highlights toward warm gold
+    shadowTint: H('#302746'),   // muted plum ink, not electric violet
+    midTint:    H('#f0ddd2'),   // warm-neutral: preserve material identity
+    highTint:   H('#ffe8c5'),   // restrained warm-gold highlight rolloff
     // 0.86 was desaturating the ONE cool element in the frame (the mandated
     // #5fd0ff rim lives in the shadow band by construction — see painterly.js
     // shBoost). Hold chroma in the darks; the ink is a HUE, not a grey.
-    satShadow: 1.08,
+    satShadow: 0.82,
     // measured meanSaturation was 0.68 against a §7 target of 0.28-0.60: jewel
     // tones, not neon. The chroma belongs in the PALETTE, not in the grade.
-    satMid:    1.16,
+    satMid:    0.92,
     // ROUND-4: A PRESCRIPTION THAT DID NOT SURVIVE THE IMAGE. A review round
     // named this as the thing bleaching the rim ("satHigh 0.76 is desaturating
     // the highlights the rim lives in"). Built at 0.88 and 0.94 and looked at:
@@ -113,8 +119,8 @@ export const GRADES = {
     // from 0.61 to 0.65 against a §7 ceiling of 0.60. The chroma the frame was
     // missing was never in the top band. Left at 0.76; the rim is fixed where
     // it is delivered, in painterly.js shBoost.
-    satHigh:   1.04,
-    shadowMix: 0.58, highMix: 0.26, tintStrength: 1.0,
+    satHigh:   0.82,
+    shadowMix: 0.32, highMix: 0.14, tintStrength: 0.48,
     hueLobes: [
       // narrowed + strengthened: 24% of the frame's chroma was sitting in the
       // 300-330deg pink-magenta bin, off the authored ink ramp entirely.
@@ -135,9 +141,9 @@ export const GRADES = {
     // foreground floor, and a repoussoir is supposed to be dark.
     // `floor` is extra vignette weight BELOW frame centre — the foreground
     // repoussoir (§1.8) and the third value band (§9.4).
-    vignette: { amount: 0.62, radius: 0.60, softness: 0.86, depth: 0.14, floor: 0.95, color: H('#120718') },
+    vignette: { amount: 0.44, radius: 0.66, softness: 0.90, depth: 0.12, floor: 0.58, color: H('#120d18') },
     grain:    { amount: 0.0070, size: 1.0, darkBoost: 1.8 },
-    chroma:   1.35,
+    chroma:   0.45,
     // §1.7 "bloom is a paint layer over a core that has ALREADY gone bright" —
     // not the source of the brightness. At threshold 1.20 / intensity 0.78 it
     // was eating the medallion's polar meander and the anthemion petals into a
@@ -199,7 +205,7 @@ export const GRADES = {
     // §9.3's bands.highlight >= 0.04 must still be met — and it is met the way
     // the law actually intends: from emissive CORES and gold speculars that are
     // genuinely bright, not from a smeared halo sitting over everything.
-    bloom:    { threshold: 3.10, knee: 0.42, intensity: 1.15, tint: H('#ffe0b8'), radius: 0.20, clamp: 1.7 },
+    bloom:    { threshold: 3.35, knee: 0.38, intensity: 0.58, tint: H('#ffe7c9'), radius: 0.16, clamp: 1.35 },
     // §9.7 contact. A 1.75u radius on a 3/4 camera is a soft dirt halo, not an
     // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
     // the ink goes several stops darker so the base of a column reads planted
@@ -207,7 +213,7 @@ export const GRADES = {
     ao:       { intensity: 1.18, radius: 1.25, power: 2.1, bias: 0.035, ink: H('#180c22') },
         // Godrays are ADDITIVE over the whole frame, so at 0.34 they were a second
     // bloom pedestal sitting on the ground plane. 0.12 keeps the shafts.
-    godrays:  { intensity: 0.07, color: H('#ff7a44'), decay: 0.955, density: 0.72, weight: 0.5 },
+    godrays:  { intensity: 0.035, color: H('#f6a06e'), decay: 0.955, density: 0.72, weight: 0.5 },
     // §1.1 the background must be LOW value and HAZED. At density 0.030 /
     // hazeStart 26 the arena silhouette met a dead-#000 void at a razor edge
     // with no atmospheric band behind it at all.

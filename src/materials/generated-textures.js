@@ -13,17 +13,25 @@ import charactersUrl from '../assets/textures/generated/characters-atlas.jpg';
 const GRID_COLS = 3;
 const GRID_ROWS = 2;
 
+// Generated art is intentionally used as a DETAIL layer, not as a replacement
+// palette. The procedural recipes already encode the biome's value hierarchy,
+// material identity, and hand-authored ornament masks; replacing those RGB
+// maps with an unconstrained atlas was what turned Tartarus into fluorescent
+// orange/purple blocks. These profiles preserve the recipe colour while
+// borrowing brushwork, wear, grain, and a restrained amount of local chroma.
+const DEFAULT_COMPOSITE = Object.freeze({ detail: 0.26, chroma: 0.10 });
+
 const ATLASES = [
   {
     name: 'tartarus', url: tartarusUrl,
     tiles: [
-      { col: 0, row: 0, name: 'crimson-flagstone', keys: ['floor.tartarus'] },
+      { col: 0, row: 0, name: 'crimson-flagstone', keys: ['floor.tartarus'], composite: { detail: 0.22, chroma: 0.06 } },
       { col: 1, row: 0, name: 'carved-bloodstone', keys: [
         'stone.tartarus', 'stone.tartarus.bay', 'stone.tartarus.column', 'stone.tartarus.arch',
       ] },
       { col: 2, row: 0, name: 'crimson-rubble', keys: ['rubble.tartarus'] },
       { col: 0, row: 1, name: 'aged-bone', keys: ['bone'] },
-      { col: 1, row: 1, name: 'blood-ichor', keys: ['blood.pool'] },
+      { col: 1, row: 1, name: 'blood-ichor', keys: ['blood.pool'], composite: { detail: 0.18, chroma: 0.08 } },
       { col: 2, row: 1, name: 'crimson-banner', keys: ['banner.crimson'] },
     ],
   },
@@ -32,7 +40,7 @@ const ATLASES = [
     tiles: [
       { col: 0, row: 0, name: 'obsidian-basalt', keys: ['stone.asphodel', 'obsidian'] },
       { col: 1, row: 0, name: 'charred-flagstone', keys: ['floor.asphodel'] },
-      { col: 2, row: 0, name: 'molten-lava', keys: ['lava'] },
+      { col: 2, row: 0, name: 'molten-lava', keys: ['lava'], composite: { detail: 0.18, chroma: 0.08 } },
       { col: 0, row: 1, name: 'elysium-marble', keys: ['marble.elysium'] },
       { col: 1, row: 1, name: 'elysium-laurel-floor', keys: ['floor.elysium'] },
       { col: 2, row: 1, name: 'styx-water', keys: ['water.styx'] },
@@ -41,9 +49,9 @@ const ATLASES = [
   {
     name: 'props', url: propsUrl,
     tiles: [
-      { col: 0, row: 0, name: 'gold-filigree', keys: ['gold.filigree', 'medallion.tartarus'] },
-      { col: 1, row: 0, name: 'hammered-gold-leaf', keys: ['gold.leaf'] },
-      { col: 2, row: 0, name: 'verdigris-bronze', keys: ['bronze.verdigris'] },
+      { col: 0, row: 0, name: 'gold-filigree', keys: ['gold.filigree', 'medallion.tartarus'], composite: { detail: 0.20, chroma: 0.08 } },
+      { col: 1, row: 0, name: 'hammered-gold-leaf', keys: ['gold.leaf'], composite: { detail: 0.20, chroma: 0.08 } },
+      { col: 2, row: 0, name: 'verdigris-bronze', keys: ['bronze.verdigris'], composite: { detail: 0.24, chroma: 0.10 } },
       { col: 0, row: 1, name: 'dark-forged-iron', keys: ['iron.dark'] },
       { col: 1, row: 1, name: 'charred-wood', keys: ['wood.dark'] },
       { col: 2, row: 1, name: 'violet-crystal', keys: ['crystal.violet'] },
@@ -52,12 +60,12 @@ const ATLASES = [
   {
     name: 'characters', url: charactersUrl,
     tiles: [
-      { col: 0, row: 0, name: 'skin-brushwork', keys: ['characterrig.skin'], modulator: [0.78, 1.0] },
-      { col: 1, row: 0, name: 'cloth-weave', keys: ['characterrig.cloth'], modulator: [0.62, 1.0] },
-      { col: 2, row: 0, name: 'hair-leather', keys: ['characterrig.hair'], modulator: [0.50, 0.98] },
-      { col: 0, row: 1, name: 'bronze-armour', keys: ['armour.bronze'] },
-      { col: 1, row: 1, name: 'brute-shield', keys: ['shield.brute'] },
-      { col: 2, row: 1, name: 'hero-linen', keys: ['character.hero'] },
+      { col: 0, row: 0, name: 'skin-brushwork', keys: ['characterrig.skin'], modulator: [0.78, 1.0], composite: { detail: 0.16, chroma: 0.0 } },
+      { col: 1, row: 0, name: 'cloth-weave', keys: ['characterrig.cloth'], modulator: [0.62, 1.0], composite: { detail: 0.20, chroma: 0.0 } },
+      { col: 2, row: 0, name: 'hair-leather', keys: ['characterrig.hair'], modulator: [0.50, 0.98], composite: { detail: 0.20, chroma: 0.0 } },
+      { col: 0, row: 1, name: 'bronze-armour', keys: ['armour.bronze'], composite: { detail: 0.20, chroma: 0.06 } },
+      { col: 1, row: 1, name: 'brute-shield', keys: ['shield.brute'], composite: { detail: 0.22, chroma: 0.06 } },
+      { col: 2, row: 1, name: 'hero-linen', keys: ['character.hero'], composite: { detail: 0.20, chroma: 0.04 } },
     ],
   },
 ];
@@ -131,6 +139,71 @@ function sliceTile(image, tile, anisotropy) {
   texture.minFilter = THREE.LinearMipmapLinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.anisotropy = anisotropy;
+  texture.userData.generatedComposite = tile.composite || DEFAULT_COMPOSITE;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/**
+ * Composite generated brushwork over a procedural albedo without surrendering
+ * the procedural palette. Generated luma is standardised per tile, then used
+ * as a bounded value modulation; only a small, zero-centred chroma residual is
+ * admitted. The result retains the source texture's grain and wear without
+ * allowing a saturated atlas to repaint every material orange or violet.
+ */
+export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) {
+  if (typeof document === 'undefined' || !procedural?.image?.data || !generated?.image) return procedural;
+  const width = procedural.image.width;
+  const height = procedural.image.height;
+  const base = procedural.image.data;
+  if (!width || !height || !base) return procedural;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
+  if (!ctx) return procedural;
+  ctx.drawImage(generated.image, 0, 0, width, height);
+  const source = ctx.getImageData(0, 0, width, height);
+  const src = source.data;
+
+  let mean = 0;
+  for (let i = 0; i < src.length; i += 4) {
+    mean += src[i] * 0.2126 + src[i + 1] * 0.7152 + src[i + 2] * 0.0722;
+  }
+  const pixels = Math.max(1, src.length / 4);
+  mean /= pixels;
+  let variance = 0;
+  for (let i = 0; i < src.length; i += 4) {
+    const luma = src[i] * 0.2126 + src[i + 1] * 0.7152 + src[i + 2] * 0.0722;
+    const d = luma - mean;
+    variance += d * d;
+  }
+  const sigma = Math.max(18, Math.sqrt(variance / pixels));
+  const profile = generated.userData.generatedComposite || DEFAULT_COMPOSITE;
+  const detail = profile.detail ?? DEFAULT_COMPOSITE.detail;
+  const chroma = profile.chroma ?? DEFAULT_COMPOSITE.chroma;
+  const out = new Uint8Array(base.length);
+
+  for (let i = 0; i < out.length; i += 4) {
+    const luma = src[i] * 0.2126 + src[i + 1] * 0.7152 + src[i + 2] * 0.0722;
+    const z = Math.max(-1.65, Math.min(1.65, (luma - mean) / sigma));
+    const valueMod = 1 + z * detail;
+    for (let c = 0; c < 3; c++) {
+      // Chroma is centred around generated luma, so it cannot lift the whole
+      // surface or overwrite the recipe hue; it only introduces local colour.
+      const v = base[i + c] * valueMod + (src[i + c] - luma) * chroma;
+      out[i + c] = Math.max(0, Math.min(255, Math.round(v)));
+    }
+    out[i + 3] = 255;
+  }
+
+  const texture = new THREE.DataTexture(out, width, height, THREE.RGBAFormat);
+  texture.name = `${procedural.name || 'albedo'}+${generated.name || 'generated'}`;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.anisotropy = anisotropy;
   texture.needsUpdate = true;
   return texture;
 }
@@ -151,4 +224,3 @@ export async function loadGeneratedAlbedos(anisotropy = 8) {
   }
   return maps;
 }
-
