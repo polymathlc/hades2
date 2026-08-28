@@ -228,10 +228,15 @@ export const RAMPS = {
   // key on it, which puts its albedo far lower than any of these stops used to
   // sit. The cool glaze keeps the two-hue structure §2 asks for; it just no
   // longer reaches slate-grey mid values that a strong key can push to 0.30.
+  // The floor blends this ramp against the warm one through a noise field. Running it to a
+  // BLUE-GREY slate (#40575f) meant a single flagstone could hold a warm red-brown patch beside a
+  // cold blue one — mottling that reads as a heat map rather than as stone, which is exactly what
+  // the player called out. Real stone varies in VALUE and only slightly in hue. This is now the
+  // same stone quarried cooler and duller, staying in the plum/taupe family the warm ramp lives in.
   'floor.tartarus.cool': [
-    S(0.00, '#04050b'), S(0.20, '#080c13'), S(0.42, '#0e1720'),
-    S(0.62, '#16242e'), S(0.80, '#1f333c'), S(0.93, '#2d444d'),
-    S(1.00, '#40575f'),
+    S(0.00, '#090610'), S(0.20, '#130c17'), S(0.42, '#1d141d'),
+    S(0.62, '#2a1d25'), S(0.80, '#3a2a30'), S(0.93, '#4a373b'),
+    S(1.00, '#584447'),
   ],
   // VALUE, NOT JUST HUE. The old ramp centred near #210e18 — about 1% linear
   // reflectance. No light rig can pull a 1%-albedo floor up to the 0.34-0.42

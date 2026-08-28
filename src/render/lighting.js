@@ -168,7 +168,12 @@ const RIGS = {
     // #3a1d52 so a channel has a violet interior a critic can see into.
     // It is a 5x lift on a very small number and it is spent entirely on
     // down-facing geometry: the floor plane does not move at all.
-    hemi:   { sky: '#31336e', ground: '#2c1644', intensity: 0.75 },
+    // The floor faces UP, so it takes hemi.sky harder than any other surface — and sky was a
+    // BLUE-violet (#31336e, hue 238). That put a cold blue-teal cast on every shadowed flagstone
+    // while lit stone stayed orange, and a single surface split that far across the colour
+    // temperature axis is what reads as artificial rather than as stone. The ink ramp asks for
+    // PLUM shadows (#241238), which is a warm violet, not a blue one.
+    hemi:   { sky: '#4a2c48', ground: '#3a1c30', intensity: 0.80 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
     bounce: { color: '#8a3a34', intensity: 0.40, size: [11, 11], y: 1.6 },
@@ -215,7 +220,7 @@ const RIGS = {
     // hero. When painterly.js ships `vec3 rimC = uRimColor;` this goes back to
     // '#5fd0ff' and rig.js's RIM_HEX goes with it — the two must move together.
     rim:    { color: '#8fa4ff', dir: [-0.62, 0.36, 0.70], intensity: 2.8, power: 2.60, wrap: 0.22 },
-    ambient:{ color: '#241238', intensity: 0.34 },
+    ambient:{ color: '#2e1826', intensity: 0.36 },
     godrayAnchor: [0.22, 1.06],
     // §9.3 + §9.5. With the bloom fog gone, bands.highlight measured 0.021
     // against a 0.04 floor — the frame's old top band was NOT ornament, it was
@@ -227,7 +232,7 @@ const RIGS = {
     // §9.5 "ornament carries the light": keyGain drives the sharp specular lobe
     // the gold filigree, the bronze and the brazier rims reflect, and it is the
     // cheapest route to a real highlight band that is NOT a lit floor.
-    env:    { zenith: '#150e30', horizon: '#33183e', nadir: '#140916', keyGain: 34.0, keySharp: 200, keyWide: 0.05, rimGain: 2.0, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 0.55 },
+    env:    { zenith: '#1c1024', horizon: '#3a1c30', nadir: '#170a12', keyGain: 34.0, keySharp: 200, keyWide: 0.05, rimGain: 2.0, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 0.55 },
     // §9.5 + §9.6. Two families:
     //   WARM  tight brazier pools, radius ~8.5, sitting ON the ornament ring so
     //         the light lands on the annulus of floor the glaze paints bright
