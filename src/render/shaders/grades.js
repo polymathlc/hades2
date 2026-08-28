@@ -59,10 +59,10 @@ export const GRADES = {
     // §2 asks for crimson stone and molten gold; the close-ups measured
     // meanSat 0.486-0.497 at mean luma 0.42-0.47, which is the arithmetic
     // definition of pastel. Chroma goes back up now the exposure is off it.
-    agxSat: 0.94,
+    agxSat: 1.34,
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
-    contrast: 1.05,
+    contrast: 1.12,
     // PIVOT FOLLOWS THE FRAME. The S-curve is a power law about this point, so
     // a pivot ABOVE the frame's tonal centre can only push pixels down — and
     // once §9.1 put the ground plane where it belongs, 0.34 sat two stops over
@@ -99,10 +99,10 @@ export const GRADES = {
     // 0.86 was desaturating the ONE cool element in the frame (the mandated
     // #5fd0ff rim lives in the shadow band by construction — see painterly.js
     // shBoost). Hold chroma in the darks; the ink is a HUE, not a grey.
-    satShadow: 0.95,
+    satShadow: 1.12,
     // measured meanSaturation was 0.68 against a §7 target of 0.28-0.60: jewel
     // tones, not neon. The chroma belongs in the PALETTE, not in the grade.
-    satMid:    0.86,
+    satMid:    1.52,
     // ROUND-4: A PRESCRIPTION THAT DID NOT SURVIVE THE IMAGE. A review round
     // named this as the thing bleaching the rim ("satHigh 0.76 is desaturating
     // the highlights the rim lives in"). Built at 0.88 and 0.94 and looked at:
@@ -113,7 +113,7 @@ export const GRADES = {
     // from 0.61 to 0.65 against a §7 ceiling of 0.60. The chroma the frame was
     // missing was never in the top band. Left at 0.76; the rim is fixed where
     // it is delivered, in painterly.js shBoost.
-    satHigh:   0.76,
+    satHigh:   1.34,
     shadowMix: 0.58, highMix: 0.26, tintStrength: 1.0,
     hueLobes: [
       // narrowed + strengthened: 24% of the frame's chroma was sitting in the
@@ -269,7 +269,7 @@ export const GRADES = {
     exposure: 0.86,
     agxSlope: [1.10, 0.99, 0.92],
     agxPower: [1.12, 1.20, 1.30],
-    agxSat: 1.10,
+    agxSat: 1.40,
     contrast: 0.94,
     pivot: 0.32,
     black: 0.028, white: 0.74, shoulder: 0.20,
@@ -280,9 +280,9 @@ export const GRADES = {
     shadowTint: H('#2b3f78'),   // obsidian shadow leans indigo-blue
     midTint:    H('#ffa156'),
     highTint:   H('#fff0b0'),
-    satShadow: 0.94,
-    satMid:    1.24,
-    satHigh:   0.98,
+    satShadow: 1.10,
+    satMid:    1.62,
+    satHigh:   1.38,
     shadowMix: 0.48, highMix: 0.36, tintStrength: 1.0,
     hueLobes: [
       [0.90, 0.095, 0.075],     // magenta -> crimson
@@ -306,7 +306,7 @@ export const GRADES = {
     exposure: 0.82,
     agxSlope: [1.02, 1.02, 1.0],
     agxPower: [1.14, 1.14, 1.18],
-    agxSat: 1.02,
+    agxSat: 1.34,
     contrast: 0.76,
     pivot: 0.38,
     black: 0.020, white: 0.78, shoulder: 0.15,
@@ -317,9 +317,9 @@ export const GRADES = {
     shadowTint: H('#6a5c9c'),   // marble shadow: cool violet-grey, still not neutral
     midTint:    H('#ffe0b8'),
     highTint:   H('#fff4d0'),
-    satShadow: 1.00,
-    satMid:    1.14,
-    satHigh:   1.02,
+    satShadow: 1.12,
+    satMid:    1.56,
+    satHigh:   1.36,
     shadowMix: 0.44, highMix: 0.28, tintStrength: 1.0,
     hueLobes: [
       [0.72, 0.12, 0.040],      // violets -> rose (rim)

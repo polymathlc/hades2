@@ -217,7 +217,9 @@ function verdict(m){
   if(m.bands.highlight < 0.02) bad.push('no highlight band — frame never reaches bright values');
   if(m.deepShadowPresent < 0.01) bad.push('no true blacks');
   if(m.rmsContrast < 0.14) bad.push('LOW CONTRAST — milky/muddy frame');
-  if(m.meanSaturation < 0.18) bad.push('DESATURATED — greyness, violates the palette bible');
+  // Raised after player feedback that the build looked washed out (ART_DIRECTION §15). The old
+  // floor of 0.18 and an upper ban at 0.60 were what agents cited when backing away from colour.
+  if(m.meanSaturation < 0.42) bad.push(`DESATURATED (${m.meanSaturation}) — the frame is washed out; chroma floor is 0.42 per §15`);
   if(m.shadowTint.sat < 0.10 && m.shadowTint.rgb[0]>6) bad.push('shadows are NEUTRAL GREY — hard ban §7');
   if(m.crushedPct > 22) bad.push('blacks crushed to nothing over >22% of frame');
   if(m.blownPct > 4) bad.push('highlights blown out');

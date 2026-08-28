@@ -362,3 +362,36 @@ findable subject. The real test is the one a critic used:
 Measure it as the hero's median luma against the brightest large background element. Before the fix
 that ratio was **0.50 : 1** — the props behind the player were twice as bright as the player. After,
 **2.44 : 1**.
+
+
+---
+
+## 15. VIBRANCY OVERRIDES THE INK DOCTRINE (player feedback, and it wins)
+
+The player's verdict on the first playable build: **"the game has very faded colours."** They are
+right, and this section supersedes any earlier rule that conflicts with it.
+
+How it happened is worth recording, because it was systematic rather than accidental. Every review
+round pushed toward restraint — ink shadows, a dark stage, desaturated darks, "jewel tones, not
+neon", a hard ban above meanSaturation 0.60. Each note was defensible on its own. Compounded across
+four rounds they produced a frame that is tasteful and *drab*, and Tartarus — the biome a player
+sees first — ended up the most desaturated of the three:
+
+| | tartarus (before) | asphodel | elysium |
+|---|---|---|---|
+| `agxSat` | 0.94 | 1.10 | 1.02 |
+| `satMid` | **0.86** | 1.24 | 1.14 |
+| `satHigh` | **0.76** | 0.98 | 1.02 |
+
+Anything below 1.0 pulls chroma OUT. The starting biome was running a bleach pass.
+
+**The rule now:**
+1. Saturation multipliers are **above 1.0 in every band, in every biome.** Chroma is added, never
+   removed. The current floor is roughly `satShadow 1.10 / satMid 1.50 / satHigh 1.30`.
+2. **The 0.60 meanSaturation ceiling is withdrawn.** It was my rule, it was wrong, and it was the
+   number agents cited when they backed away from colour. Hades is *saturated* — crimson, gold,
+   hot magenta, cyan — it is not muted.
+3. Ink shadows still mean shadows carry a HUE rather than going neutral grey. That was always about
+   hue, never about low chroma. A violet shadow should be a *rich* violet.
+4. When restraint and vibrancy conflict, **vibrancy wins.** A frame that reads as flat and washed is
+   a worse failure than one that reads as slightly too hot.
