@@ -246,10 +246,12 @@ export const RAMPS = {
   // DARK STAGE: these stops are ~40% down and the top stop no longer reaches a
   // value the architecture has to compete with. The lit look is bought back
   // where §9.5 wants it — on edges, trim and emissives.
+  // Warmer and slightly richer: a stone that owns a red-brown identity reads as stone under any
+  // light, where a near-neutral plum just becomes whatever colour is shining on it.
   'floor.tartarus': [
-    S(0.00, '#080410'), S(0.18, '#140a17'), S(0.38, '#21101f'),
-    S(0.58, '#30182c'), S(0.76, '#442337'), S(0.90, '#583046'),
-    S(0.97, '#6b3d52'), S(1.00, '#7e5060'),
+    S(0.00, '#0d0710'), S(0.18, '#1b0e15'), S(0.38, '#2b151c'),
+    S(0.58, '#3e1f26'), S(0.76, '#552b31'), S(0.90, '#6b3a3c'),
+    S(0.97, '#7d4747'), S(1.00, '#8d5654'),
   ],
 
   // The column shafts are a DIFFERENT stone from the wall: quarried paler, less

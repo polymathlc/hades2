@@ -114,7 +114,7 @@ const RIGS = {
     // toward a warm near-white lets each material show ITS colour and leaves hue variety to the
     // coloured practicals — the opposite of raising global saturation, which only amplifies
     // whatever single hue already dominates. See ART_DIRECTION §15.
-    key:    { color: '#ffc9a8', intensity: 16.5, dir: [0.646, -0.615, -0.452] },
+    key:    { color: '#ffd8b8', intensity: 21.0, dir: [0.646, -0.615, -0.452] },
     // ── THE SUBJECT LIGHT (§1.1, §9.2) ──────────────────────────────────────
     // The frame did not know who its subject was. Every light in this rig was
     // authored for the ROOM — a key for the architecture, practicals nailed to
@@ -283,11 +283,11 @@ const RIGS = {
       // The three that fall on plain perimeter come DOWN: an evenly washed
       // perimeter is what turned the top of every play frame into one continuous
       // salmon band with no depth in it (§1.1, §11.1).
-      { pos: [ -4.6, 5.4, -12.6], color: '#7ad8ff', intensity: 980, distance: 22, speed: 0.31, flicker: 0.09 },
-      { pos: [-12.6, 5.0,  -4.6], color: '#5fd0ff', intensity: 880, distance: 22, speed: 0.61, flicker: 0.12 },
-      { pos: [  0.0, 4.6, -13.4], color: '#5fd0ff', intensity: 340, distance: 17, speed: 0.44, flicker: 0.14 },
+      { pos: [ -4.6, 5.4, -12.6], color: '#b9dcec', intensity: 420, distance: 22, speed: 0.31, flicker: 0.09 },
+      { pos: [-12.6, 5.0,  -4.6], color: '#b3d8ea', intensity: 380, distance: 22, speed: 0.61, flicker: 0.12 },
+      { pos: [  0.0, 4.6, -13.4], color: '#b3d8ea', intensity: 190, distance: 17, speed: 0.44, flicker: 0.14 },
       { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 230, distance: 18, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#5fd0ff', intensity: 250, distance: 17, speed: 0.52, flicker: 0.14 },
+      { pos: [-14.6, 5.0,   3.6], color: '#b3d8ea', intensity: 150, distance: 17, speed: 0.52, flicker: 0.14 },
     ],
     // ── THE WALL WASH (§1.1 three bands, §11.2 "light the mid-ground") ─────
     // WHAT WAS WRONG. Every light above aims DOWN into the arena or sits
@@ -389,11 +389,11 @@ const RIGS = {
       // out of the picture entirely and the light starts on the arcade face
       // where it was aimed. The lowest ray still climbs 15deg — the ground
       // plane remains outside the volume by construction.
-      { theta: 138, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#8fd8ff', intensity: 2350, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.29, flicker: 0.08 },
+      { theta: 138, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#c2dfee', intensity: 1150, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.29, flicker: 0.08 },
       { theta: 174, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ff9e60', intensity: 2550, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.47, flicker: 0.13 },
       { theta: 210, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffbe86', intensity: 1850, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.36, flicker: 0.11 },
       { theta: 246, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffb070', intensity: 1850, distance: 15, angle: 0.78, penumbra: 0.52, speed: 0.61, flicker: 0.11 },
-      { theta: 282, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#7ad8ff', intensity: 3050, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.41, flicker: 0.09 },
+      { theta: 282, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#c2dfee', intensity: 1350, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.41, flicker: 0.09 },
       { theta: 320, rIn: 1.9, y: 1.6, rOut: -0.3, yOut: 5.4, color: '#ffa668', intensity: 1860, distance: 14, angle: 0.78, penumbra: 0.50, speed: 0.53, flicker: 0.12 },
     ],
   },
