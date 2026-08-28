@@ -296,3 +296,32 @@ number. It is still too slow: even a third of it is a blank screen before the fi
 3. Move synthesis into a Worker so it does not block the main thread, with a loading state.
 4. Cache generated textures in IndexedDB keyed by a content hash, so only the first load pays.
 Whoever owns `src/materials/**` next must bring this under 1500 ms.
+
+## 10. Iterate against the live page, not the build pipeline
+
+`tools/run-shots.sh` costs ~9 minutes per cycle under software rendering. For tuning work — light
+placement, intensities, grade constants — drive the already-loaded page instead and mutate state in
+place:
+
+```js
+// playwright, page already at ?capture=1 and __EREBUS_READY
+await pg.evaluate(() => {
+  const w = window.EREBUS.ctx.lighting.washes;      // or any live system
+  w.forEach(l => l.intensity = 3450);
+  window.EREBUS.capture.step(1.0);
+  window.EREBUS.capture.pose({ pos:[24,28,24], target:[0,1,0], fov:34 });
+  return window.EREBUS.capture.clean();             // dataURL, no rebuild
+});
+```
+
+Six placements A/B'd in one four-minute run instead of six nine-minute build-and-capture cycles.
+
+This is also how you tell "small improvement" apart from **no effect at all**. A prescribed
+mid-ground lighting fix in this project measured byte-identical frames at 0, 1000, 4000 and 20000
+candela — the lights were hitting geometry the camera barely sees. No shot-sheet delta would have
+distinguished that from a modest gain; an in-place sweep made it obvious in minutes.
+
+**Corollary, worth generalising:** light (and measure) the surfaces the CAMERA FRAMES, not the ones
+the plan drawing shows. Lighting `wall.upper` at y≈9.5 because it is "the wall" is the same class of
+error as measuring the floor in the centre 70% of the frame — both reason about the model instead of
+the image.
