@@ -10,3 +10,5 @@ refs/
 
 desktop/app/
 release/
+
+.standalone-build/
