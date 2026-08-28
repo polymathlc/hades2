@@ -177,7 +177,25 @@ const AIR = {
     // glow band and the ember amount are held — a dark backdrop is required, a
     // dead one is not (§9.4: a dead band is not a band), and the embers are the
     // only motion in the negative space.
-    zenith: '#0b0919', horizon: '#150d1e', nadir: '#06050c',
+    // ROUND-4, MEASURED. Three review rounds in a row reported a "hard-aliased
+    // fully black cast shadow" slicing across the upper architecture of 03-08
+    // and 11. It is not a shadow: with lighting.params.shadows = false and
+    // key.castShadow = false the region is byte-identical, and a painterly ink
+    // floor pushed through every patched material moves it by 0.5%. It is THIS
+    // DOME — the abyss between the arena island and the outer colonnade, seen
+    // through the gap. At the values above it measured mean rgb(2,2,4) with
+    // 92% of the band at LITERAL rgb(0,0,0) after the vignette, so the arena
+    // rim's coursed slabs were silhouetted against absolute zero. A 255-count
+    // step is what makes a blocky silhouette read as a staircase; the step is
+    // the defect, not the edge filtering (2x SSAA + SMAA are both working).
+    //
+    // §2 names Void black as #07060f — a VIOLET black, not a zero — and §9.4's
+    // own note here already said "a dead band is not a band". These are ~3.2x
+    // up in linear, which lands the void around display 0.05-0.09: still far
+    // under the play floor (0.055-0.075) and the lit mid-ground (0.15-0.21), so
+    // §11's far < near < mid ordering is untouched, but the negative space now
+    // carries hue, the strata read, and the ember glow has something to sit on.
+    zenith: '#171430', horizon: '#26193a', nadir: '#110d1a',
     glow: '#280a10', glowY: -0.24, glowSharp: 4.2, cloud: 0.70,
     ember: '#e8a24a', emberAmt: 0.34,
     motes: [

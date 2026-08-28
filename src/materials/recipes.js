@@ -747,10 +747,29 @@ const RECIPES = {
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6.5);
 
     // ---- value + temperature -------------------------------------------
+    // ── ROUND-4 (§1.4 "painted texture, not photo texture") ────────────────
+    // The relief-inspection shot measured the wall field between the meander and
+    // the egg-and-dart at p50 0.641 / p95 0.714 — a 0.07 display spread across
+    // 400 screen pixels, i.e. a dead flat plane. Two causes, both fixed here and
+    // in world/chamber.js:
+    //  (a) EXPOSURE. The band sat on the AgX shoulder, which compresses any
+    //      authored variation into nothing. That is the chamber's roleOpts cut.
+    //  (b) FREQUENCY. Every value term in this recipe was either per-ashlar
+    //      (A.id / A.lobe, one step per ~2m block) or grain (freq 22-40, sub-mm
+    //      at inspection range). There was NOTHING at the scale a brush actually
+    //      works at — a 20-60cm drift ACROSS a block face — so a single ashlar
+    //      really was one value plus noise. `wash` is that missing octave: a
+    //      warped 2-octave field at freq 7-9, which at triScale 0.165 lands at
+    //      ~65cm, laid on at +-0.11. It is the difference between a wall that is
+    //      textured and a wall that is painted.
+    const wash = TG.warp2(TG.fbm(n, { freq: 7, octaves: 2, seed: seed + 61, type: 'value' }), n,
+      { amp: 0.13, freq: 3, seed: seed + 62 });
+    const wash2 = TG.fbm(n, { freq: 3.4, octaves: 2, seed: seed + 63, type: 'value' });
     const v = F(n);
     for (let i = 0; i < v.length; i++) {
-      v[i] = 0.24 + A.id[i] * 0.32 + A.lobe[i] * 0.26 + (base[i] - 0.5) * 0.50 + grit[i] * 0.07
-        + chisel[i] * 0.09 - pits[i] * 0.18 + chips[i] * 0.16;
+      v[i] = 0.24 + A.id[i] * 0.30 + A.lobe[i] * 0.24 + (base[i] - 0.5) * 0.50 + grit[i] * 0.07
+        + chisel[i] * 0.09 - pits[i] * 0.18 + chips[i] * 0.16
+        + (wash[i] - 0.5) * 0.22 + (wash2[i] - 0.5) * 0.15;
     }
     const temp = TG.lowFreq(n, (r) => {
       const t = TG.warp(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 31 }), r, { amp: 0.08, freq: 2, seed: seed + 32 });
@@ -790,15 +809,38 @@ const RECIPES = {
     const metal = F(n);
     for (let i = 0; i < metal.length; i++) { metal[i] = clamp01(orn[i] * 1.15); rough[i] = clamp01(rough[i] * (1 - orn[i] * 0.62)); }
 
+    // ── THE UNDERCUT GETS THE INK RAMP, NOT ABSENCE (§2 shadow plum #241238) ──
+    // The intent above this line was right and the implementation could not
+    // deliver it. A FLAT emissive of #241238 at 0.18 is 0.003 scene-linear;
+    // measured on the shipped relief frame the meander channels came back at
+    // p05 0.007 DISPLAY, i.e. pure black — the ink floor was roughly an order of
+    // magnitude too weak to be a floor at all, and the critic's verdict ("the
+    // channels are pure #000 holes") was simply correct.
+    // Raising the flat value is the wrong fix: a constant lifts the lit faces
+    // too and mists the whole wall. So the floor becomes a MAP — the ink is
+    // concentrated where the geometry is CUT (deep cavity, and the engraved
+    // ornament channel itself) and falls to nothing on any face that can catch
+    // the key. Where a channel receives no light this is now the difference
+    // between a dark violet interior and a black line drawn on stone, which is
+    // the whole difference between carving and stencil line-art.
+    // Kept well under the bloom gate: at 0.62 the deepest sample is ~0.012
+    // scene-linear, a §2 "deep shadow" value, not a glow.
+    const inkC = C255(INK.plum);
+    const emissive = new Float32Array(n * n * 3);
+    for (let i = 0; i < n * n; i++) {
+      const cut = clamp01(cav[i] * 1.25 - 0.10) * clamp01(1.0 - edge[i] * 1.6);
+      const kk = clamp01(cut * 0.85 + ornSoft[i] * 0.45);
+      const j = i * 3;
+      emissive[j] = inkC[0] * kk; emissive[j + 1] = inkC[1] * kk; emissive[j + 2] = inkC[2] * kk;
+    }
     return { rgb, height: h, rough, metal, normalScale: 0.75, aoFloor: 0.34,
-      // THE UNDERCUT GETS THE INK RAMP, NOT ABSENCE (§2 shadow plum #241238).
-      // A flat, unconditional 0.05-display floor in the ramp's own violet. It is
-      // two full stops under the bloom gate and invisible on any lit face — but
-      // where a carved channel receives no light at all it is the difference
-      // between a dark interior and a black line drawn on stone, which is the
-      // whole difference between carving and stencil line-art.
-      params: { emissive: 0x241238, emissiveIntensity: 0.18 },
-      paint: { triplanar: true, triScale: 0.165, macroStrength: 0.34, macroScale: 0.0135, macroTint: '#6b4a58', variation: 0.30, variationTint: TARTARUS.stoneLight } };
+      emissive, emissiveIntensity: 0.62,
+      // MACRO SCALE. 0.0135 is a period of ~74 METRES: on a 2m wall panel the
+      // whole macro layer resolved to one constant, so the one term in the
+      // shader that could have broken up a large flat face contributed nothing.
+      // 0.075 puts the base octave at ~13m and its x3.1 octave at ~4.3m, which
+      // is a drift the eye reads across a bay without ever closing into a tile.
+      paint: { triplanar: true, triScale: 0.165, macroStrength: 0.40, macroScale: 0.075, macroTint: '#6b4a58', variation: 0.30, variationTint: TARTARUS.stoneLight } };
   } },
 
   // The plain-fillet perimeter bay. Same quarry, same bed, no meander (§1.5).
@@ -1573,7 +1615,10 @@ const RECIPES = {
       const k = clamp01((1 - vMask[i]) * (0.35 + v[i] * 0.6)) * 0.9, j = i * 3;
       emissive[j] = 255 * k; emissive[j + 1] = 232 * k; emissive[j + 2] = 205 * k;
     }
-    return { rgb, height: h, rough, metal, emissive, emissiveIntensity: 0.085, normalScale: 0.85,
+    // 0.085 was an emissive floor NO lighting cap could reach: statuary is built
+    // from this recipe, and §14's subject test kept failing on a figure whose
+    // brightness was partly self-illumination. A whisper is 0.03; 0.085 was a lamp.
+    return { rgb, height: h, rough, metal, emissive, emissiveIntensity: 0.030, normalScale: 0.85,
       params: { envMapIntensity: 0.55 },
       paint: { triplanar: true, triScale: 0.20, macroTint: ELYSIUM.marbleLight, variation: 0.10, variationTint: ELYSIUM.marbleShadow } };
   } },

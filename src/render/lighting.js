@@ -195,7 +195,21 @@ const RIGS = {
     // the hero (entities/rig.js SLOT_PAINT, rimStrength 9.8-13.2) keeps its
     // edge at full while the world drops to a hairline. Power 2.6 narrows the
     // fresnel band from a washed face to a drawn arris.
-    rim:    { color: '#5fd0ff', dir: [-0.62, 0.36, 0.70], intensity: 2.8, power: 2.60, wrap: 0.22 },
+    // THE COLOUR PUBLISHED HERE IS A PRE-IMAGE, NOT THE PALETTE VALUE.
+    // materials/painterly.js multiplies whatever it is given by
+    // vec3(0.30, 1.22, 0.72) as a pre-compensation for AgX's inset (which
+    // rotates saturated blue toward violet and bleaches it toward white).
+    // Publishing §2's literal '#5fd0ff' through that multiply lands the world's
+    // and the enemy roster's rim at hue ~176 — a green-cyan — while the hero,
+    // whose entities/rig.js authors the pre-image '#8fa4ff', lands at hue 198.
+    // Two different hues, both claiming to be the one mandated accent, is
+    // exactly the "the complement never arrives" failure §9.6 keeps reporting.
+    // #8fa4ff * (0.30,1.22,0.72) = linear (0.082, 0.453, 0.720) -> display
+    // rgb(79,179,222), hue 198, sat 0.68 = §2's Tartarus rim/accent EXACTLY.
+    // So the rig publishes the pre-image and the whole chamber agrees with the
+    // hero. When painterly.js ships `vec3 rimC = uRimColor;` this goes back to
+    // '#5fd0ff' and rig.js's RIM_HEX goes with it — the two must move together.
+    rim:    { color: '#8fa4ff', dir: [-0.62, 0.36, 0.70], intensity: 2.8, power: 2.60, wrap: 0.22 },
     ambient:{ color: '#241238', intensity: 0.34 },
     godrayAnchor: [0.22, 1.06],
     // §9.3 + §9.5. With the bloom fog gone, bands.highlight measured 0.021
@@ -441,12 +455,32 @@ export class LightRig {
     this.key.shadow.mapSize.set(sm, sm);
     // §1.3: the terminator is a painted edge. A wide PCF radius turns a cast
     // shadow into a smudge, which is exactly what "reads as dirt" looks like.
-    // §9.7 "cast shadows must read as shadows, not stains". A PCF radius is
-    // measured in TEXELS, but it is spent at whatever world scale the ortho
-    // frustum happens to be, so 1.5 over a 38u frustum is a genuinely soft
-    // edge on a 3m-wide column shadow. 0.85 keeps just enough softening to
-    // kill the staircase and lets the shape keep a painted edge.
-    this.key.shadow.radius = Math.min(1.0, (q.shadowRadius ?? 1.4) * 0.6);
+    // §9.7 "cast shadows must read as shadows, not stains".
+    //
+    // MEASURED, NOT ASSUMED (round-4 pass). The old line clamped this to
+    // Math.min(1.0, shadowRadius*0.6) = 0.84 texels and justified it against a
+    // "38u frustum". Both numbers were wrong: fitShadows() sizes the ortho half
+    // to bounds.r + 1.35, and the shipped chamber measures bounds.r = 13.005,
+    // so the frustum is 28.7u across, not 38. At the ultra map (3072) that is
+    // 0.00934 u/texel, and at the 03_hero_char framing (~268 px per world unit)
+    // one texel is ~3.3 screen px — i.e. 0.84 texels was a sub-3px penumbra
+    // that the 5-tap Vogel disk could not spend on anything. It is a knob that
+    // was doing nothing, dressed as a considered decision.
+    //
+    // three r185's PCFShadowMap is NOT the one-tap hard variant it used to be:
+    // shadowmap_pars_fragment now does five vogelDiskSample() taps on a
+    // sampler2DShadow at `shadowRadius * texelSize`, dithered per pixel by
+    // interleavedGradientNoise. radius IS the penumbra knob, and PCFSoftShadowMap
+    // is deprecated in this revision (WebGLShadowMap warns and silently falls
+    // back to PCFShadowMap), so switching the renderer's type buys a console
+    // warning and nothing else. See renderer.js.
+    //
+    // The tier value straight through gives ultra 1.5 texels (~5px close, ~2px
+    // in the wide pose): a drawn edge with a resolved shoulder, which is what
+    // "slightly hardened, not a soft PBR falloff" actually looks like. The 2x
+    // SSAA resolve averages four dithered samples per output pixel, so the
+    // Vogel jitter integrates instead of reading as noise.
+    this.key.shadow.radius = Math.max(0.5, q.shadowRadius ?? 1.4);
     // A tight ortho frustum around the arena keeps the texel density high, which
     // is what makes the shadow read as a painted shape rather than a smear.
     this.key.shadow.bias = -0.00015;

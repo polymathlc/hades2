@@ -64,7 +64,13 @@ export const ENVIRONMENT_LOOK = {
   // Hades-like frame loses its subject. 0.30 opens the preset gap to ~3.7x, and
   // the shipped hero (entities/rig.js SLOT_PAINT authors 9.8-13.2 and declares
   // it in paintOverrides so _applyRim leaves it alone) sits far above that.
-  rimStrength: 0.30,
+  // 0.30 -> 0.465. ONE exact compensation, not a taste change: the biome rim is
+  // now published as the PRE-IMAGE '#8fa4ff' rather than the raw '#5fd0ff'
+  // (render/lighting.js), which corrects the world's rim hue from ~176 to 198
+  // but carries 0.645x the luminance through painterly's multiply. 1/0.645 =
+  // 1.55. Every environment material therefore renders the same rim LEVEL it
+  // rendered before, in the right hue.
+  rimStrength: 0.465,
   // POSITIVE Z: see the note in render/lighting.js. A rim aimed away from the
   // shipping camera is a rim nobody ever sees.
   rimDir: [-0.62, 0.34, 0.70],
@@ -92,6 +98,36 @@ export const ENVIRONMENT_LOOK = {
   // the foreground apron. Emissives are deliberately NOT attenuated.
   litGain: 1.0,       // direct diffuse + direct specular
   ambGain: 1.0,       // indirect (hemisphere fill, ambient, IBL)
+  // ── THE INK FLOOR (§1.3, §2 ink ramp, §9.7) ──────────────────────────────
+  // "Shadow is not 'less light' — it is a different COLOUR." Measured on the
+  // round-3 shot sheet: 4.7% of 07_combat and 8.8% of 03_hero_char were at
+  // LITERAL rgb(0,0,0), in slabs — the inward faces of the arena rim run, which
+  // face away from the key and receive nothing but a hemi of 0.75 and an ambient
+  // of 0.34 through a floor-class ambGain. A void slab beside a lit one is the
+  // maximum possible local contrast, which is why its blocky silhouette read to
+  // three separate reviewers as a "hard-aliased cast shadow" — the staircase is
+  // visible because the step is 255 counts tall, not because the edge is
+  // unfiltered. Colour is the fix; more AA is not.
+  //
+  // So: a scene-linear radiance floor, in the ink ramp's own hue, that only
+  // fills in where the surface has genuinely gone to nothing. It is NOT a fill
+  // light and it does NOT lift the frame: it is gated by a smoothstep on the
+  // outgoing value, so a stone at even a tenth of key gets none of it, which is
+  // what keeps §3's "fill never lifts blacks above ~0.06 luminance" and §9.1's
+  // dark stage intact. `inkFloorGain` is per-surface-class, like litGain/ambGain.
+  //
+  // SIZING IS THE WHOLE JOB, and the first attempt at it did nothing at all —
+  // the classic failure ARCHITECTURE §10 warns about. uInkFloor is a NORMALISED
+  // colour (max component 0.054 linear), so a level of 0.0075 adds a peak
+  // radiance of 4e-4; against an AgX middle grey of ~0.13 scene-linear that is
+  // eleven stops down and arrives at the display as nothing. An in-place sweep
+  // measured 0.0075 vs 0.030 as pureBlackFrac 0.1431 vs 0.1381 — i.e. a knob
+  // that looked considered and was inert. 0.055 puts the blue channel at
+  // ~0.0030 scene-linear, which is where a dead surface lands at display ~0.13
+  // sRGB: a deep plum a critic can see into.
+  inkFloor: '#2a1442',   // Shadow plum (§2), pushed a hair toward mid-violet
+  inkFloorLevel: 0.055,  // scene-linear radiance at full fill
+  inkFloorGain: 1.0,
   // SPECULAR IS ALBEDO-INDEPENDENT. A dielectric's F0 is ~0.04 whatever colour
   // it is painted, so darkening a floor's albedo by 20x does NOT darken its
   // sheen by 20x — the specular lobe becomes a BRIGHTNESS PEDESTAL that no
@@ -112,7 +148,11 @@ export const CHARACTER_LOOK = {
   // than the measured 1.25x. This is the value setBiomeLook() re-asserts over
   // every character material, so it is what enemies and NPCs get; the player
   // overrides it per slot in entities/rig.js.
-  rimStrength: 1.10,
+  // 1.10 -> 1.70, the same exact x1.55 as ENVIRONMENT_LOOK and for the same
+  // reason: it buys back the luminance the pre-image hex costs, nothing more.
+  // library.js _applyRim() still clamps this through min(1.45,
+  // rim.intensity/2.4), so the preset gap to the environment is unchanged.
+  rimStrength: 1.70,
   rimGate: [-0.42, 0.55],
   rampSoftness: 0.11,
   rampStrength: 0.82,           // flatter, more graphic bands
@@ -187,6 +227,8 @@ uniform float uPaintTime;
 uniform float uLitGain;
 uniform float uAmbGain;
 uniform float uSpecGain;
+uniform vec3  uInkFloor;      // ink ramp hue, scene-linear
+uniform float uInkFloorLevel; // scene-linear radiance at full fill
 
 float gPaintLit = 1.0;
 
@@ -394,6 +436,8 @@ export function painterly(mat, o = {}) {
     uLitGain:         { value: p.litGain ?? 1.0 },
     uAmbGain:         { value: p.ambGain ?? 1.0 },
     uSpecGain:        { value: p.specGain ?? 1.0 },
+    uInkFloor:        { value: col(p.inkFloor ?? ENVIRONMENT_LOOK.inkFloor) },
+    uInkFloorLevel:   { value: (p.inkFloorLevel ?? ENVIRONMENT_LOOK.inkFloorLevel) * (p.inkFloorGain ?? 1.0) },
   };
 
   // projection: 'uv' | 'planarY' (world XZ) | 'cylinderY' | 'triplanar'
@@ -661,7 +705,30 @@ export function painterly(mat, o = {}) {
         // falls on a convex form. Crushing it to 0.34 on lit pixels deleted it
         // from every silhouette it was authored for; 0.70 keeps it alive on a
         // lit arris while still letting the shadow side carry the strongest note.
-        float shBoost = mix( 1.0, 0.70, smoothstep( 0.05, 0.80, gPaintLit ) );
+        // THIS IS THE LEVER. rimK is the same fresnel band on both halves of a
+        // convex form, so at 0.70 on lit pixels the constant was spending most
+        // of its energy on the KEY-LIT contour — where it lands on top of a
+        // salmon at two stops over middle grey and adds up to white. That white
+        // arris is what three review rounds measured as "the rim is a slate
+        // sheen, there is no third hue in the frame": the cool was being
+        // delivered exactly where the transform is guaranteed to bleach it.
+        // 1.16 / 0.70 inverts that. The shadow-side contour — dark, low
+        // chroma, sitting in AgX's linear midrange where a saturated blue
+        // survives intact — carries the accent, and the lit side keeps a
+        // hairline instead of a halo. Same total energy, opposite distribution,
+        // and it is the distribution the bible actually specifies (§1.2 "rim /
+        // BACK light", §4 "it must vanish on lit edges").
+        // TWO VALUES WERE VETOED BY THE WIDE SHOT, IN ORDER. 0.30 on the lit
+        // half cut every lit contour in the chamber by 2.3x: the Cerberus
+        // statuary went from a readable pale mass to a plum silhouette and the
+        // frame mean fell 20% (44.6 -> 35.9). 0.52 plus a 2x lift on the presets
+        // did not recover it either (35.5), which located the cause — the
+        // statuary and the hero carry paintOverrides.rimStrength, so a preset
+        // lift never reaches them and only shBoost does. The lit half therefore
+        // stays exactly where it was at 0.70 and the whole redistribution is the
+        // 1.16 on the SHADOW half: strictly additive, on the side of the form
+        // §1.2 asks for, and it cannot take value out of the frame.
+        float shBoost = mix( 1.16, 0.70, smoothstep( 0.05, 0.80, gPaintLit ) );
         float rimK = fres * gate * uRimStrength * shBoost;
         // RIM ENERGY IS ANCHORED TO THE RIG, not to a bare constant. The additive
         // term lives in SCENE-REFERRED space, so a bare 0.3 is one brightness at
@@ -669,13 +736,61 @@ export function painterly(mat, o = {}) {
         // silently vanish every time the grade or the rig was retuned. uKeyRef is
         // the irradiance a fully-lit surface receives, so uRimStrength now reads
         // as "fraction of full key", which is what an art director actually means.
+        //
+        // THE ANCHOR WAS THE BUG (round-4). 0.026 of the key reference is, at the
+        // shipped rig (keyRef ~ 15.5 x 0.62 x 1.07 = 10.3), an additive of
+        // 0.27 x rimK scene-linear against a lit stone sitting at ~0.5-1.5. On
+        // the hero that put the cool term one to two stops UNDER the surface it
+        // was supposed to draw on top of, so the only thing visible was the
+        // multiplicative suppression below — which is a DESATURATION, not a hue.
+        // That is why every review round measured the character edge as slate
+        // grey-lavender and called the frame monochrome: there was no third
+        // element, only warm and warm-with-the-red-taken-out.
+        //
+        // ...BUT RAISING THIS IS NOT THE FIX, AND THAT WAS MEASURED, NOT
+        // ASSUMED. A 2.35x lift here (0.0611) was built, shipped to the live
+        // page and looked at: the hero's contour went WHITE, not cyan — the
+        // additive simply climbed past the point where AgX's shoulder bleaches
+        // hue, which is the exact failure the 0.34 note above already records.
+        // The energy was never the problem; the DISTRIBUTION was. The anchor
+        // stays where entities/rig.js calibrated its per-slot 9.8-13.2 against,
+        // and the cool is bought instead by shBoost below, which moves it off
+        // the lit half of the form and on to the shadow-side contour where §1.2
+        // and §4 put it in the first place.
         float rimE = rimK * uKeyRef * 0.026;
         // AgX's inset rotates saturated blue toward violet and bleaches anything
         // far over middle grey, so the mandated #5fd0ff arrived at the display
         // as a white-lavender edge. The PALETTE constant stays authoritative;
         // this only pre-compensates for a known property of the transform.
+        //
+        // WHAT THIS MULTIPLY ACTUALLY IS, and why it must not be removed blind:
+        // it is the PRE-IMAGE operator, and entities/rig.js authors RIM_HEX
+        // '#8fa4ff' as the pre-image of the spec's '#5fd0ff' under it — that pair
+        // measures rgb(79,179,222), hue 198, at the display, which IS the spec.
+        // A review round read the raw hex, called it authored-wrong, and
+        // prescribed setting it to '#5fd0ff'; doing that WITH this multiply still
+        // in place double-compensates and lands the hero's edge at hue ~176, a
+        // green-cyan. Verified by arithmetic on both hexes before touching it.
+        //
+        // The operator is therefore LEFT EXACTLY AS AUTHORED, and the mirror bug
+        // it exposed is fixed on the input side instead: render/lighting.js was
+        // publishing the SPEC hex '#5fd0ff' to every world and enemy material,
+        // which through this multiply arrives at hue ~176 — a green-cyan. So the
+        // hero's edge and every other edge in the chamber were two different
+        // hues both claiming to be the one mandated accent. RIGS.tartarus.rim
+        // now publishes the same pre-image the hero uses. See lighting.js.
         vec3 rimC = uRimColor * vec3( 0.30, 1.22, 0.72 );
-        pLitCol *= mix( vec3( 1.0 ), vec3( 0.42, 0.82, 1.06 ), clamp( rimK * 5.0, 0.0, 1.0 ) );
+        // KEY SUPPRESSION IS NOT THE RIM. This multiply takes the warm out of
+        // whatever the rim lands on so the complement is not just added to a
+        // salmon and read as white. But at rimK * 5.0 it saturated across the
+        // whole grazing half of the coat while the additive above was still a
+        // whisper — i.e. the visible "rim" was a desaturating WASH with no hue in
+        // it, which is exactly the "reads as sheen" failure. x3.2 still takes
+        // the warm out of the contour but no longer saturates across the whole
+        // grazing half, so the suppression cannot outrun the colour it exists to
+        // protect. (x1.6 was tried and is too far the other way: it hands the
+        // lit half back at full chroma and the hero reads as flat orange.)
+        pLitCol *= mix( vec3( 1.0 ), vec3( 0.42, 0.82, 1.06 ), clamp( rimK * 3.2, 0.0, 1.0 ) );
         pLitCol += rimC * rimE;
 
         // (4) inner contour — a colour-shifted dark edge that dies in the light
@@ -686,6 +801,25 @@ export function painterly(mat, o = {}) {
           pLitCol = mix( pLitCol, pLitCol * uContourColor * 2.0, clamp( cm, 0.0, 1.0 ) );
         }
         #endif
+
+        // (5) THE INK FLOOR — §1.3 "shadow is a different COLOUR, never an
+        // absence", §2's ink ramp bottoms at #07060f, and §9.7 wants shadow
+        // SHAPES rather than stains. Measured on round 3: 4.7-8.8% of the
+        // shipped frames were at literal rgb(0,0,0), in hard-edged slabs.
+        // Gated on the surface's own outgoing value so it fills the void and
+        // nothing else: at a tenth of key the gate is already shut, so this
+        // cannot lift the ground plane (§9.1) or milk the frame (§7). It is
+        // added BEFORE the emissive so a glowing bead still sits on top of ink.
+        {
+          float pv = dot( pLitCol, vec3( 0.2126, 0.7152, 0.0722 ) );
+          // The gate is a FIXED scene-linear threshold, not a multiple of the
+          // level: tying the two together meant raising the ink also widened
+          // the set of pixels it touched, which is how a floor becomes a lift.
+          // 0.030 is ~2 stops under AgX middle grey — a stone at even a tenth
+          // of key is already past it.
+          float voidK = 1.0 - smoothstep( 0.0, 0.030, pv );
+          pLitCol += uInkFloor * ( uInkFloorLevel * voidK );
+        }
 
         outgoingLight = pLitCol + pEm;
       }

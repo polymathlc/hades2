@@ -114,8 +114,20 @@ export class RenderSystem {
     r.toneMappingExposure = 1.0;
 
     // Shadows: PCF, tuned in lighting.js for the fixed 3/4 iso frustum.
-    // (PCFSoftShadowMap is deprecated in three 0.185 and logs a warning on every
-    // boot — the softening now comes from light.shadow.radius instead.)
+    //
+    // VERIFIED AGAINST node_modules/three/build/three.module.js (r185), because a
+    // review round prescribed PCFSoftShadowMap here on the belief that
+    // PCFShadowMap is "the one-tap hard variant":
+    //   * WebGLShadowMap:  `if (this.type === PCFSoftShadowMap) warn(
+    //     'PCFSoftShadowMap has been deprecated. Using PCFShadowMap instead.')`
+    //     — setting it is a no-op plus a boot warning.
+    //   * shadowmap_pars_fragment's SHADOWMAP_TYPE_PCF getShadow() takes FIVE
+    //     vogelDiskSample() taps on a sampler2DShadow at radius
+    //     `shadowRadius * texelSize`, with the disk rotated per pixel by
+    //     interleavedGradientNoise(gl_FragCoord.xy). Hardware bilinear PCF on
+    //     top of that. It has not been one-tap since the r16x rewrite.
+    // So `light.shadow.radius` is the only real penumbra control, and it lives
+    // in lighting.js where the frustum that scales it also lives.
     r.shadowMap.enabled = !!q.shadows && (ctx.quality.shadows !== false);
     r.shadowMap.type = THREE.PCFShadowMap;
     r.shadowMap.autoUpdate = true;

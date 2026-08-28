@@ -516,34 +516,54 @@ const RIM_GATE = [-0.45, 0.40];
 // rimPower comes down with it: a power-2.3 fresnel band on a 190px figure is
 // three pixels wide, which is a rumour rather than a rim.
 //
-// THE TOP RAMP LEVEL IS AN EXPOSURE CONTROL, and it is the one that decides
-// whether the character has LOCAL COLOUR. `k` is the surface's lit-ness
-// normalised by the key reference, so rampLevels.z caps the irradiance the lit
-// side can ever reach — including irradiance from a brazier practical standing
-// two metres away, which is what was actually blowing the hero out. At 1.0 the
-// crimson chiton, the plum mantle, the gold lames and the skin all arrived at
-// the display as ONE flat salmon, because that is what AgX does on its
-// shoulder. Capping at ~0.66 keeps the whole figure inside the transform's
-// linear-ish midrange, where hue survives, and the RAMP (not the exposure) is
-// what makes the lit side read bright — which is the §4 'painted, not
-// physical' shading the bible actually asks for.
+// ── ROUND-4: THE LIT HALF WAS ONE VALUE BY CONSTRUCTION (§4) ────────────────
+// The paragraph that used to stand here argued that rampLevels.z was "an
+// exposure control" and that capping it at 0.66 was what preserved the hero's
+// local colour. Read the shader and that is not what the two numbers do
+// together. painterly.js computes
+//     sc = mix( 1.0, r / k, uRampStrength )
+// and multiplies the direct diffuse by it. directDiffuse is itself proportional
+// to k, so at rampStrength 0.95 the product is ~r * keyRef * albedo: k cancels
+// and every surface above the top ramp step returns EXACTLY ONE VALUE. The lit
+// half of the character was a flat plane, and lowering z did not protect its
+// hue — the flatness is what destroyed the hue, because a single value cannot
+// carry a chiton, a mantle, skin and gold as four different things.
+//
+// Measured on the live page (in-place uniform sweep at the shipping pose, no
+// rebuild): at rampStrength 0.95 / z 0.66 the hero's brightest 40px block sat
+// at 0.611 display against a statue at 0.871 — the §14 subject test at 0.70:1
+// where it wants >2:1. Restoring the gradient and raising the cap took the
+// hero to 0.73 with visible modelling on the pauldron, the greave and the
+// skirt panels for the first time.
+//
+// So: rampStrength drops to ~0.55-0.60, which keeps 40-45% of the true
+// cosine falloff alive under the painted bands (§4's "soft 2-3 step ramp, not
+// full toon, not full PBR"), and rampLevels.z goes up so the top band reaches
+// a real value instead of being clamped a third of the way up.
+//
+// A WARNING THE SWEEP PRODUCED, worth recording: pushing litGain further does
+// NOT keep paying. x1.55 / x2.2 / x3.0 measured 0.732 / 0.767 / 0.790 — the
+// hero hits the AgX shoulder too, and past ~x1.5 all that is bought is hue
+// loss. The subject test cannot be won on the hero's exposure alone; the
+// competing background has to come DOWN, which is what the statue, brazier
+// and colonnade caps in world/chamber.js are for.
 export const SLOT_PAINT = {
   skin: {
-    litGain: 0.30, ambGain: 0.42, specGain: 0.22, rimStrength: 10.4, rimPower: 1.75, rimGate: RIM_GATE,
+    litGain: 0.49, ambGain: 0.44, specGain: 0.22, rimStrength: 10.4, rimPower: 1.75, rimGate: RIM_GATE,
     rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.30, 0.72, 1.78],
-    rampLevels: [0.27, 0.48, 0.66], rampSteps: [0.30, 0.58], rampSoftness: 0.05, rampStrength: 0.95, shadowDepth: 0.88,
+    rampLevels: [0.27, 0.50, 0.92], rampSteps: [0.30, 0.58], rampSoftness: 0.07, rampStrength: 0.60, shadowDepth: 0.88,
     contourStrength: 0.82, contourStart: 0.54,
   },
   cloth: {
-    litGain: 0.29, ambGain: 0.40, specGain: 0.18, rimStrength: 12.0, rimPower: 1.70, rimGate: RIM_GATE,
+    litGain: 0.47, ambGain: 0.42, specGain: 0.18, rimStrength: 12.0, rimPower: 1.70, rimGate: RIM_GATE,
     rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.26, 0.70, 1.90],
-    rampLevels: [0.29, 0.50, 0.68], rampSteps: [0.30, 0.58], rampSoftness: 0.06, rampStrength: 0.92, shadowDepth: 0.92,
+    rampLevels: [0.29, 0.52, 0.94], rampSteps: [0.30, 0.58], rampSoftness: 0.08, rampStrength: 0.58, shadowDepth: 0.92,
     contourStrength: 0.95, contourStart: 0.50,
   },
   hair: {
-    litGain: 0.26, ambGain: 0.38, specGain: 0.16, rimStrength: 13.2, rimPower: 1.65, rimGate: RIM_GATE,
+    litGain: 0.42, ambGain: 0.40, specGain: 0.16, rimStrength: 13.2, rimPower: 1.65, rimGate: RIM_GATE,
     rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.24, 0.66, 1.95],
-    rampLevels: [0.22, 0.42, 0.58], rampSteps: [0.28, 0.56], rampSoftness: 0.05, rampStrength: 0.94, shadowDepth: 0.94,
+    rampLevels: [0.22, 0.44, 0.86], rampSteps: [0.28, 0.56], rampSoftness: 0.07, rampStrength: 0.60, shadowDepth: 0.94,
     contourStrength: 1.00, contourStart: 0.48,
   },
   // METAL is the character's own highlight band (§9.3/§9.5): the gold lames,
@@ -551,9 +571,9 @@ export const SLOT_PAINT = {
   // allowed to reach genuine white, and they get there on a small sharp
   // SPECULAR glint (§4), not on a raised diffuse.
   metal: {
-    litGain: 0.38, ambGain: 0.38, specGain: 0.68, rimStrength: 9.8, rimPower: 2.00, rimGate: RIM_GATE,
+    litGain: 0.56, ambGain: 0.40, specGain: 0.68, rimStrength: 9.8, rimPower: 2.00, rimGate: RIM_GATE,
     rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.34, 0.74, 1.70],
-    rampLevels: [0.26, 0.56, 0.90], rampSteps: [0.30, 0.56], rampSoftness: 0.045, rampStrength: 0.84, shadowDepth: 0.74,
+    rampLevels: [0.26, 0.58, 1.00], rampSteps: [0.30, 0.56], rampSoftness: 0.055, rampStrength: 0.55, shadowDepth: 0.74,
     contourStrength: 0.70, contourStart: 0.56,
   },
   glow: { litGain: 0.22, ambGain: 0.30, specGain: 0.16, rimStrength: 0.30, rimPower: 2.30, rimDir: RIM_DIR },

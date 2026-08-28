@@ -379,12 +379,49 @@ export class World {
       // FRAME around the subject, not the subject. Its diffuse comes down hard
       // and its specular stays up, so the arrises, fillets and mouldings keep
       // carrying the highlight band (§9.5) while the broad faces recede.
-      column: { litGain: 0.60, ambGain: 0.76, specGain: 1.80, rimDir: ENV_RIM_DIR, rimStrength: 1.25,
+      // ── ROUND-4: THE PAINTED RAMP DOES NOT CAP ANYTHING ABOVE THE KEY ─────
+      // painterly.js computes k = clamp( pLit / uKeyRef, 0, 1 ). Every surface
+      // receiving MORE irradiance than the key reference pins k at 1, where
+      // r = rampLevels.z = 1 and sc = 1 — the ramp becomes a pass-through and
+      // the diffuse runs on uncapped. That is the entire mid-ground band of a
+      // Hades frame: masonry, statuary and brazier bowls standing one to three
+      // metres from a practical, i.e. permanently over the key. Two measured
+      // consequences, and they are the SAME defect:
+      //   §14 subject test — the focal statue's 40px block sat at 0.859 display
+      //     against a hero at 0.611. The props were out-valuing the protagonist
+      //     by 1.4x and no amount of hero exposure closes that (the hero hits
+      //     the same shoulder: x1.55/x2.2/x3.0 litGain measured 0.732/0.767/
+      //     0.790, i.e. it stops paying).
+      //   The relief shot — the wall field between the meander and the
+      //     egg-and-dart measured p50 0.641 / p95 0.714, a 0.07 spread across
+      //     400px, which the critic correctly called a dead flat salmon plane.
+      //     Its painted variation IS in the albedo; the exposure was compressing
+      //     it into the top of the AgX shoulder where nothing separates.
+      // The only lever this file has is the diffuse gain, so the architecture
+      // comes down until it sits in the transform's linear-ish midrange, where
+      // the texture reads AND the hero out-values it. Specular stays where it
+      // is: §9.5 puts the highlight band on the arrises, not the faces.
+      // Verified in place against the live page, not through the build.
+      column: { litGain: 0.40, ambGain: 0.56, specGain: 1.80, rimDir: ENV_RIM_DIR, rimStrength: 1.25,
                 rimPower: 2.7, triScale: 0.155, circScale: 1.6 },
-      wall:   { litGain: 0.46, ambGain: 0.62, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
-      bay:    { litGain: 0.44, ambGain: 0.58, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
-      arch:   { litGain: 0.60, ambGain: 0.58, specGain: 1.40, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
-      metal:  { specGain: 1.25, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+      wall:   { litGain: 0.34, ambGain: 0.50, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
+      bay:    { litGain: 0.32, ambGain: 0.46, specGain: 0.70, rimDir: ENV_RIM_DIR, rimStrength: 1.15 },
+      arch:   { litGain: 0.44, ambGain: 0.50, specGain: 1.40, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+      // THE BRAZIER BOWL WAS NEVER GAINED AT ALL. Every other role here carries
+      // an explicit litGain; `metal` did not, so bronze.verdigris ran at the
+      // painterly default of 1.0 — three times the wall — on the one object in
+      // the room that always stands INSIDE its own practical. That is why the
+      // bowls read as pale blobs along the top edge of the money shot and why
+      // dimming the statue alone never moved the frame's top block.
+      metal:  { litGain: 0.34, ambGain: 0.46, specGain: 1.25, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+      // ...and neither was the CLOTH. A banner is a 2x4.6m flat plane hanging in
+      // the upper band of every play framing, and it was running at 1.0/1.0 —
+      // measured as the single brightest background block in the money shot
+      // (0.744 display) once the statue was capped, i.e. a piece of drapery was
+      // out-valuing the protagonist. Crimson silk lit by firelight is deep and
+      // saturated, not a lantern.
+      cloth:  { litGain: 0.30, ambGain: 0.42, specGain: 0.55, rimDir: ENV_RIM_DIR, rimStrength: 1.10 },
+      iron:   { litGain: 0.34, ambGain: 0.44, specGain: 1.05, rimDir: ENV_RIM_DIR, rimStrength: 1.20 },
       // GOLD LIVES OR DIES ON SATURATION. §2 puts the gold core at #f2c14e
       // (hue 43); measured highlightTint across ten frames was hue 20-26 at
       // sat 0.87, i.e. salmon-white. Gold pushed past AgX's shoulder is not
@@ -398,7 +435,7 @@ export class World {
       // Now that the stone has dropped a full band the leaf keeps its diffuse
       // and gets a much hotter sharp lobe: gold reads as gold-on-dark at any
       // zoom, which is the single most Hades-like thing this kit can do.
-      leaf:   { specGain: 3.10, litGain: 0.82, ambGain: 0.78, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
+      leaf:   { specGain: 3.10, litGain: 0.60, ambGain: 0.62, rimDir: ENV_RIM_DIR, rimStrength: 1.30 },
     };
     this.kit = kit;
 
@@ -836,7 +873,7 @@ export class World {
     // #ffe9a8 -> #c98f2b) and an emissive is NOT multiplied by the key, so a
     // small amount of it is the only thing that can carry the hue home. Kept
     // low: this is a lit edge, not a lamp.
-    const leaf = this._M(B.mats.leaf, { emissiveIntensity: 0.26, tint: '#f2c14e', litGain: 0.52, ambGain: 0.42, specGain: 2.40 });
+    const leaf = this._M(B.mats.leaf, { emissiveIntensity: 0.20, tint: '#f2c14e', litGain: 0.36, ambGain: 0.34, specGain: 2.40 });
     {
       // two shared arc geometries, placed by rotation — eight broken rails for
       // two draw calls instead of eight
@@ -868,7 +905,7 @@ export class World {
         // the cheapest legitimate way to put a bright, saturated, hand-placed
         // note in the bottom band without lighting the floor itself.
         const railMat = rad > R * 0.5
-          ? this._M(B.mats.leaf, { emissiveIntensity: 0.20, tint: '#f2c14e', litGain: 0.48, ambGain: 0.38, specGain: 2.10 })
+          ? this._M(B.mats.leaf, { emissiveIntensity: 0.14, tint: '#f2c14e', litGain: 0.32, ambGain: 0.30, specGain: 2.10 })
           : leaf;
         let a = f() * TAU;
         for (let k = 0; k < nSeg; k++) {
@@ -911,7 +948,7 @@ export class World {
       // and nothing else.
       const bandMat = this._M(B.mats.leaf, {
         emissiveIntensity: 0.14, vertexColors: true, tint: '#d9b552',
-        litGain: 0.34, ambGain: 0.26, specGain: 2.30,
+        litGain: 0.26, ambGain: 0.22, specGain: 2.30,
       });
       const stoneMat = this._M(B.mats.bay, { litGain: 0.36, ambGain: 0.58, variation: 0.20 });
       const N = Math.max(24, Math.round((TAU * bandR) / (bh * 1.06)));
@@ -1067,7 +1104,11 @@ export class World {
       // Set down so the ground plane's specular hit stays a hit, not a rival.
       // and set down again: with the ring broken the burst no longer needs to
       // be a value rival to stay legible as ornament (§9.5 lights EDGES).
-      const rays = new THREE.Mesh(rayGeo, this._M(B.mats.leaf, { emissiveIntensity: 0.0, specGain: 0.78, litGain: 0.46 }));
+      // ROUND-4: the burst is BEHIND the hero's default mark in every gameplay
+      // frame. It is already broken and off-axis (see rayGeo), but it was still
+      // matching the character's own top values; a sunburst at the subject's
+      // value is a halo whatever its shape. Set a full band under the hero.
+      const rays = new THREE.Mesh(rayGeo, this._M(B.mats.leaf, { emissiveIntensity: 0.0, specGain: 0.78, litGain: 0.28, ambGain: 0.34 }));
       rays.name = 'floor.boss.rays';
       rays.position.set(medOff.x, 0.02, medOff.y);
       rays.receiveShadow = true;
@@ -1350,7 +1391,15 @@ export class World {
     //            are the dark wings the eye is supposed to fall past. Uniform
     //            perimeter lighting is what made the top of every frame one
     //            continuous salmon band with no depth in it.
-    const wallMat = this._M(B.mats.wall, { variation: 0.20, litGain: 0.62, ambGain: 0.54, specGain: 1.15, tint: '#9d8098' });
+    // ROUND-4: §14's subject test SUPERSEDES §11.2 where they collide, and here
+    // they collided. "The focal bays are the brightest band" was implemented as
+    // nearly double the key on a pale lavender tint, and the result measured
+    // 0.694-0.744 display in the top-edge blocks against a hero at 0.669 — the
+    // wall behind the player was brighter than the player. The bays stay the
+    // brightest ARCHITECTURE (bayMat is 0.19, the floor lower still) but they
+    // now sit a clear band UNDER the subject, and the tint comes off white so
+    // the ashlar reads as lit crimson stone rather than as bleached plaster.
+    const wallMat = this._M(B.mats.wall, { variation: 0.20, litGain: 0.30, ambGain: 0.40, specGain: 1.45, tint: '#7f6786' });
     const bayMat = this._M(B.mats.bay, { variation: 0.26, litGain: 0.19, ambGain: 0.40, specGain: 0.42, tint: '#5b4869' });
     // ── ORNAMENT MUST READ AS RELIEF, NOT AS PRINT (§9.5, relief pass) ────
     // At 0.06 emissive and full gains against a wall running litGain 0.36, the
@@ -1366,9 +1415,14 @@ export class World {
     // vertexColors switches on the hand-baked contact occlusion every moulding
     // unit now carries (kit.js reliefShade): dark at the root where it meets
     // the wall, dark on the undercut, light on the crown.
+    // ROUND-4: a #f4ece0 albedo at litGain 1.02 is gold pushed past the AgX
+    // shoulder, which is the exact failure this file complains about elsewhere
+    // ("gold pushed past the shoulder is not gold any more, it is a bleached
+    // highlight"). The diffuse comes back into the linear midrange and the
+    // sharp lobe keeps carrying the highlight band (§9.5).
     const leaf = this._M(B.mats.leaf, {
       emissiveIntensity: 0.04, vertexColors: true, tint: '#f4ece0',
-      litGain: 1.02, ambGain: 0.60, specGain: 1.95,
+      litGain: 0.66, ambGain: 0.52, specGain: 2.30,
     });
     const metal = this._M(B.mats.metal);
 
@@ -2007,8 +2061,32 @@ export class World {
     // gold trim's specular goes up with it, so the figures model harder instead
     // of just getting paler — the tint is deliberately NOT raised, because a
     // pale mass is what §9.2 was protecting the hero from.
-    const statueMat = { mat: 'marble.elysium', matOpts: { tint: '#8f8496', litGain: 0.56, ambGain: 0.38,
-      specGain: 1.95, variation: 0.14, variationTint: '#5a2331', triScale: 0.42 } };
+    // ── ROUND-4: THE STATUE WAS THE BRIGHTEST OBJECT IN THE GAME (§9.2/§14) ──
+    // Three critic rounds running, the subject test failed on this material.
+    // Measured at the shipping pose: the focal hound's 40px block read 0.859
+    // display against a hero at 0.611 — the set dressing out-valued the
+    // protagonist by 1.4x, in the frame whose entire job is to show him.
+    // It is not enough to nudge this. A statue stands two metres from a brazier
+    // practical, so its k pins at 1 and the painted ramp stops capping (see the
+    // roleOpts note above): the diffuse gain is the whole cap. 0.56 -> 0.20,
+    // ambient down with it, and the marble tint pulled off Elysium white into
+    // the Tartarus ink ramp so the figure reads as DARK STONE with a lit gold
+    // trim and a cool arris — which is what a Supergiant statue actually is —
+    // rather than as a pale mass. specGain deliberately UNCHANGED: §9.5 keeps
+    // the highlight band on the trim, the fillets and the muzzle's arris.
+    // ambGain kept a little above the diffuse cut: at 0.24 the inspection pose
+    // showed the hound as a solid black mass with no form on its shade side,
+    // which trades one §7 failure for another. 0.34 gives the shadow half a
+    // readable plum interior without adding anything to the lit half's value.
+    // AND THE SPECULAR WAS THE OTHER HALF OF IT. With the diffuse capped, the
+    // brightest cell left in the whole money-shot thumbnail was still the hound
+    // — its HAUNCH, a broad convex marble surface returning a near-white
+    // env-map lobe at specGain 1.95 on a recipe that also paints gold veins as
+    // metal (marble.elysium: metal = gMask * 0.8). §9.5 wants the highlight on
+    // ornament, and this statue HAS ornament: `statue.trim` is a separate mesh
+    // on gold.leaf and it keeps its lobe. The stone body does not need one.
+    const statueMat = { mat: 'marble.elysium', matOpts: { tint: '#6a5f73', litGain: 0.22, ambGain: 0.34,
+      specGain: 0.80, envMapIntensity: 0.20, variation: 0.14, variationTint: '#5a2331', triScale: 0.42 } };
 
     // Statues stand on the wall arc between the doors, facing the arena.
     const kinds = B.props.statues;
@@ -2019,7 +2097,13 @@ export class World {
     const spots = gaps.slice(1, 1 + Math.min(kinds.length, 3)).map((g2, i) => ({ a: g2.a, kind: kinds[i % kinds.length] }));
     for (const s of spots) {
       const rr = this.radiusAt(s.a) - 4.0;
-      const st = kit.statue(s.kind, { scale: s.kind === 'hound' ? 1.35 : 1.15, plinth: true, plinthH: 1.15, plinthW: s.kind === 'hound' ? 2.4 : 1.7, ...statueMat });
+      // SIZED TO THE LENS. A figure whose head leaves the top of the play
+      // camera's frame is not "monumental", it is cropped: §14's critic read the
+      // focal hound as "cropped into the corner", and no lighting work fixes a
+      // silhouette the frame cuts in half. The perimeter figures come down a
+      // notch and the focal one (below) comes down further, so a statue's whole
+      // silhouette — head, shoulders, plinth — lands inside the upper third.
+      const st = kit.statue(s.kind, { scale: s.kind === 'hound' ? 1.20 : 1.02, plinth: true, plinthH: 0.95, plinthW: s.kind === 'hound' ? 2.4 : 1.7, ...statueMat });
       qq.setFromEuler(new THREE.Euler(0, faceIn(s.a) + (f() - 0.5) * 0.3, 0));
       const x = Math.cos(s.a) * rr, z = Math.sin(s.a) * rr;
       m.compose(new THREE.Vector3(x, 0, z), qq, one);
@@ -2054,7 +2138,7 @@ export class World {
       this.colliders.push({ kind: 'circle', x: d.x, z: d.z, r: 1.8 });
     } else {
       const rr = this.radiusAt(fa) - 5.6;
-      const st = kit.statue(B.props.focalStatue, { scale: 1.7, plinth: true, plinthH: 1.6, plinthW: 3.0, ...statueMat });
+      const st = kit.statue(B.props.focalStatue, { scale: 1.42, plinth: true, plinthH: 1.05, plinthW: 3.0, ...statueMat });
       qq.setFromEuler(new THREE.Euler(0, faceIn(fa), 0));
       const x = Math.cos(fa) * rr, z = Math.sin(fa) * rr;
       m.compose(new THREE.Vector3(x, 0, z), qq, one);

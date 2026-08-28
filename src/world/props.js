@@ -257,10 +257,26 @@ export class Props {
     // and every brazier became a pink balloon that swallowed the architecture
     // it was supposed to light. The GLOW is now narrow and weak; the read comes
     // from the BODY and the tiny near-white CORE, which is where §5 puts it.
+    // ── ROUND-4: A FLAME IS toneMapped:false, SO IT IS THE ONE THING IN THE
+    // FRAME THE GRADE CANNOT PULL BACK. ─────────────────────────────────────
+    // Diagnostic (live page, every painterly material in the room crushed to
+    // 0.25x diffuse): the brightest background block LEFT in the money shot was
+    // a flame body at 0.561 display, at the top edge, out-valuing the hero.
+    // The braziers stand on the perimeter, so their flames land in the top band
+    // of every play framing and the eye goes there instead of to the subject.
+    // §5 puts the read on a tiny near-white CORE with a saturated body behind
+    // it, so the core keeps its alpha and the BODY — the big warm mass that was
+    // doing the damage — comes down and in. Height comes down with it: a 2m
+    // flame on a 2m brazier is a bonfire, not a lamp.
+    // ...and the CORE comes back UP after measuring the first cut: bands.highlight
+    // fell 0.027 -> 0.017 on the money shot, and \u00a79.3 names flame as one of the
+    // four legitimate sources of the highlight band. The near-white core is
+    // exactly that source \u2014 a few hundred hot pixels, not a wide warm mass \u2014 so
+    // it is the one layer that should have gone UP while the body came down.
     const layers = [
-      { L: 2, w: 0.52, a: 0.058, wide: 1.02 * scale, tall: 2.05 * scale, core, body, glow },
-      { L: 1, w: 0.32, a: 0.70, wide: 0.74 * scale, tall: 2.00 * scale, core, body, glow },
-      { L: 0, w: 0.22, a: 1.34, wide: 0.42 * scale, tall: 1.40 * scale, core, body: '#ffc24a', glow },
+      { L: 2, w: 0.52, a: 0.042, wide: 0.90 * scale, tall: 1.74 * scale, core, body, glow },
+      { L: 1, w: 0.32, a: 0.40, wide: 0.62 * scale, tall: 1.58 * scale, core, body, glow },
+      { L: 0, w: 0.22, a: 1.42, wide: 0.44 * scale, tall: 1.34 * scale, core, body: '#ffc24a', glow },
     ];
     const mats = [];
     layers.forEach((cfg, li) => {
