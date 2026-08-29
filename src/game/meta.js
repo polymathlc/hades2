@@ -68,6 +68,12 @@ export const GOD_LEGACIES = {
   hecate:    { name: 'Crossroads Lore', text: r => `Maximum Magick +${r * 8}; regeneration +${r * 3}%`, apply: (m, r) => { m.maxManaAdd += r * 8; m.manaRegenMul *= 1 + r * 0.03; } },
   selene:    { name: 'Moonlit Discipline', text: r => `Cast and Call damage +${r * 3}%`, apply: (m, r) => { const v = 1 + r * 0.03; m.castMul *= v; m.callMul *= v; } },
   hephaestus:{ name: 'Master Smithing', text: r => `Forged weapon effects +${r * 5}%`, apply: (m, r) => { m.forgeMul *= 1 + r * 0.05; } },
+  demeter:   { name: 'Seasonal Wisdom', text: r => `Chill power and duration +${r * 5}%`, apply: (m, r) => { const v = 1 + r * 0.05; m.status.chill *= v; m.statusDuration.chill *= v; } },
+  apollo:    { name: 'Radiant Form', text: r => `Attack and Cast damage +${r * 2}%`, apply: (m, r) => { const v = 1 + r * 0.02; m.attackMul *= v; m.castMul *= v; } },
+  hera:      { name: 'Royal Decree', text: r => `All damage +${r * 2}%; damage taken -${r}%`, apply: (m, r) => { m.dmgMul *= 1 + r * 0.02; m.damageTaken *= 1 - r * 0.01; } },
+  hestia:    { name: 'Hearth Eternal', text: r => `Scorch power +${r * 6}%`, apply: (m, r) => { m.status.burn *= 1 + r * 0.06; } },
+  chaos:     { name: 'Primordial Favor', text: r => `All damage and Magick regeneration +${r * 2}%`, apply: (m, r) => { const v = 1 + r * 0.02; m.dmgMul *= v; m.manaRegenMul *= v; } },
+  hades:     { name: 'Underworld Authority', text: r => `Doom power +${r * 6}%; maximum Life +${r * 3}`, apply: (m, r) => { m.status.doom *= 1 + r * 0.06; m.maxHealthAdd += r * 3; } },
 };
 
 const cleanRank = value => Math.max(0, Math.min(META_MAX_RANK, Math.floor(Number(value) || 0)));

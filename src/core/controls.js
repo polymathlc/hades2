@@ -9,6 +9,7 @@ export const CONTROL_ROWS = Object.freeze([
   ['Call', 'R', 'B / button 1'],
   ['Interact / Equip', 'E / F', 'RB / button 5'],
   ['Choose weapon', 'Approach an arm at home', 'Approach an arm at home'],
+  ['View current boons', 'B / Tab', 'Pause → Current Boons'],
   ['Pause / Controls', 'Esc / H', 'Menu / button 9'],
 ]);
 

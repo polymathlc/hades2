@@ -74,6 +74,12 @@ export const GODS = {
   hecate:    '#8ef0d0',
   selene:    '#dfe9ff',
   hephaestus:'#ff9b42',
+  demeter:   '#9de6f2',
+  apollo:    '#ffd36a',
+  hera:      '#75d4c8',
+  hestia:    '#ff704d',
+  chaos:     '#c66bff',
+  hades:     '#9b8cab',
 };
 
 // ---------------------------------------------------------------------------

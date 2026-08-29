@@ -258,6 +258,7 @@ function setupCapture(engine, ctx, setBiome){
   const requestedBiome = captureParams.get('biome');
   const requestedBoss = captureParams.get('boss');
   const requestedWeapon = captureParams.get('weapon');
+  const requestedGod = captureParams.get('god');
   const requestedPage = captureParams.get('page');
   const requestedDepthRaw = captureParams.get('depth');
   const requestedDepth = requestedDepthRaw == null ? NaN : Number(requestedDepthRaw);
@@ -270,6 +271,7 @@ function setupCapture(engine, ctx, setBiome){
         ? { kind: requestedBoss || undefined, depth: Number.isFinite(requestedDepth) ? requestedDepth : undefined }
         : requestedState === 'altar' && requestedPage ? { page: requestedPage } : undefined;
       if (requestedWeapon) args = { ...(args || {}), weapon: requestedWeapon };
+      if (requestedGod) args = { ...(args || {}), god: requestedGod };
       drv.state(requestedState, args); drv.step(0.8); drv.render();
     }
     resolveReady(); window.__EREBUS_READY = true;

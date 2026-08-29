@@ -169,6 +169,57 @@ function emblemPath(g, kind, r) {
       g.lineTo(...P(-.68, .70)); g.closePath();
       break;
     }
+    case 'wheat': {                                  // Demeter — grain and frost
+      g.rect(-.055 * r, -.78 * r, .11 * r, 1.58 * r);
+      for (const y of [-.54, -.26, .02, .30]) for (const s of [-1, 1]) {
+        g.moveTo(...P(0, y));
+        g.quadraticCurveTo(s * .46 * r, (y - .18) * r, s * .54 * r, (y + .05) * r);
+        g.quadraticCurveTo(s * .25 * r, (y + .18) * r, 0, (y + .10) * r);
+        g.closePath();
+      }
+      break;
+    }
+    case 'sun': {                                    // Apollo — radiant sun
+      g.moveTo(.34 * r, 0); g.arc(0, 0, .34 * r, 0, 6.2832);
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * 6.2832, da = .10;
+        g.moveTo(Math.cos(a - da) * .46 * r, Math.sin(a - da) * .46 * r);
+        g.lineTo(Math.cos(a) * .92 * r, Math.sin(a) * .92 * r);
+        g.lineTo(Math.cos(a + da) * .46 * r, Math.sin(a + da) * .46 * r);
+        g.closePath();
+      }
+      break;
+    }
+    case 'crown': {                                  // Hera — royal diadem
+      const p = [[-.84,.58],[-.70,-.62],[-.28,-.20],[0,-.86],[.28,-.20],[.70,-.62],[.84,.58]];
+      g.moveTo(...P(p[0][0], p[0][1])); for (let i = 1; i < p.length; i++) g.lineTo(...P(p[i][0], p[i][1]));
+      g.lineTo(...P(.62,.82)); g.lineTo(...P(-.62,.82)); g.closePath();
+      break;
+    }
+    case 'flame': {                                  // Hestia — hearth flame
+      g.moveTo(...P(0, .94));
+      g.bezierCurveTo(...P(-.82, .48), ...P(-.68, -.26), ...P(-.18, -.92));
+      g.bezierCurveTo(...P(-.20, -.28), ...P(.08, -.16), ...P(.26, -.62));
+      g.bezierCurveTo(...P(.86, .10), ...P(.72, .62), ...P(0, .94)); g.closePath();
+      break;
+    }
+    case 'spiral': {                                 // Chaos — primordial spiral
+      for (let i = 0; i < 4; i++) {
+        const rr = (.18 + i * .18) * r;
+        g.moveTo(rr, 0); g.arc(0, 0, rr, i * .38, 5.55 + i * .38);
+        g.arc(0, 0, Math.max(.05 * r, rr - .075 * r), 5.55 + i * .38, i * .38, true);
+        g.closePath();
+      }
+      break;
+    }
+    case 'helm': {                                   // Hades — helm of darkness
+      g.moveTo(...P(-.72, .74)); g.lineTo(...P(-.72, -.10));
+      g.quadraticCurveTo(0, -1.05 * r, .72 * r, -.10 * r);
+      g.lineTo(...P(.72, .74)); g.lineTo(...P(.30, .74));
+      g.lineTo(...P(.18, .10)); g.lineTo(...P(-.18, .10));
+      g.lineTo(...P(-.30, .74)); g.closePath();
+      break;
+    }
     case 'crescent':                                 // Selene
     default: {
       g.moveTo(...P(.24, -.94));

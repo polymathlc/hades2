@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { BOONS, DUOS, BoonState, emptyMods, valuesFor } from '../src/game/boons.js';
+import { BOONS, DUOS, BoonState, GOD_INFO, GOD_KEYS, emptyMods, valuesFor } from '../src/game/boons.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { VFX } from '../src/vfx/index.js';
 
@@ -113,7 +113,8 @@ for (const boon of [...BOONS, ...DUOS]) {
   assert.equal(ctx.boons.list().filter((x) => x.slot === 'attack').length, 1);
   assert.equal(ctx.boons.mods.rider.attack.god, BOONS.filter((x) => x.slot === 'attack').at(-1).god);
   const final = ctx.boons.list().find(x => x.slot === 'attack');
-  assert.equal(ctx.boons.mods.rider.attack.stacks, final.values.stacks ?? final.values.chill, 'cross-god status stacks leaked into the replacement');
+  const expectedStacks = final.boon.status ? (final.values.stacks ?? final.values.chill ?? 1) : 0;
+  assert.equal(ctx.boons.mods.rider.attack.stacks, expectedStacks, 'cross-god status stacks leaked into the replacement');
 }
 
 // An Epic/Heroic action slot is protected from different boons in the same
@@ -137,6 +138,45 @@ for (const boon of [...BOONS, ...DUOS]) {
 assert.ok(BOONS.length >= 130, 'boon expansion is not substantial');
 assert.ok(DUOS.length >= 20, 'duo expansion is not substantial');
 assert.equal(new Set([...BOONS, ...DUOS].map(b => b.id)).size, BOONS.length + DUOS.length, 'duplicate boon ids entered the expanded pool');
+
+// The combined Hades/Hades II translation must stay broad enough to support
+// a real Codex, not regress to a handful of representative cards. New core
+// Olympians each own a complete browser-game action family.
+assert.ok(BOONS.length >= 270, 'combined pantheon lost authored boon breadth');
+assert.ok(DUOS.length >= 80, 'combined pantheon lost duo breadth');
+assert.equal(GOD_KEYS.length, 17, 'expanded divine roster changed unexpectedly');
+for (const god of GOD_KEYS) {
+  assert.ok(GOD_INFO[god], `missing god metadata for ${god}`);
+  assert.ok(BOONS.filter(b => b.god === god).length >= 5, `${god} has too few playable boons`);
+}
+for (const god of ['demeter', 'apollo', 'hera', 'hestia']) {
+  for (const slot of ['attack', 'special', 'cast', 'dash', 'call']) {
+    assert.ok(BOONS.some(b => b.god === god && b.slot === slot), `${god} is missing a ${slot} boon`);
+  }
+}
+
+// Re-taking an exact gift is a Pom-style level: the record and its live
+// numeric potency both rise, independently from rarity.
+{
+  const h = harness();
+  const first = grant(h.ctx, 'zeus.attack', 'rare');
+  const base = first.values.dmg;
+  const second = h.ctx.boons.grant(h.ctx.boons.offer(first.boon, 'rare'));
+  assert.equal(second.level, 2);
+  assert.ok(second.values.dmg > base, 'boon level did not increase potency');
+}
+
+// Call is a core category too: an Epic call cannot be crowded out by a lower
+// replacement, while its exact card may still promote to Heroic.
+{
+  const h = harness();
+  grant(h.ctx, 'demeter.canon.call', 'epic');
+  const rng = { f: () => 0.75, pick: list => list[0] };
+  const fresh = h.ctx.boons.roll(rng, { count: 3, god: 'apollo', allowDuo: false, upgradeChance: 0 });
+  assert.ok(fresh.every(o => o.slot !== 'call'), 'Epic Call allowed a lower replacement Call');
+  const promoted = h.ctx.boons.roll(rng, { count: 3, god: 'demeter', allowDuo: false, preferUpgrade: true });
+  assert.ok(promoted.some(o => o.id === 'demeter.canon.call' && o.rarity === 'heroic'), 'Epic Call could not promote');
+}
 
 // Athena exposure affects subsequent damage and her action window deflects.
 {

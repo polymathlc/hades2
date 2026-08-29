@@ -601,6 +601,7 @@ const controlText = CONTROL_ROWS.flat().join(' ').toLowerCase();
 for (const action of ['move', 'aim', 'attack', 'special', 'cast', 'dash', 'call', 'interact', 'pause']) assert.ok(controlText.includes(action));
 assert.ok(!controlText.includes('debug') && !controlText.includes('map'));
 assert.ok(controlText.includes('approach an arm at home'));
+assert.ok(controlText.includes('view current boons') && controlText.includes('b / tab'));
 assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
 // Boon decisions expose slot replacement before confirmation, and the same
@@ -655,5 +656,6 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
   audio.dispose();
 }
 
-assert.equal(GOD_KEYS.length, 11);
-console.log('features ok: 12 enemies, 3 unique bosses, 11 gods, god-locked gates, 20 Attack/Special/Cast forges, audio bridge');
+assert.equal(GOD_KEYS.length, 17);
+for (const god of ['demeter', 'apollo', 'hera', 'hestia', 'chaos', 'hades']) assert.ok(GOD_INFO[god], `missing expanded god ${god}`);
+console.log('features ok: 12 enemies, 3 unique bosses, 17 gods, god-locked gates, 20 Attack/Special/Cast forges, audio bridge');

@@ -13,6 +13,7 @@
 
 import { GODS } from '../materials/palette.js';
 import { EXPANDED_BOONS, EXPANDED_DUOS } from './boon-expansion.js';
+import { CANON_BOONS, CANON_DUOS } from './canonical-boons.js';
 
 export const SLOTS = {
   attack:  { name: 'Attack',  glyph: 'sword' },
@@ -32,7 +33,7 @@ export const RARITY_WEIGHT = { common: 62, rare: 26, epic: 9, heroic: 3 };
 
 const rarityRank = (rarity) => Math.max(0, RARITIES.indexOf(rarity));
 const nextRarity = (rarity) => RARITIES[Math.min(RARITIES.length - 1, rarityRank(rarity) + 1)];
-const CORE_SLOTS = Object.freeze(['attack', 'special', 'cast', 'dash']);
+const CORE_SLOTS = Object.freeze(['attack', 'special', 'cast', 'dash', 'call']);
 
 export const GOD_INFO = {
   zeus:      { name: 'Zeus',      title: 'God of Thunder',        color: GODS.zeus,      status: 'shock', emblem: 'bolt' },
@@ -41,26 +42,34 @@ export const GOD_INFO = {
   aphrodite: { name: 'Aphrodite', title: 'Goddess of Love',       color: GODS.aphrodite, status: 'weak',  emblem: 'rose' },
   ares:      { name: 'Ares',      title: 'God of War',            color: GODS.ares,      status: 'doom',  emblem: 'blades' },
   artemis:   { name: 'Artemis',   title: 'Goddess of the Hunt',   color: GODS.artemis,   status: null,    emblem: 'bow' },
-  dionysus:  { name: 'Dionysus',  title: 'God of Wine',           color: GODS.dionysus,  status: 'doom',  emblem: 'grapes' },
+  dionysus:  { name: 'Dionysus',  title: 'God of Wine',           color: GODS.dionysus,  status: 'burn',  emblem: 'grapes' },
   hermes:    { name: 'Hermes',    title: 'God of Swiftness',      color: GODS.hermes,    status: null,    emblem: 'wing' },
   hecate:    { name: 'Hecate',    title: 'Witch of the Crossroads', color: GODS.hecate,  status: 'chill', emblem: 'moons' },
   selene:    { name: 'Selene',    title: 'Goddess of the Moon',   color: GODS.selene,    status: 'chill', emblem: 'crescent' },
   hephaestus:{ name: 'Hephaestus',title: 'God of the Forge',      color: GODS.hephaestus,status: 'burn',  emblem: 'hammer' },
+  demeter:   { name: 'Demeter',   title: 'Goddess of Seasons',    color: GODS.demeter,   status: 'chill', emblem: 'wheat' },
+  apollo:    { name: 'Apollo',    title: 'God of Light',           color: GODS.apollo,    status: 'weak',  emblem: 'sun' },
+  hera:      { name: 'Hera',      title: 'Queen of Olympus',       color: GODS.hera,      status: 'weak',  emblem: 'crown' },
+  hestia:    { name: 'Hestia',    title: 'Goddess of Flame',      color: GODS.hestia,    status: 'burn',  emblem: 'flame' },
+  chaos:     { name: 'Chaos',     title: 'Origin of All',          color: GODS.chaos,     status: null,    emblem: 'spiral' },
+  hades:     { name: 'Hades',     title: 'Lord of the Dead',       color: GODS.hades,     status: 'doom',  emblem: 'helm' },
 };
 export const GOD_KEYS = Object.keys(GOD_INFO);
 
 // ── helpers ────────────────────────────────────────────────────────────────
 const r1 = (n) => Math.round(n * 10) / 10;
-function scaleVal(base, mul) {
+const DISCRETE_VALUES = new Set(['stacks', 'ticks', 'arcs', 'forks', 'shots', 'bounces', 'pierce', 'weak', 'chill']);
+function scaleVal(base, mul, key) {
   if (typeof base !== 'number') return base;
   const v = base * mul;
+  if (DISCRETE_VALUES.has(key)) return Math.max(1, Math.round(v));
   return Math.abs(base) >= 5 ? Math.round(v) : r1(v);
 }
 /** Resolve a boon's authored `base` table for a given rarity. */
 export function valuesFor(boon, rarity) {
   const mul = RARITY_MUL[rarity] || 1;
   const out = {};
-  for (const k in boon.base) out[k] = scaleVal(boon.base[k], mul);
+  for (const k in boon.base) out[k] = scaleVal(boon.base[k], mul, k);
   return out;
 }
 
@@ -346,6 +355,7 @@ export const BOONS = [
     { weapon: 'shield', forgeAction: 'cast' }),
 ];
 BOONS.push(...EXPANDED_BOONS);
+for (const boon of CANON_BOONS) if (!BOONS.some(existing => existing.id === boon.id)) BOONS.push(boon);
 
 // ═══════════════════════════════════════════════════════════ DUO BOONS ════
 // A duo requires a boon from BOTH gods already granted. They are rare, always
@@ -377,6 +387,7 @@ export const DUOS = [
     apply: (m, v) => { m.slamSpeed += v.spd / 100; m.knockback += 1.5; } },
 ];
 DUOS.push(...EXPANDED_DUOS);
+for (const duo of CANON_DUOS) if (!DUOS.some(existing => existing.id === duo.id)) DUOS.push(duo);
 
 // ═══════════════════════════════════════════════════════ MODIFIER STATE ════
 export function emptyMods() {
@@ -428,18 +439,21 @@ export class BoonState {
   rider(slot) { return this.mods.rider[slot]; }
 
   /** Rarity values after permanent Crossroads mastery for the owning god(s). */
-  values(boon, rarity) {
+  values(boon, rarity, level = 1) {
     const out = valuesFor(boon, rarity);
     const meta = this.ctx?.meta;
-    if (!meta) return out;
     const gods = boon.gods || [boon.god];
-    const mul = gods.reduce((sum, god) => sum + (meta.boonMultiplier?.(god) || 1), 0) / Math.max(1, gods.length);
+    const mastery = meta
+      ? gods.reduce((sum, god) => sum + (meta.boonMultiplier?.(god) || 1), 0) / Math.max(1, gods.length)
+      : 1;
+    // Levels are the Pom-style axis while rarity is the quality axis. Keeping
+    // them separate lets the loadout menu report a real potency increase.
+    const mul = mastery * (1 + Math.max(0, level - 1) * 0.12);
     if (mul <= 1) return out;
-    const discrete = new Set(['stacks', 'ticks', 'arcs', 'weak', 'chill']);
     for (const key in out) {
       if (typeof out[key] !== 'number') continue;
       const v = out[key] * mul;
-      out[key] = discrete.has(key) ? Math.max(1, Math.round(v)) : (Math.abs(out[key]) >= 5 ? Math.round(v) : Math.round(v * 10) / 10);
+      out[key] = DISCRETE_VALUES.has(key) ? Math.max(1, Math.round(v)) : (Math.abs(out[key]) >= 5 ? Math.round(v) : Math.round(v * 10) / 10);
     }
     return out;
   }
@@ -453,7 +467,7 @@ export class BoonState {
     // gods' statuses from being folded into one corrupt rider and matches the
     // familiar Hades loadout model. The surrendered boon also tempers its
     // successor: the replacement inherits the stronger tier and advances once.
-    // Calls/passives remain freely stackable.
+    // Passive, forge and duo gifts remain freely stackable.
     if (!prev && CORE_SLOTS.includes(incomingSlot)) {
       const old = this.granted.find(r => !r.duo && r.slot === incomingSlot);
       if (old) {
@@ -475,9 +489,11 @@ export class BoonState {
       const previewMatches = entry.replacementBoosted && entry.replaces === replaced.boon.id;
       rarity = previewMatches ? inherited : nextRarity(inherited);
     }
+    const level = prev ? (prev.level || 1) + 1 : replaced ? (replaced.level || 1) : Math.max(1, entry.level || 1);
     const rec = {
       boon: entry.boon, rarity,
-      values: this.values(entry.boon, rarity),
+      values: this.values(entry.boon, rarity, level),
+      level,
       god: entry.boon.god || (entry.boon.gods && entry.boon.gods[0]),
       slot: entry.boon.slot || 'passive',
       duo: !!entry.boon.gods,
@@ -666,12 +682,14 @@ export class BoonState {
         replacementBoosted = true;
       }
     }
-    const values = this.values(boon, rarity);
+    const level = owned ? (owned.level || 1) + 1 : replacement ? (replacement.level || 1) : 1;
+    const values = this.values(boon, rarity, level);
     const god = boon.god || (boon.gods && boon.gods[0]);
     return {
       id: boon.id, boon, rarity, values,
       god, gods: boon.gods || [god],
       slot,
+      level,
       name: boon.name,
       text: (() => { try { return boon.text(values); } catch (e) { return ''; } })(),
       color: GOD_INFO[god] ? GOD_INFO[god].color : '#f2c14e',

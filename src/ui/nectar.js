@@ -243,9 +243,12 @@ export class NectarOverlay {
 
   _drawGodPage(g, o) {
     const { listX, listY, listW, dx, dw, ph, S, t } = o;
-    const rowH = Math.min(49 * S, (ph - 181 * S) / GOD_KEYS.length);
-    for (let i = 0; i < GOD_KEYS.length; i++) {
-      const god = GOD_KEYS[i], info = GOD_INFO[god], y = listY + i * rowH, on = i === this.selected;
+    const visible = Math.min(10, GOD_KEYS.length);
+    const start = Math.max(0, Math.min(GOD_KEYS.length - visible, this.selected - Math.floor(visible / 2)));
+    const rowH = Math.min(49 * S, (ph - 181 * S) / visible);
+    for (let j = 0; j < visible; j++) {
+      const i = start + j;
+      const god = GOD_KEYS[i], info = GOD_INFO[god], y = listY + j * rowH, on = i === this.selected;
       plaqueRect(g, listX, y, listW, rowH - 4 * S, 6 * S);
       g.fillStyle = on ? rgba(info.color, 0.18) : rgba('#0b0712', 0.62); g.fill();
       g.strokeStyle = on ? rgba(info.color, 0.95) : rgba(PAL.bronze, 0.38); g.lineWidth = (on ? 1.7 : 0.9) * S; g.stroke();
@@ -256,6 +259,9 @@ export class NectarOverlay {
       tracked(g, `BOON ${br} · LEGACY ${pr} · DEVOTION ${dr}  ·  FAVOR +${favor}%`, listX + 49 * S, y + 33 * S, { size: 7.5 * S, track: 0.11, weight: 600, align: 'left', color: rgba(info.color, 0.86), font: bodyFont() });
       this.hit.push({ x: listX, y, w: listW, h: rowH - 4 * S, god: i });
     }
+    if (start > 0) tracked(g, `↑ ${start} MORE`, listX + listW - 8 * S, listY - 7 * S, { size: 7.5 * S, track: 0.14, weight: 700, align: 'right', color: rgba(PAL.goldHi, 0.72) });
+    const below = GOD_KEYS.length - start - visible;
+    if (below > 0) tracked(g, `↓ ${below} MORE`, listX + listW - 8 * S, listY + visible * rowH + 8 * S, { size: 7.5 * S, track: 0.14, weight: 700, align: 'right', color: rgba(PAL.goldHi, 0.72) });
     const god = GOD_KEYS[this.selected], info = GOD_INFO[god];
     godEmblem(g, dx + 42 * S, listY + 39 * S, 26 * S, god, { glowA: 0.50, glowR: 2.1 });
     tracked(g, info.name.toUpperCase(), dx + 88 * S, listY + 29 * S, { size: 21 * S, track: 0.20, weight: 700, align: 'left', color: '#fff0c6', shadow: '#050209', shadowDy: 2 * S });

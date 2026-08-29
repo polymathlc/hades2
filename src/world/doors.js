@@ -133,7 +133,7 @@ const SIGIL_FRAG = /* glsl */`
     return d;
   }
 
-  // Compact SDF versions of the same eleven identities drawn by the boon UI.
+  // Compact SDF versions of the same identities drawn by the boon UI.
   // They are deliberately bold: a gate logo must survive the isometric camera.
   float godGlyph(vec2 p, float which){
     float d = 1e3;
@@ -176,11 +176,39 @@ const SIGIL_FRAG = /* glsl */`
       d=min(d,abs(sdCircle(p-vec2(0.27,0.0),0.16))-0.025);
     } else if(which < 9.5){ // Selene — crescent
       d=max(sdCircle(p,0.34),-sdCircle(p-vec2(0.14,-0.02),0.29));
-    } else { // Hephaestus — hammer and anvil
+    } else if(which < 10.5){ // Hephaestus — hammer and anvil
       vec2 q=rot(-0.55)*p;
       d=min(sdBox(q-vec2(0.0,0.05),vec2(0.045,0.31)),sdBox(q-vec2(0.0,-0.25),vec2(0.22,0.075)));
       d=min(d,sdBox(p-vec2(0.0,0.27),vec2(0.30,0.055)));
       d=min(d,sdBox(p-vec2(-0.10,0.34),vec2(0.16,0.055)));
+    } else if(which < 11.5){ // Demeter — wheat
+      d=sdBox(p-vec2(0.0,0.05),vec2(0.025,0.36));
+      for(int i=0;i<4;i++){
+        float y=-0.25+float(i)*0.16;
+        d=min(d,sdBox(rot(0.62)*(p-vec2(-0.12,y)),vec2(0.12,0.035)));
+        d=min(d,sdBox(rot(-0.62)*(p-vec2(0.12,y)),vec2(0.12,0.035)));
+      }
+    } else if(which < 12.5){ // Apollo — sun
+      d=sdCircle(p,0.16);
+      for(int i=0;i<12;i++){ float a=float(i)/12.0*6.28318; d=min(d,sdBox(rot(a)*(p-vec2(0.0,0.30)),vec2(0.025,0.11))); }
+    } else if(which < 13.5){ // Hera — crown
+      d=sdBox(p-vec2(0.0,0.20),vec2(0.30,0.08));
+      d=min(d,sdBox(rot(0.42)*(p-vec2(-0.20,-0.06)),vec2(0.055,0.25)));
+      d=min(d,sdBox(p-vec2(0.0,-0.10),vec2(0.055,0.28)));
+      d=min(d,sdBox(rot(-0.42)*(p-vec2(0.20,-0.06)),vec2(0.055,0.25)));
+    } else if(which < 14.5){ // Hestia — flame
+      vec2 q=p; q.y+=0.04;
+      d=min(sdCircle(q-vec2(0.0,0.08),0.25),sdCircle(q-vec2(-0.09,-0.17),0.15));
+      d=max(d,-sdCircle(q-vec2(0.08,0.11),0.11));
+    } else if(which < 15.5){ // Chaos — nested spiral
+      d=abs(length(p)-0.32)-0.035;
+      d=min(d,abs(length(p-vec2(0.08,0.0))-0.18)-0.030);
+      d=min(d,sdCircle(p-vec2(0.05,0.0),0.055));
+    } else { // Hades — helm
+      d=max(sdCircle(p-vec2(0.0,-0.03),0.34),p.y-0.24);
+      d=min(d,sdBox(p-vec2(-0.24,0.19),vec2(0.055,0.20)));
+      d=min(d,sdBox(p-vec2(0.24,0.19),vec2(0.055,0.20)));
+      d=max(d,-sdBox(p-vec2(0.0,0.16),vec2(0.09,0.20)));
     }
     return d;
   }

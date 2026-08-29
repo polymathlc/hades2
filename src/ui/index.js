@@ -23,7 +23,7 @@ import { BoonOverlay } from './boons.js';
 import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
 import { WorldLabels } from './worldlabels.js';
-import { BoonState, BOONS, GOD_INFO } from '../game/boons.js';
+import { BoonState, BOONS, DUOS, GOD_INFO } from '../game/boons.js';
 
 const REF_W = 1600, REF_H = 900;
 
@@ -160,8 +160,14 @@ export class UI {
         if (this.menus.screen === 'pause') this.menus.activate(this.menus.controlsOpen ? 'back' : 'controls');
         return;
       }
+      if (e.key === 'b' || e.key === 'B' || e.key === 'Tab') {
+        e.preventDefault();
+        if (!this._modal()) this.screen('pause');
+        if (this.menus.screen === 'pause') this.menus.activate(this.menus.boonsOpen ? 'back' : 'boons');
+        return;
+      }
       if (e.key === 'Escape') {
-        if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
+        if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
         else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
         return;
       }
@@ -315,7 +321,7 @@ export class UI {
       return;
     }
     if (pause) {
-      if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
+      if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
       else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
     }
     if (!this.menus.modal || this.boonUI.active) return;
@@ -325,7 +331,7 @@ export class UI {
     if (edge('right', rt)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, 1); }
     if (accept) { const h = this.menus.hit[this.menus.sel]; if (h) h.act === 'setting' ? this.menus._bump(h.key, 1) : this.menus.activate(h.act); }
     if (edge('back', down(1))) {
-      if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
+      if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
       else if (this.menus.screen === 'pause') this.screen('game');
     }
   }
@@ -409,8 +415,9 @@ export class UI {
   // ═══════════════════════════════════════ ARCHITECTURE §5 CAPTURE ════════
   _captureState(name, args, ctx) {
     if (name === 'ui') this.setupCaptureHUD(ctx);
-    else if (name === 'boons') this.setupCaptureBoons(ctx, 'zeus');
+    else if (name === 'boons') this.setupCaptureBoons(ctx, args?.god || 'zeus');
     else if (name === 'forge') this.setupCaptureBoons(ctx, 'hephaestus');
+    else if (name === 'loadout') this.setupCaptureLoadout(ctx);
     else if (name === 'combat') {
       // the combat frame should carry the HUD too — it is what the player sees
       this.setupCaptureHUD(ctx, { quiet: true });
@@ -486,17 +493,41 @@ export class UI {
     // repeated portrait makes it unmistakable that Zeus owns this offer.
     const want = god === 'hephaestus'
       ? [['hephaestus.blade.wave', 'epic'], ['hephaestus.blade.echo', 'rare'], ['hephaestus.blade.ember', 'heroic']]
-      : [['zeus.attack', 'epic'], ['zeus.special', 'rare'], ['zeus.cast', 'heroic']];
+      : god === 'zeus'
+        ? [['zeus.attack', 'epic'], ['zeus.special', 'rare'], ['zeus.cast', 'heroic']]
+        : BOONS.filter(b => b.god === god && ['attack', 'special', 'cast', 'dash', 'call'].includes(b.slot))
+          .slice(0, 3).map((b, i) => [b.id, ['epic', 'rare', 'heroic'][i]]);
     const opts = [];
     for (const [id, rarity] of want) {
       const b = BOONS.find(x => x.id === id);
       if (b) opts.push(bs.offer(b, rarity));
     }
     const rng = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('boonshot') : ctx.rng;
-    const list = opts.length === 3 ? opts : bs.roll(rng, { count: 3, allowDuo: false });
+    const list = opts.length === 3 ? opts : bs.roll(rng, { count: 3, god, allowDuo: false });
     this.boonUI.open(list);
     this.boonUI.t0 = this.t - 1.35;                 // settled by the time we shoot
     this.boonUI.hover = 1;
+    this.dirty = true;
+  }
+
+  /** `loadout`: the pause Codex populated with a varied late-run build. */
+  setupCaptureLoadout(ctx) {
+    const bs = this.boonState;
+    bs.clear();
+    const seed = [
+      ['zeus.attack', 'epic'], ['aphrodite.special', 'rare'], ['demeter.canon.cast', 'epic'],
+      ['apollo.canon.dash', 'rare'], ['selene.call', 'heroic'], ['hera.canon.extended-family', 'rare'],
+      ['hestia.canon.controlled-burn', 'epic'], ['chaos.canon.favor', 'rare'], ['hades.canon.life-tax', 'common'],
+      ['duo.canon.cold-fusion', 'heroic'],
+    ];
+    for (const [id, rarity] of seed) {
+      const boon = [...BOONS, ...DUOS].find(x => x.id === id);
+      if (boon) bs.grant(bs.offer(boon, rarity));
+    }
+    this.screen('pause');
+    this.menus.activate('boons');
+    this.menus.t0 = this.t - 1;
+    this.menus.boonSel = 2;
     this.dirty = true;
   }
 
