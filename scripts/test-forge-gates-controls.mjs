@@ -16,6 +16,7 @@ import { TIERS } from '../src/render/renderer.js';
 import { GRADES } from '../src/render/shaders/grades.js';
 import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
 import { ENCOUNTER_POOLS, BOSS_SEQUENCE, bossForDepth, Spawner } from '../src/entities/spawner.js';
+import { lockModalInput, releaseModalInput } from '../src/ui/modal-input.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -125,6 +126,23 @@ for (const name of ['tartarus', 'asphodel', 'elysium']) {
   interact = true;
   home.update(1 / 60);
   assert.equal(opened, 1, 'safe altar radius made Nectar interaction unreachable');
+  player.position.copy(HOME_ALTAR_POS);
+  assert.equal(home.releaseAltar(), true);
+  assert.ok(Math.hypot(player.position.x - HOME_ALTAR_POS.x, player.position.z - HOME_ALTAR_POS.z) >= 3.47);
+  assert.equal(player.velocity.lengthSq(), 0);
+  assert.equal(player.knock.lengthSq(), 0);
+}
+
+// A duplicate altar-open event must preserve the pre-modal input state so one
+// close restores movement instead of trapping the hero.
+{
+  const input = { enabled: true };
+  const altar = { _inputLockHeld: false, _inputWasEnabled: true };
+  assert.equal(lockModalInput(altar, input), true);
+  assert.equal(lockModalInput(altar, input), false);
+  assert.equal(input.enabled, false);
+  assert.equal(releaseModalInput(altar, input, true), true);
+  assert.equal(input.enabled, true, 'closing a repeated altar open left gameplay input disabled');
 }
 
 // A clear publishes one fresh set; choosing any gate removes that whole set

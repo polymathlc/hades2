@@ -90,6 +90,7 @@ export class RunState {
     ctx.events.on('boss.defeated', (i) => this._onBossDefeated(i));
     ctx.events.on('run.start', () => { if (this.state === 'home') this.startRun(); });
     ctx.events.on('run.abandon', () => this.enterHome());
+    ctx.events.on('home.altarClosed', () => this._home?.releaseAltar?.());
     ctx.events.on('capture.state', ({ name }) => {
       if (name === 'home') this.enterHome({ initial: true });
       else if (name === 'altar') {

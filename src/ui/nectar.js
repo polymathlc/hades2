@@ -4,6 +4,7 @@ import { PAL, frame, plaqueRect, tracked, wrap, rgba, goldGradient, ease, clamp0
 import { godEmblem } from './boons.js';
 import { GOD_INFO, GOD_KEYS } from '../game/boons.js';
 import { GOD_LEGACIES, META_MAX_RANK } from '../game/meta.js';
+import { lockModalInput, releaseModalInput } from './modal-input.js';
 
 export class NectarOverlay {
   constructor(ui) {
@@ -15,17 +16,25 @@ export class NectarOverlay {
     this.t0 = 0;
     this.hit = [];
     this._inputWasEnabled = true;
+    this._inputLockHeld = false;
   }
 
   open(meta) {
     if (!meta) return;
     this.meta = meta;
+    // Interact/capture events can arrive twice in one frame. Never replace the
+    // original input snapshot with the already-disabled modal state, otherwise
+    // close() leaves the hero permanently unable to move.
+    if (this.active) {
+      this.ui.dirty = true;
+      return;
+    }
     this.active = true;
     this.selected = Math.max(0, Math.min(GOD_KEYS.length - 1, this.selected));
     this.track = 'boon';
     this.t0 = this.ui.now();
     this.ui.hud?.alpha?.set?.(0.2);
-    if (this.ui.ctx?.input) { this._inputWasEnabled = this.ui.ctx.input.enabled !== false; this.ui.ctx.input.enabled = false; }
+    lockModalInput(this, this.ui.ctx?.input);
     this.ui.dirty = true;
   }
 
@@ -33,7 +42,7 @@ export class NectarOverlay {
     if (!this.active) return;
     this.active = false;
     this.ui.hud?.alpha?.set?.(1);
-    if (this.ui.ctx?.input) this.ui.ctx.input.enabled = this._inputWasEnabled && this.ui.menus?.screen === 'game' && !this.ui.boonUI?.active;
+    releaseModalInput(this, this.ui.ctx?.input, this.ui.menus?.screen === 'game' && !this.ui.boonUI?.active);
     this.ui.ctx?.events?.emit?.('home.altarClosed', {});
     this.ui.dirty = true;
   }
@@ -63,6 +72,19 @@ export class NectarOverlay {
     else if (e.key === 'Enter' || e.key === ' ') this.buy();
     else return false;
     e.preventDefault?.();
+    this.ui.dirty = true;
+    return true;
+  }
+
+  gamepad(action) {
+    if (!this.active) return false;
+    if (action === 'back') this.close();
+    else if (action === 'up') this.selected = (this.selected + GOD_KEYS.length - 1) % GOD_KEYS.length;
+    else if (action === 'down') this.selected = (this.selected + 1) % GOD_KEYS.length;
+    else if (action === 'left') this.track = 'boon';
+    else if (action === 'right') this.track = 'passive';
+    else if (action === 'accept') this.buy();
+    else return false;
     this.ui.dirty = true;
     return true;
   }
@@ -148,7 +170,7 @@ export class NectarOverlay {
     this._trackCard(g, { x: dx + cardW + gap, y: cardY, w: cardW, h: cardH, god, track: 'passive', S, t });
 
     const hintsY = py + ph - 31 * S;
-    tracked(g, '↑ ↓  CHOOSE GOD     ← →  CHOOSE OFFERING     ENTER  OFFER     ESC  CLOSE', W / 2, hintsY, { size: 9 * S, track: 0.22, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.70), font: bodyFont() });
+    tracked(g, '↑ ↓  CHOOSE GOD     ← →  CHOOSE OFFERING     ENTER / A  OFFER     ESC / B  CLOSE', W / 2, hintsY, { size: 9 * S, track: 0.22, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.70), font: bodyFont() });
     const close = { x: px + pw - 52 * S, y: py + 74 * S, w: 30 * S, h: 30 * S, act: 'close' };
     tracked(g, '×', close.x + close.w / 2, close.y + 22 * S, { size: 20 * S, track: 0, weight: 700, align: 'center', color: rgba(PAL.parch, 0.72) });
     this.hit.push(close);

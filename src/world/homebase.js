@@ -11,6 +11,7 @@ const ALTAR_POS = new THREE.Vector3(6.4, 0, 0.2);
 // The altar's widest plinth is 2.65m. Keep the hero capsule outside it while
 // leaving the interaction range comfortably reachable from the floor.
 const ALTAR_SAFE_RADIUS = 3.22;
+const ALTAR_RELEASE_RADIUS = 3.48;
 const ALTAR_INTERACT_RADIUS = 3.65;
 const ARMORY_POS = {
   blade:  new THREE.Vector3(-6.3, 0, 4.3),
@@ -259,16 +260,16 @@ export class HomeBase {
     return true;
   }
 
-  _resolveAltar(p) {
+  _resolveAltar(p, minRadius = ALTAR_SAFE_RADIUS) {
     let dx = p.x - ALTAR_POS.x, dz = p.z - ALTAR_POS.z;
     let distance = Math.hypot(dx, dz);
-    if (distance >= ALTAR_SAFE_RADIUS) return distance;
+    if (distance >= minRadius) return distance;
     // Exact-centre recovery points toward the arena, never farther into the
     // perimeter. This also repairs saves/frames already trapped in the mesh.
     if (distance < 1e-5) { dx = -1; dz = 0; distance = 1; }
     const nx = dx / distance, nz = dz / distance;
-    p.x = ALTAR_POS.x + nx * ALTAR_SAFE_RADIUS;
-    p.z = ALTAR_POS.z + nz * ALTAR_SAFE_RADIUS;
+    p.x = ALTAR_POS.x + nx * minRadius;
+    p.z = ALTAR_POS.z + nz * minRadius;
     const v = this.ctx.player?.velocity;
     if (v) {
       const inward = v.x * nx + v.z * nz;
@@ -279,7 +280,19 @@ export class HomeBase {
       const inward = knock.x * nx + knock.z * nz;
       if (inward < 0) { knock.x -= nx * inward; knock.z -= nz * inward; }
     }
-    return ALTAR_SAFE_RADIUS;
+    return minRadius;
+  }
+
+  /** Put the hero on clear floor after the full-screen offering panel closes. */
+  releaseAltar() {
+    const hero = this.ctx.player;
+    if (!hero?.position) return false;
+    this._resolveAltar(hero.position, ALTAR_RELEASE_RADIUS);
+    hero.velocity?.set?.(0, 0, 0);
+    hero.knock?.set?.(0, 0, 0);
+    if (hero.state !== 'dead') hero.state = 'move';
+    hero._resolve?.(this.ctx);
+    return true;
   }
 
   update(dt) {

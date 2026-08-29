@@ -282,15 +282,25 @@ export class UI {
     if (!pad) { this._padPrev = {}; return; }
     const down = i => !!pad.buttons?.[i]?.pressed;
     const edge = (key, value) => { const was = !!this._padPrev[key]; this._padPrev[key] = !!value; return value && !was; };
-    if (edge('pause', down(9))) {
-      if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
-      else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
-    }
-    if (!this.menus.modal || this.boonUI.active || this.nectarUI.active) return;
+    const pause = edge('pause', down(9));
     const up = down(12) || (pad.axes?.[1] ?? 0) < -0.72;
     const dn = down(13) || (pad.axes?.[1] ?? 0) > 0.72;
     const lf = down(14) || (pad.axes?.[0] ?? 0) < -0.72;
     const rt = down(15) || (pad.axes?.[0] ?? 0) > 0.72;
+    if (this.nectarUI.active) {
+      if (pause || edge('back', down(1))) this.nectarUI.gamepad('back');
+      else if (edge('up', up)) this.nectarUI.gamepad('up');
+      else if (edge('down', dn)) this.nectarUI.gamepad('down');
+      else if (edge('left', lf)) this.nectarUI.gamepad('left');
+      else if (edge('right', rt)) this.nectarUI.gamepad('right');
+      else if (edge('accept', down(0))) this.nectarUI.gamepad('accept');
+      return;
+    }
+    if (pause) {
+      if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
+      else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
+    }
+    if (!this.menus.modal || this.boonUI.active) return;
     if (edge('up', up)) this.menus.key(-1);
     if (edge('down', dn)) this.menus.key(1);
     if (edge('left', lf)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, -1); }
