@@ -28,7 +28,7 @@ import { clamp, clamp01, lerp, TAU } from '../core/math.js';
 
 // ── per-biome weighted pools. Weight is a function of depth so families fade
 //    in as the run gets deeper rather than appearing fully formed at depth 1.
-const POOLS = {
+export const ENCOUNTER_POOLS = {
   tartarus: [
     { kind: 'shade', cost: 1, w: (d) => 6 },
     { kind: 'hound', cost: 1, w: (d) => (d >= 1 ? 4 : 1) },
@@ -36,6 +36,9 @@ const POOLS = {
     { kind: 'hexer', cost: 2, w: (d) => (d >= 2 ? 3 : 0.5) },
     { kind: 'bloat', cost: 2, w: (d) => (d >= 3 ? 2.5 : 0) },
     { kind: 'herald', cost: 3, w: (d) => (d >= 4 ? 1.6 : 0) },
+    { kind: 'lancer', cost: 2, w: (d) => (d >= 2 ? 2.4 : 0) },
+    { kind: 'siren', cost: 2, w: (d) => (d >= 3 ? 1.8 : 0) },
+    { kind: 'oracle', cost: 3, w: (d) => (d >= 4 ? 1.2 : 0) },
   ],
   asphodel: [
     { kind: 'hound', cost: 1, w: () => 6 },
@@ -44,6 +47,9 @@ const POOLS = {
     { kind: 'brute', cost: 3, w: (d) => (d >= 2 ? 3 : 0) },
     { kind: 'hexer', cost: 2, w: (d) => (d >= 2 ? 2.5 : 0) },
     { kind: 'herald', cost: 3, w: (d) => (d >= 3 ? 2 : 0) },
+    { kind: 'lancer', cost: 2, w: (d) => (d >= 2 ? 2 : 0) },
+    { kind: 'siren', cost: 2, w: (d) => (d >= 1 ? 3 : 0.5) },
+    { kind: 'oracle', cost: 3, w: (d) => (d >= 3 ? 1.5 : 0) },
   ],
   elysium: [
     { kind: 'brute', cost: 3, w: () => 4 },
@@ -52,6 +58,9 @@ const POOLS = {
     { kind: 'shade', cost: 1, w: () => 3 },
     { kind: 'hound', cost: 1, w: () => 2 },
     { kind: 'bloat', cost: 2, w: () => 2 },
+    { kind: 'lancer', cost: 2, w: () => 4 },
+    { kind: 'siren', cost: 2, w: () => 3.5 },
+    { kind: 'oracle', cost: 3, w: () => 2.8 },
   ],
 };
 
@@ -94,7 +103,7 @@ export class Spawner {
 
   /** compose a deterministic wave list for (biome, depth). */
   compose(biome, depth) {
-    const pool = POOLS[biome] || POOLS.tartarus;
+    const pool = ENCOUNTER_POOLS[biome] || ENCOUNTER_POOLS.tartarus;
     const live = pool.filter(p => p.w(depth) > 0);
     const total = this.budget(depth);
     // 2 waves shallow, 3 mid, 4 deep — pacing, not padding
@@ -113,8 +122,10 @@ export class Spawner {
         for (let i = 0; i < n && left > 0; i++) { list.push(pick.kind); left -= pick.cost; }
       }
       // an escalation wave always carries one shape-changer if it can afford it
-      if (w === nWaves - 1 && depth >= 3 && !list.includes('herald') && !list.includes('brute')) {
-        list.push(depth >= 5 ? 'herald' : 'brute');
+      const shapers = ['herald', 'brute', 'lancer', 'siren', 'oracle'];
+      if (w === nWaves - 1 && depth >= 3 && !list.some(kind => shapers.includes(kind))) {
+        const specialist = depth >= 7 ? 'oracle' : depth >= 5 ? (depth % 2 ? 'siren' : 'herald') : 'lancer';
+        list.push(specialist);
       }
       waves.push({
         list,

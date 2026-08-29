@@ -14,6 +14,8 @@ import { Engine } from '../src/core/engine.js';
 import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
 import { TIERS } from '../src/render/renderer.js';
 import { GRADES } from '../src/render/shaders/grades.js';
+import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
+import { ENCOUNTER_POOLS } from '../src/entities/spawner.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -22,6 +24,44 @@ class Bus {
 }
 const noop = () => {};
 const rng = { f: () => 0.314159, pick: a => a[0] };
+
+// Specialist enemies must be real combat roles, registered in every biome,
+// and expose the state transitions that make their counterplay distinct.
+assert.equal(ROSTER_IDS.length, 10);
+const specialistStates = {
+  lancer: ['aim', 'charge'],
+  siren: ['mark', 'blink', 'slash'],
+  oracle: ['ritual', 'release'],
+};
+for (const [kind, states] of Object.entries(specialistStates)) {
+  const def = ROSTER[kind];
+  assert.equal(def.kind, kind);
+  assert.ok(def.label && def.role && def.identity && def.cost >= 2);
+  for (const state of states) assert.ok(def.brain.states[state], `${kind} is missing its ${state} behavior`);
+  for (const [biome, pool] of Object.entries(ENCOUNTER_POOLS)) {
+    const entry = pool.find(entry => entry.kind === kind);
+    assert.ok(entry, `${kind} is absent from ${biome}`);
+    assert.ok(entry.w(8) > 0, `${kind} can never spawn in ${biome}`);
+  }
+}
+
+// The Oracle's release is not a cosmetic cast: it heals and wards nearby
+// allies, ignores distant ones, and still creates the punishable arena pulse.
+{
+  const near = { alive: true, health: 20, maxHealth: 100, iframes: 0, height: 2, position: new THREE.Vector3(3, 0, 0) };
+  const far = { alive: true, health: 20, maxHealth: 100, iframes: 0, height: 2, position: new THREE.Vector3(8, 0, 0) };
+  let pulse = 0;
+  const oracle = {
+    alive: true, position: new THREE.Vector3(), mgr: { list: [] },
+    endTell: noop, strikeDisc: () => pulse++,
+  };
+  oracle.mgr.list = [oracle, near, far];
+  ROSTER.oracle.brain.states.release.enter(oracle, { vfx: { beam: noop } });
+  assert.equal(near.health, 38);
+  assert.equal(near.iframes, 0.22);
+  assert.equal(far.health, 20);
+  assert.equal(pulse, 1);
+}
 
 // Browser quality policy: explicit choices win, weak hardware starts low, and
 // only capable machines default to the full high-cost pipeline.
@@ -272,4 +312,4 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 }
 
 assert.equal(GOD_KEYS.length, 11);
-console.log('forge/gates/controls ok: 11 gods, god-locked gates, 12 live forges, audio bridge');
+console.log('features ok: 10 enemies, 11 gods, god-locked gates, 12 live forges, audio bridge');

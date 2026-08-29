@@ -121,6 +121,9 @@ const FAMILY_LOOK = {
   herald: { rim: '#ffe14d', mul: 1.12 },  // -> hot yellow, the summoner
   hound: { rim: '#ff7a2a', mul: 1.16 },   // -> amber-olive, the swarmer
   bloat: { rim: '#8ef06a', mul: 1.16 },   // -> green, the detonator
+  lancer: { rim: '#77e5ff', mul: 1.16 },  // -> ice blue, the lane charger
+  siren: { rim: '#ff74ba', mul: 1.16 },   // -> rose, the blink assassin
+  oracle: { rim: '#c9b8ff', mul: 1.14 },  // -> lavender, the ward support
   warden: { rim: '#3aa8ff', mul: 1.12 },  // -> ICE. the boss opposes its own room
 };
 const ASPHODEL_FAMILY_LOOK = {
@@ -130,6 +133,9 @@ const ASPHODEL_FAMILY_LOOK = {
   herald: { rim: '#8fdcff', mul: 1.18 },
   hound:  { rim: '#7fd2ff', mul: 1.20 },
   bloat:  { rim: '#b7f0df', mul: 1.18 },
+  lancer: { rim: '#a9edff', mul: 1.20 },
+  siren:  { rim: '#ffc2e3', mul: 1.20 },
+  oracle: { rim: '#ddd3ff', mul: 1.18 },
   warden: { rim: '#d6f4ff', mul: 1.18 },
 };
 let _familyBiome = 'tartarus';

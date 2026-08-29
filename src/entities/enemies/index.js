@@ -9,6 +9,9 @@
 //   hound   low horizontal quadruped, spined back         fast swarmer, x3
 //   bloat   a circle on strings, hovering                 detonator
 //   herald  crescent horns + orbiting shards              summoner, kill first
+//   lancer  a long horizontal spear line                  lane charger, sidestep
+//   siren   wide feathered wings                          blink flank assassin
+//   oracle  halo above a tall robed figure                healer/ward, interrupt
 //   warden  a monolith with a horned crown + greatsword   BOSS, three phases
 //
 // The manager owns: pooling (an enemy is built once and reused forever), the
@@ -25,12 +28,14 @@ import { Telegraphs } from './telegraph.js';
 import { SHADE, BRUTE, brutePreDamage } from './melee.js';
 import { HEXER, HERALD } from './casters.js';
 import { HOUND, BLOAT } from './swarm.js';
+import { LANCER, SIREN, ORACLE } from './variants.js';
 import { WARDEN } from './boss.js';
 import { Spawner } from '../spawner.js';
 
 export const ROSTER = {
   shade: SHADE, brute: BRUTE, hexer: HEXER, herald: HERALD,
-  hound: HOUND, bloat: BLOAT, warden: WARDEN,
+  hound: HOUND, bloat: BLOAT, lancer: LANCER, siren: SIREN,
+  oracle: ORACLE, warden: WARDEN,
 };
 export const ROSTER_IDS = Object.keys(ROSTER);
 
@@ -318,7 +323,7 @@ export class EnemyManager {
     this.clear();
     const p = ctx.player ? ctx.player.position : new THREE.Vector3();
     const depth = (args && args.depth) ?? 3;
-    const plan = (args && args.plan) || ['shade', 'shade', 'brute', 'hexer', 'hound', 'hound'];
+    const plan = (args && args.plan) || ['brute', 'hexer', 'hound', 'lancer', 'siren', 'oracle'];
     // ring tuned to the 'combat' capture pose (distance 12.6, fov 36): any
     // wider and half the roster falls outside the frame the critic reads.
     const R = 5.4;
