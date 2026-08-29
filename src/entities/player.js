@@ -328,7 +328,13 @@ export class Player {
     const W = this.weapon = ctx.combat?.runtimeFor
       ? ctx.combat.runtimeFor(this, ctx.combat.weaponId) : null;
     if (W && this.alive && this.state !== 'dead' && this.state !== 'hurt') {
-      if (inp.pressed('attack')) { this._faceCursor(); W.press('attack'); }
+      if (inp.pressed('attack')) {
+        this._faceCursor();
+        W.press('attack');
+        // Attack pressed after the dash has begun must select the arm's
+        // authored dash-strike instead of silently playing its standing combo.
+        if (this.state === 'dash') W.queueDashAttack?.();
+      }
       if (inp.pressed('special')) { this._faceCursor(); W.press('special'); }
       // WeaponRuntime.release() does not look at WHICH button was let go — it
       // just ends whatever hold is live. Forwarding both edges would therefore
@@ -433,6 +439,9 @@ export class Player {
     // arm first: it kills its own live hitbox, drops the guard and clears any
     // charge, so a dash out of a swing cannot leave damage in the world.
     this.weapon?.press?.('dash');
+    // Input.begin() exposes both edges for the whole fixed-step frame. Promote
+    // the attack already buffered above when Dash+Attack landed together.
+    if (ctx.input.pressed('attack')) this.weapon?.queueDashAttack?.();
     this.blocking = null;
     this._animKey = null;
     const w = this._wish(ctx, _v);

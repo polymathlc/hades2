@@ -307,9 +307,12 @@ export const RAMPS = {
     S(0.00, '#4b4361'), S(0.35, '#6d6383'), S(0.70, '#9a8fa6'), S(1.00, '#c3b6b8'),
   ],
   'floor.elysium': [
-    S(0.00, '#6a6080'), S(0.20, '#8f8496'), S(0.42, '#bfb2ad'),
-    S(0.62, '#d9cbb9'), S(0.80, '#e9dcc6'), S(0.92, '#f3e8d4'),
-    S(1.00, '#fdf5e6'),
+    // A weathered stage under luminous actors, not a sheet of pink-white
+    // porcelain.  The top stop remains ivory, while the body carries enough
+    // violet/umber value structure for veins, seams and moss to survive AgX.
+    S(0.00, '#211c32'), S(0.20, '#373142'), S(0.42, '#554d58'),
+    S(0.62, '#72686c'), S(0.80, '#8e8074'), S(0.92, '#aa987f'),
+    S(1.00, '#c2ae8a'),
   ],
   verdant: [
     S(0.00, '#0a1f16'), S(0.28, '#14402f'), S(0.55, '#246f4c'),

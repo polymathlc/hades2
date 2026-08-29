@@ -17,6 +17,7 @@ import { GRADES } from '../src/render/shaders/grades.js';
 import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
 import { ENCOUNTER_POOLS, BOSS_SEQUENCE, bossForDepth, Spawner } from '../src/entities/spawner.js';
 import { lockModalInput, releaseModalInput } from '../src/ui/modal-input.js';
+import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from '../src/ui/boon-choice.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -291,6 +292,95 @@ function harness(weaponId) {
   return { ctx, player, combat, runtime, fired, hitboxes };
 }
 
+// Hades-style Dash-Strike routing: the authored blade dashcut used to be dead
+// data. A standing press must still start cut1, while a same-frame Dash+Attack
+// is preserved through the movement dash and released only after it ends.
+{
+  const { runtime } = harness('blade');
+  runtime.press('attack');
+  runtime.update(1 / 120);
+  assert.equal(runtime.step?.name, 'cut1', 'standing Attack no longer starts the blade combo');
+  assert.equal(runtime.stepIndex, 0);
+}
+
+{
+  const { ctx, player, runtime, hitboxes } = harness('blade');
+  const hermes = BOONS.find(b => b.id === 'hermes.attack');
+  const ember = BOONS.find(b => b.id === 'hephaestus.blade.ember');
+  ctx.boons.grant(ctx.boons.offer(hermes));
+  ctx.boons.grant(ctx.boons.offer(ember));
+  player._boonPostDash = true;
+  let weaponStates = 0;
+  player.onWeaponState = () => weaponStates++;
+  player.state = 'dash';
+  const start = player.position.clone();
+
+  // This is the exact order Player uses when both edges arrive in one frame.
+  runtime.press('attack');
+  runtime.press('dash');
+  assert.equal(runtime.queueDashAttack(), true);
+  // Hold the actor in its real dash state longer than the normal input buffer.
+  // Intent must survive, but no attack state, animation hook, root or hit may.
+  for (let i = 0; i < 36; i++) runtime.update(1 / 120);
+  assert.equal(runtime.state, 'idle', 'dashcut began while the actor was still dashing');
+  assert.equal(runtime.step, null);
+  assert.equal(weaponStates, 0, 'weapon animation began under the dash animation');
+  assert.equal(hitboxes.length, 0, 'dashcut fired during the movement dash');
+  assert.equal(player.position.distanceTo(start), 0, 'dashcut root motion began during the movement dash');
+  assert.ok(runtime.buffer > 0 && runtime.dashQueued, 'dash-strike intent expired before dash exit');
+
+  player.state = 'move';
+  runtime.update(1 / 120);
+  assert.equal(runtime.step?.name, 'dashcut', 'Dash+Attack fell back to standing cut1');
+  assert.equal(runtime.stepIndex, -2, 'dashcut was misidentified as a combo step');
+  assert.equal(runtime.t, 0, 'dashcut skipped its visible windup on dash exit');
+  assert.equal(weaponStates, 1, 'dashcut weapon animation did not begin after dash exit');
+  assert.equal(hitboxes.length, 0);
+  assert.equal(player.position.distanceTo(start), 0);
+  assert.equal(runtime.queueDashAttack(), false, 'active dashcut accepted stale dash intent');
+  assert.equal(runtime.dashQueued, false, 'rejected dashcut requeue leaked intent');
+
+  runtime.update(runtime.step.t0 + 1 / 120);
+  const strike = hitboxes.find(x => x.tag === 'blade:dashcut');
+  assert.ok(strike, 'dashcut never produced its authored hitbox');
+  assert.equal(strike.boonGod, 'hermes', 'dashcut did not inherit the Attack boon');
+  assert.equal(strike.boonSlot, 'attack');
+  assert.equal(strike.status, 'burn', 'dashcut did not inherit the Blade Ember forge');
+  assert.equal(player._boonPostDash, false, 'dash attack did not consume the post-dash rider window');
+
+  runtime.update(runtime.step.dur + 1 / 120);
+  assert.equal(runtime.state, 'idle');
+  assert.equal(runtime.dashQueued, false, 'dash intent survived attack completion');
+  runtime.press('attack');
+  runtime.update(1 / 120);
+  assert.equal(runtime.step?.name, 'cut1', 'standing Attack after dashcut became another dashcut');
+}
+
+// An unconsumed dash intent that is no longer protected by an active dash must
+// expire cleanly rather than contaminating a later standing Attack.
+{
+  const { player, runtime } = harness('blade');
+  player.state = 'move';
+  assert.equal(runtime.queueDashAttack(), true);
+  runtime.state = 'attack';
+  runtime.step = { name: 'recovery', t0: 0, t1: 0, dur: 1, cancel: 1, chain: 1, root: null };
+  runtime.t = 0; runtime.fired = true;
+  runtime.update(runtime.weapon.buffer + 0.01);
+  assert.equal(runtime.dashQueued, false, 'expired buffer retained dash intent');
+  runtime.state = 'idle'; runtime.step = null;
+  runtime.press('attack');
+  runtime.update(1 / 120);
+  assert.equal(runtime.step?.name, 'cut1', 'expired dash intent changed a later standing Attack');
+}
+
+{
+  const { runtime } = harness('spear');
+  runtime.press('attack');
+  assert.equal(runtime.queueDashAttack(), false, 'an arm without dashAttack data accepted the route');
+  runtime.update(1 / 120);
+  assert.equal(runtime.step?.name, 'poke1', 'unsupported dash route swallowed the spear attack');
+}
+
 for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
   const { ctx } = harness(weapon);
   const offers = ctx.boons.roll(rng, { count: 3, god: 'hephaestus', weapon, allowDuo: false });
@@ -365,6 +455,42 @@ for (const action of ['move', 'aim', 'attack', 'special', 'cast', 'dash', 'call'
 assert.ok(!controlText.includes('debug') && !controlText.includes('map'));
 assert.ok(controlText.includes('approach an arm at home'));
 assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
+
+// Boon decisions expose slot replacement before confirmation, and the same
+// focus path works for keyboard and gamepad instead of trapping pad users.
+{
+  const old = { id: 'old.attack', name: 'Old Attack', slot: 'attack' };
+  const next = { id: 'new.attack', name: 'New Attack', slot: 'attack' };
+  const owned = { boon: old, rarity: 'rare', slot: 'attack', god: 'zeus' };
+  const state = { byId: new Map([[old.id, owned]]), granted: [owned] };
+  assert.deepEqual(boonOfferComparison({ boon: next, rarity: 'epic', replaces: old.id }, state), {
+    kind: 'replace', fromName: 'Old Attack', fromRarity: 'rare', toRarity: 'epic',
+  });
+  assert.deepEqual(boonOfferComparison({ boon: old, rarity: 'epic' }, state), {
+    kind: 'upgrade', fromName: 'Old Attack', fromRarity: 'rare', toRarity: 'epic',
+  });
+  assert.equal(boonOfferComparison({ boon: { id: 'passive', slot: 'passive' }, rarity: 'rare' }, state), null);
+
+  let focus = advanceCardFocus(-1, 1, 3);
+  assert.equal(focus, 0);
+  focus = advanceCardFocus(focus, 1, 3);
+  assert.equal(focus, 1);
+  focus = advanceCardFocus(focus, -1, 3);
+  assert.equal(focus, 0);
+  focus = advanceCardFocus(focus, -1, 3);
+  assert.equal(focus, 2, 'boon focus should wrap across the card row');
+
+  // Holding the dash/accept button as the modal opens cannot claim card one.
+  // Only a complete release followed by a fresh edge is accepted.
+  let gate = releaseGatedEdge(false, true, true);
+  assert.deepEqual(gate, { armed: false, trigger: false });
+  gate = releaseGatedEdge(gate.armed, true, false);
+  assert.equal(gate.trigger, false, 'held A retriggered inside the boon modal');
+  gate = releaseGatedEdge(gate.armed, false, false);
+  assert.deepEqual(gate, { armed: true, trigger: false });
+  gate = releaseGatedEdge(gate.armed, true, true);
+  assert.deepEqual(gate, { armed: true, trigger: true });
+}
 
 // Canvas sliders reach the real audio authority, including before unlock.
 {

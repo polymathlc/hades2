@@ -722,6 +722,15 @@ export class World {
       return [r, g, b];
     };
 
+    // A single incident-light response cannot serve ink-dark Tartarus and
+    // naturally pale Elysium marble.  The ivory map already contributes far
+    // more value; giving it the same 1.02/1.35 gains as crimson stone drives
+    // the whole stage into the display shoulder and erases its brushwork.
+    // This costs nothing at runtime (the material already exists) and keeps
+    // the adjustment attached to the surface instead of dimming actors or FX.
+    const floorResponse = B.id === 'elysium'
+      ? { litGain: 0.23, ambGain: 0.31, specGain: 0.06 }
+      : { litGain: 1.02, ambGain: 1.35, specGain: 0.26 };
     const floorMat = this._M(B.mats.floor, {
       vertexColors: true,
       // §9.1 asks for the floor to keep a small share of the KEY (so the stage
@@ -748,7 +757,7 @@ export class World {
       // the indirect share (which is uniform, and therefore cannot create a
       // hot spot) puts the ashlar back without touching the lit pools, and
       // groundLuma still lands ~0.10 against §9.1's 0.18 ceiling.
-      litGain: 1.02, ambGain: 1.35, specGain: 0.26,
+      ...floorResponse,
       // §1.4 "painted texture": floor.tartarus authors an 11x8 ashlar bond with
       // real seam ink, chipping, ichor stains and bone dust — and then projects
       // it at triScale 0.035, i.e. ONE 28.6m period across a 25m arena. Every

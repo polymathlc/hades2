@@ -206,8 +206,13 @@ export const BIOMES = {
     },
 
     floorGlaze: {
-      base: 0.66, pool: 0.92, rimFall: 0.62,
-      warm: '#ffe6a3', cool: '#a76fb0', ink: 0.14,
+      // Elysium is pale marble, but pale does not mean self-lit.  The previous
+      // 0.66/0.92 glaze pushed almost the entire playfield into the grade's
+      // shoulder, flattening every vein and making the floor compete with the
+      // hero.  Keep the warm pools, but reserve their value for the focal ring
+      // and let the broad field sit a full illustrated value band lower.
+      base: 0.26, pool: 0.40, rimFall: 0.80,
+      warm: '#b98446', cool: '#514b72', ink: 0.10,
     },
 
     voidKind: 'abyss',

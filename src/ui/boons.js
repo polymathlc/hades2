@@ -14,6 +14,7 @@ import {
   displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
 } from './ornament.js';
 import { GOD_INFO, SLOTS, RARITY_LABEL, BoonState } from '../game/boons.js';
+import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from './boon-choice.js';
 import godPortraitsUrl from '../assets/ui/generated/god-portraits-v1.jpg';
 import hephaestusAtlasUrl from '../assets/textures/generated/hephaestus-forge-gates-v6-atlas.png';
 
@@ -272,7 +273,7 @@ export function rarityRing(g, cx, cy, r, rarity, o = {}) {
 }
 
 // ═══════════════════════════════════════════════════════ THE OVERLAY ══════
-const CARD_W = 292, CARD_H = 398, CARD_GAP = 32;
+const CARD_W = 292, CARD_H = 430, CARD_GAP = 32;
 
 export class BoonOverlay {
   constructor(ui) {
@@ -289,12 +290,13 @@ export class BoonOverlay {
     this.subtitle = '';
     this.rects = [];
     this._inputWasEnabled = true;
+    this._gamepadAcceptArmed = false;
   }
 
   /** ARCHITECTURE §2.9 — ui.showBoonChoice(options) -> Promise<chosenBoon> */
   open(options, o = {}) {
     const list = (options && options.length ? options : this._fallback(o)).slice(0, 3);
-    this.options = list.map(x => normalise(x));
+    this.options = list.map(x => normalise(x, this.ui.boonState));
     this.raw = list;
     this.active = true;
     const input = this.ui.ctx?.input;
@@ -302,6 +304,7 @@ export class BoonOverlay {
     if (input) input.enabled = false;
     this.t0 = this.ui.now();
     this.hover = -1; this.chosen = -1; this.chosenT = 0;
+    this._gamepadAcceptArmed = false;
     const gods = [...new Set(this.options.map(x => x.god))];
     this.title = gods.length === 1 ? `A Boon of ${GOD_INFO[gods[0]]?.name || 'the Gods'}` : 'A Boon of the Gods';
     this.subtitle = gods.length === 1 ? (GOD_INFO[gods[0]]?.title || '') : 'The gods are watching';
@@ -366,6 +369,29 @@ export class BoonOverlay {
       if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
     }
     return -1;
+  }
+
+  /** One navigation path for keyboard and gamepad, including first focus. */
+  moveSelection(dir) {
+    const n = this.options.length;
+    if (!this.active || !n) return;
+    this.hover = advanceCardFocus(this.hover, dir, n);
+    this.ui.ctx?.audio?.sfx?.('ui.move', { gain: 0.32 });
+    this.ui.dirty = true;
+  }
+
+  gamepad(action) {
+    if (!this.active) return;
+    if (action === 'left') this.moveSelection(-1);
+    else if (action === 'right') this.moveSelection(1);
+    else if (action === 'accept') this.choose(this.hover < 0 ? 0 : this.hover);
+  }
+
+  pollGamepadAccept(down, edge) {
+    const next = releaseGatedEdge(this._gamepadAcceptArmed, down, edge);
+    this._gamepadAcceptArmed = next.armed;
+    if (next.trigger) this.gamepad('accept');
+    return next.trigger;
   }
 
   draw(g, W, H, S, t) {
@@ -455,8 +481,8 @@ export class BoonOverlay {
     // ── footer hint ──
     const fa = ease.out(clamp01((age - 0.55) / 0.4));
     g.save(); g.globalAlpha = fa * 0.8;
-    tracked(g, 'PRESS  1  ·  2  ·  3  TO CLAIM', W / 2, L.y + L.ch + 46 * S, {
-      size: 11.5 * S, track: 0.40, weight: 600, align: 'center', color: rgba('#d8c8a6', 0.78), shadow: '#06030c', shadowDy: 1.4 * S,
+    tracked(g, '1 · 2 · 3  OR CLICK   ·   ARROWS + ENTER   ·   GAMEPAD A', W / 2, L.y + L.ch + 42 * S, {
+      size: 10.5 * S, track: 0.28, weight: 600, align: 'center', color: rgba('#e8d8b6', 0.86), shadow: '#06030c', shadowDy: 1.4 * S,
     });
     g.restore();
   }
@@ -485,6 +511,19 @@ export class BoonOverlay {
     g.restore();
 
     const cx = x + w / 2;
+    // The card number is an affordance, not just a footer instruction. It
+    // keeps the direct-key choice discoverable while the eye compares cards.
+    const keyX = x + 22 * S, keyY = y + 23 * S, keyR = 11 * S;
+    g.save();
+    g.beginPath(); g.arc(keyX, keyY, keyR, 0, 6.2832);
+    g.fillStyle = rgba('#090512', 0.90); g.fill();
+    g.strokeStyle = rgba(st.hovered ? lift(col, 0.42) : PAL.goldMid, st.hovered ? 0.95 : 0.72);
+    g.lineWidth = 1.2 * S; g.stroke();
+    tracked(g, String((st.index || 0) + 1), keyX, keyY + 3.5 * S, {
+      size: 10.5 * S, track: 0, weight: 700, align: 'center', color: st.hovered ? '#fff3c7' : rgba(PAL.parch, 0.84),
+    });
+    g.restore();
+
     // ── medallion ──
     const mr = 49 * S, my = y + 102 * S;
     g.save();
@@ -524,7 +563,9 @@ export class BoonOverlay {
       size: 13 * S, track: 0.32, weight: 700, align: 'center', color: lift(col, 0.34),
       shadow: '#07040d', shadowDy: 1.6 * S,
     });
-    const epithet = o.upgrade ? 'BOON UPGRADE' : o.duo ? 'A DUO BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
+    const epithet = o.comparison?.kind === 'replace' ? 'SLOT TRANSMUTATION'
+      : o.comparison?.kind === 'upgrade' ? 'RARITY UPGRADE'
+        : o.duo ? 'A DUO BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
     if (epithet) tracked(g, epithet, cx, y + 190 * S, {
       size: 8.6 * S, track: 0.30, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.72),
     });
@@ -576,11 +617,39 @@ export class BoonOverlay {
       size: 10.5 * S, track: 0.30, weight: 600, align: 'center', color: lift(col, 0.50),
     });
 
+    // Hades-style decision clarity: action-slot choices disclose the boon that
+    // will be displaced (or improved) before the player commits. The rarity
+    // transition is repeated in text so colour is never the only signal.
+    let effectTop = py + ph;
+    if (o.comparison) {
+      const cmp = o.comparison;
+      const bh = 37 * S, by = effectTop + 5 * S, bw = w - 42 * S;
+      g.save();
+      plaqueRect(g, cx - bw / 2, by, bw, bh, 4 * S);
+      g.fillStyle = rgba(cmp.kind === 'replace' ? shade(col, 0.72) : '#181026', 0.88); g.fill();
+      g.strokeStyle = rgba(cmp.kind === 'replace' ? col : R.text, 0.55); g.lineWidth = 1 * S; g.stroke();
+      g.restore();
+      const prefix = cmp.kind === 'replace' ? 'REPLACES' : 'IMPROVES';
+      const decision = `${prefix}  ${cmp.fromName}`.toUpperCase();
+      let ds = 8.8 * S;
+      const decisionW = trackedWidth(g, decision, { size: ds, track: 0.18, weight: 700 });
+      if (decisionW > bw - 16 * S) ds *= (bw - 16 * S) / decisionW;
+      tracked(g, decision, cx, by + 14 * S, {
+        size: ds, track: 0.18, weight: 700, align: 'center', color: rgba(PAL.parch, 0.90), shadow: '#05030a', shadowDy: 1,
+      });
+      const from = (RARITY_LABEL[cmp.fromRarity] || cmp.fromRarity || 'Common').toUpperCase();
+      const to = (RARITY_LABEL[cmp.toRarity] || cmp.toRarity || 'Common').toUpperCase();
+      tracked(g, `${from}   →   ${to}`, cx, by + 29 * S, {
+        size: 9.4 * S, track: 0.22, weight: 700, align: 'center', color: R.text, shadow: '#05030a', shadowDy: 1,
+      });
+      effectTop = by + bh;
+    }
+
     // ── effect text, optically centred in whatever room is left ──
     const tw2 = w - 44 * S;
     const lines = wrap(g, o.text, tw2, { size: 14.4 * S, weight: 400, font: bodyFont() });
     const lh = 20 * S;
-    const availTop = py + ph, availBot = y + h - 52 * S;
+    const availTop = effectTop, availBot = y + h - 52 * S;
     const shown = lines.slice(0, 4);
     let ty = availTop + Math.max(6 * S, (availBot - availTop - shown.length * lh) / 2) + lh * 0.74;
     g.font = `400 ${14.4 * S}px ${bodyFont()}`;
@@ -651,7 +720,7 @@ function drawMixed(g, line, cx, y, size, maxW, col) {
 }
 
 /** Accept whatever shape the run system hands us and make it renderable. */
-function normalise(x) {
+function normalise(x, boonState) {
   if (!x) return { name: 'Unknown', text: '', god: 'zeus', rarity: 'common', slot: 'passive', color: PAL.gold };
   const god = x.god || (x.boon && x.boon.god) || (x.gods && x.gods[0]) || 'zeus';
   const rarity = (x.rarity || 'common').toLowerCase();
@@ -664,6 +733,7 @@ function normalise(x) {
     gods: x.gods || (x.boon && x.boon.gods) || [god],
     duo: !!(x.duo || (x.boon && x.boon.gods)),
     upgrade: !!x.upgrade,
+    comparison: boonOfferComparison(x, boonState),
     rarity: RARITY[rarity] ? rarity : 'common',
     slot: x.slot || (x.boon && x.boon.slot) || 'passive',
     color: x.color || GOD_INFO[god]?.color || PAL.gold,

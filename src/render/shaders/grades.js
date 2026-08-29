@@ -312,24 +312,30 @@ export const GRADES = {
   // marble, laurel, gold. Pale gold key, rose rim, cool violet-grey ink.
   elysium: {
     name: 'elysium',
+    // Preserve the authored marble/verdant/gold blocks.  The old transform
+    // warmed every luminance band and rolled white at 0.90, turning an entire
+    // arena into one pale-pink surface before the textures could separate.
+    // Keep the shared Elysium exposure contract.  Floor staging is handled by
+    // the floor material and its incident-light response, never by dimming the
+    // actors, VFX or the whole biome.
     exposure: 0.98,
     agxSlope: [1.02, 1.02, 1.0],
     agxPower: [1.05, 1.05, 1.08],
     agxSat: 1.10,
     contrast: 0.55,
     pivot: 0.32,
-    black: 0.001, white: 0.90, shoulder: 0.22,
+    black: 0.001, white: 0.96, shoulder: 0.18,
     lift:  [0.012, 0.012, 0.018],
     gamma: [ 1.00,  1.00,  1.03 ],
     gain:  [ 1.04,  1.02,  0.97 ],
     curveR: 0.99, curveG: 1.00, curveB: 1.05,
-    shadowTint: H('#6a5c9c'),   // marble shadow: cool violet-grey, still not neutral
-    midTint:    H('#ffe0b8'),
-    highTint:   H('#fff4d0'),
+    shadowTint: H('#5b5676'),   // marble shadow: cool violet-grey, still not neutral
+    midTint:    H('#e8ddcb'),   // neutral-warm: the material owns the hue
+    highTint:   H('#ffe8b0'),   // reserve gold for the real highlight band
     satShadow: 1.08,
     satMid:    1.08,
     satHigh:   1.06,
-    shadowMix: 0.30, highMix: 0.22, tintStrength: 0.78,
+    shadowMix: 0.26, highMix: 0.16, tintStrength: 0.52,
     hueLobes: [
       [0.72, 0.12, 0.040],      // violets -> rose (rim)
       [0.30, 0.12, -0.030],     // greens  -> verdant/olive
@@ -338,9 +344,13 @@ export const GRADES = {
     vignette: { amount: 0.18, radius: 0.84, softness: 0.95, depth: 0.06, floor: 0.16, color: H('#302943') },
     grain:    { amount: 0.0060, size: 1.0, darkBoost: 1.5 },
     chroma:   1.1,
-    bloom:    { threshold: 1.35, knee: 0.45, intensity: 0.40, tint: H('#fff0bc'), radius: 0.42, clamp: 2.2 },
+    // Tight, high-gated bloom: braziers and gold glints retain a painted halo
+    // without laying a white pedestal over the marble field.
+    bloom:    { threshold: 1.82, knee: 0.40, intensity: 0.30, tint: H('#fff0bc'), radius: 0.26, clamp: 1.8 },
     ao:       { intensity: 0.60, radius: 1.40, power: 1.60, bias: 0.05, ink: H('#514a70') },
-    godrays:  { intensity: 0.14, color: H('#fff0bc'), decay: 0.958, density: 0.62, weight: 0.42 },
+    // No unmotivated screen-space shaft: Elysium's illumination comes from
+    // visible braziers, the key, gold trim and rose actor rims.
+    godrays:  { enabled: false, intensity: 0, color: H('#fff0bc'), decay: 0.958, density: 0.62, weight: 0.42 },
     fog:      { color: H('#514f69'), far: H('#292d45'), density: 0.010, height: 0.13, haze: H('#4a4865'), hazeStart: 46, hazeEnd: 155, hazeDesat: 0.38, hazeR0: 1.20, hazeR1: 2.5, hazeRadial: 0.75 },
     dof:      { range: 56.0, nearRange: 17.0, maxBlur: 0.34, nearMax: 0.13, tilt: 0.08, tiltCenter: 0.60, focusRange: 15.0 },
   },

@@ -148,8 +148,8 @@ export class UI {
       if (this.nectarUI.active) { this.nectarUI.key(e); return; }
       if (this.boonUI.active) {
         if (e.key === '1' || e.key === '2' || e.key === '3') this.boonUI.choose(+e.key - 1);
-        else if (e.key === 'ArrowLeft') { this.boonUI.hover = Math.max(0, this.boonUI.hover - 1); this.dirty = true; }
-        else if (e.key === 'ArrowRight') { this.boonUI.hover = Math.min(this.boonUI.options.length - 1, this.boonUI.hover + 1); this.dirty = true; }
+        else if (e.key === 'ArrowLeft') this.boonUI.moveSelection(-1);
+        else if (e.key === 'ArrowRight') this.boonUI.moveSelection(1);
         else if (e.key === 'Enter' || e.key === ' ') this.boonUI.choose(this.boonUI.hover < 0 ? 0 : this.boonUI.hover);
         return;
       }
@@ -287,13 +287,23 @@ export class UI {
     const dn = down(13) || (pad.axes?.[1] ?? 0) > 0.72;
     const lf = down(14) || (pad.axes?.[0] ?? 0) < -0.72;
     const rt = down(15) || (pad.axes?.[0] ?? 0) > 0.72;
+    // Sample A every frame, including ordinary gameplay, so the edge latch
+    // cannot go stale while the player is dashing toward a reward gate.
+    const acceptDown = down(0);
+    const accept = edge('accept', acceptDown);
+    if (this.boonUI.active) {
+      if (edge('left', lf)) this.boonUI.gamepad('left');
+      else if (edge('right', rt)) this.boonUI.gamepad('right');
+      else this.boonUI.pollGamepadAccept(acceptDown, accept);
+      return; // the offer is a required decision; Start must not open behind it
+    }
     if (this.nectarUI.active) {
       if (pause || edge('back', down(1))) this.nectarUI.gamepad('back');
       else if (edge('up', up)) this.nectarUI.gamepad('up');
       else if (edge('down', dn)) this.nectarUI.gamepad('down');
       else if (edge('left', lf)) this.nectarUI.gamepad('left');
       else if (edge('right', rt)) this.nectarUI.gamepad('right');
-      else if (edge('accept', down(0))) this.nectarUI.gamepad('accept');
+      else if (accept) this.nectarUI.gamepad('accept');
       return;
     }
     if (pause) {
@@ -305,7 +315,7 @@ export class UI {
     if (edge('down', dn)) this.menus.key(1);
     if (edge('left', lf)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, -1); }
     if (edge('right', rt)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, 1); }
-    if (edge('accept', down(0))) { const h = this.menus.hit[this.menus.sel]; if (h) h.act === 'setting' ? this.menus._bump(h.key, 1) : this.menus.activate(h.act); }
+    if (accept) { const h = this.menus.hit[this.menus.sel]; if (h) h.act === 'setting' ? this.menus._bump(h.key, 1) : this.menus.activate(h.act); }
     if (edge('back', down(1))) {
       if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
       else if (this.menus.screen === 'pause') this.screen('game');
@@ -454,6 +464,12 @@ export class UI {
   setupCaptureBoons(ctx, god = 'zeus') {
     this.setupCaptureHUD(ctx, { quiet: true });
     const bs = this.boonState;
+    // Seed one occupied action slot so the reference shot exercises the most
+    // information-dense live case: a god replacing an existing action boon.
+    if (god === 'zeus' && !bs.granted.length) {
+      const currentAttack = BOONS.find(x => x.id === 'poseidon.attack');
+      if (currentAttack) bs.grant(bs.offer(currentAttack, 'rare'));
+    }
     // Hand-picked from one deity to mirror the live post-gate audience. Three
     // slots and three rarities keep the upgrade language readable while the
     // repeated portrait makes it unmistakable that Zeus owns this offer.

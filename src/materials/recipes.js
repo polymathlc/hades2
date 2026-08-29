@@ -1659,16 +1659,30 @@ const RECIPES = {
     for (let i = 0; i < goldV.length; i++) goldV[i] = clamp01(0.5 + (grain[i] - 0.5) * 0.6 + edge[i] * 0.4);
     TG.compositeRamp(rgb, n, inlay, goldV, 'gold', 0.9);
     TG.compositeRamp(rgb, n, powField(orn, 0.9), goldV, 'gold', 0.85);
+    // Elysium's green is a MATERIAL family, not a post-process wash.  Growth
+    // starts in tile joints, then blooms into a few broad, broken patches on
+    // the damper cloud lobes.  This creates the same large color-block rhythm
+    // as painted Hades environments while staying entirely inside the one
+    // existing texture bake (no extra draw calls or texture allocation).
     const moss = F(n);
-    for (let i = 0; i < moss.length; i++) moss[i] = clamp01((T.seam[i] - 0.5) * 2.4) * clamp01((cloud[i] - 0.55) * 3.4);
-    TG.compositeRamp(rgb, n, moss, clampField(scaleField(TG.copyField(cloud), 1.2)), 'verdant', 0.55);
+    for (let i = 0; i < moss.length; i++) {
+      const joint = clamp01((T.seam[i] - 0.42) * 2.5);
+      const field = clamp01((cloud[i] - 0.48) * 3.1)
+        * clamp01(0.28 + cav[i] * 1.35 + (1 - T.lobe[i]) * 0.18);
+      moss[i] = clamp01(Math.max(joint * (0.34 + cloud[i] * 0.72), field));
+    }
+    TG.compositeRamp(rgb, n, moss, clampField(scaleField(TG.copyField(cloud), 1.15)), 'verdant', 0.86);
 
-    const rough = TG.artisticRoughness(n, { base: 0.48, height: h, cavity: cav, edge, polish: 0.18, dry: 0.30, variation: 0.14, seed: seed + 7, min: 0.22, max: 0.94 });
+    // Floor marble is honed and weathered rather than mirror-polished.  A
+    // higher roughness floor prevents its dielectric lobe from rebuilding the
+    // white pedestal that the darker albedo removes; gold inlay is explicitly
+    // polished back below, so focal ornament still flashes.
+    const rough = TG.artisticRoughness(n, { base: 0.62, height: h, cavity: cav, edge, polish: 0.12, dry: 0.36, variation: 0.16, seed: seed + 7, min: 0.34, max: 0.97 });
     const metal = F(n);
     for (let i = 0; i < metal.length; i++) {
       const g = clamp01(inlay[i] + orn[i]);
       metal[i] = clamp01(g * 0.85);
-      rough[i] = clamp01(rough[i] * (1 - g * 0.6) + moss[i] * 0.4);
+      rough[i] = clamp01(rough[i] * (1 - g * 0.6) + moss[i] * 0.52);
     }
     return { rgb, height: h, rough, metal, normalScale: 0.9,
       params: { envMapIntensity: 0.8 },

@@ -263,6 +263,10 @@ export class WeaponRuntime {
     this.t = 0; this.dur = 0;
     this.hbId = 0; this.fired = false;
     this.queued = false; this.buffer = 0;
+    // A dash-strike is an attack buffered during the hero's dash. It stays a
+    // separate intent until the runtime consumes the attack buffer so the
+    // same-frame Dash+Attack case cannot accidentally fall back to cut1.
+    this.dashQueued = false;
     this.charge = 0; this.holding = false;
     this.rootDone = 0;
     this.stuck = null;           // the thrown spear waiting to be recalled
@@ -309,6 +313,17 @@ export class WeaponRuntime {
     }
     if (action === 'dash' && this.cancellable) this.cancel();
   }
+  /** Promote the live attack buffer to this arm's authored dash-strike. */
+  queueDashAttack() {
+    if (!this.weapon.dashAttack) return false;
+    // Once the dashcut has begun, repeated input is a normal combo request.
+    // Re-arming dash intent here could survive the active move and turn a
+    // later standing Attack into an unexplained second dashcut.
+    if (this.state === 'attack' && this.step === this.weapon.dashAttack) return false;
+    this.dashQueued = true;
+    this.buffer = Math.max(this.buffer, this.weapon.buffer);
+    return true;
+  }
   release(action) {
     const w = this.weapon;
     this.holding = false;
@@ -317,19 +332,34 @@ export class WeaponRuntime {
   }
   cancel() {
     if (this.hbId) { this.combat.hitboxes.cancel(this.hbId); this.hbId = 0; }
-    this.state = 'idle'; this.step = null; this.queued = false; this.charge = 0;
+    this.state = 'idle'; this.step = null; this.queued = false; this.dashQueued = false; this.charge = 0;
   }
 
   // ───────────────────────────────────────────────────────────── update ────
   update(dt) {
-    if (this.buffer > 0) this.buffer -= dt;
+    // A dash-strike is released after the movement dash, not inside it. Pause
+    // its short input buffer while the actor is still dashing; both states run
+    // on the same fixed clock, so this preserves intent without beginning the
+    // hitbox, root motion or weapon animation under the dash animation.
+    const waitingForDashExit = this.dashQueued && this.actor?.state === 'dash';
+    if (this.buffer > 0 && !waitingForDashExit) {
+      this.buffer = Math.max(0, this.buffer - dt);
+      if (this.buffer <= 0) this.dashQueued = false;
+    }
     if (this.blockT > 0) this.blockT -= dt;
     const actionDt = this.actor === this.ctx.player && this.actionSlot === 'attack'
       ? dt * (this.ctx.boons?.mods?.attackSpeed || 1) : dt;
 
     switch (this.state) {
       case 'idle':
-        if (this.buffer > 0 && this.weapon.combo) { this.buffer = 0; this._beginStep(this.weapon.combo[0], 0); }
+        if (this.buffer > 0 && this.dashQueued && this.weapon.dashAttack) {
+          if (this.actor?.state === 'dash') break;
+          this.buffer = 0;
+          this._beginStep(this.weapon.dashAttack, -2);
+        } else if (this.buffer > 0 && this.weapon.combo) {
+          this.buffer = 0;
+          this._beginStep(this.weapon.combo[0], 0);
+        }
         break;
       case 'attack': this._stepAttack(actionDt); break;
       case 'charge': this._stepCharge(actionDt); break;
@@ -348,7 +378,12 @@ export class WeaponRuntime {
       this._beginStep(this.weapon.combo[this.stepIndex + 1], this.stepIndex + 1);
       return;
     }
-    if (this.t >= s.dur) { this.state = 'idle'; this.step = null; this.queued = false; }
+    if (this.t >= s.dur) {
+      this.state = 'idle'; this.step = null; this.queued = false;
+      // Completion is a hard input boundary. No dash intent from this attack
+      // may affect the next standing press.
+      this.dashQueued = false;
+    }
   }
 
   _rootMotion(dt, s) {
@@ -368,7 +403,7 @@ export class WeaponRuntime {
 
   _beginStep(s, idx) {
     this.state = 'attack'; this.step = s; this.stepIndex = idx;
-    this.t = 0; this.fired = false; this.queued = false; this.rootDone = 0;
+    this.t = 0; this.fired = false; this.queued = false; this.dashQueued = false; this.rootDone = 0;
     this.dur = s.dur;
     const A = this.actor;
     this.ctx.events.emit('weapon.step', { weapon: this.weaponId, step: s.name, actor: A, dur: s.dur, t0: s.t0, t1: s.t1 });
