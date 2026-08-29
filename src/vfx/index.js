@@ -34,6 +34,7 @@ import { Decals } from './decals.js';
 import { ScreenFX } from './screenfx.js';
 
 const S = (t, c) => ({ t, c });
+const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 
@@ -55,6 +56,7 @@ export class VFX {
     this.root = null;
     this._pending = [];
     this._budget = 1;
+    this._doom = new Map();
   }
 
   // ───────────────────────────────────────────────────────────────── init ──
@@ -67,6 +69,11 @@ export class VFX {
     this.root = new THREE.Group();
     this.root.name = 'vfx';
     ctx.scene.add(this.root);
+
+    // One shared dagger asset, cloned only while Doom is live. The clones
+    // share geometry but own their materials so countdown opacity can change
+    // independently on several enemies.
+    this._doomTemplate = this._buildDoomKnife();
 
     this.particles = new Particles({ cap }).init(ctx, this.root, this.rng);
     this.rings = new Rings(tier === 'low' ? 8 : 16).addTo(this.root);
@@ -92,6 +99,114 @@ export class VFX {
   setBiome(name) {
     const B = BIOMES[name] || BIOMES.tartarus;
     this.biome = { name, key: B.key, rim: B.rim, accent: B.accent, shadow: B.shadow };
+  }
+
+  _buildDoomKnife() {
+    const group = new THREE.Group();
+    group.name = 'vfx.doom.knife';
+
+    // Point-down diamond blade. A knife is deliberately literal here: Doom's
+    // delay should be readable without remembering a colour/status legend.
+    const bladeGeo = new THREE.ConeGeometry(0.17, 0.92, 4);
+    bladeGeo.rotateY(Math.PI / 4); bladeGeo.rotateZ(Math.PI); bladeGeo.translate(0, -0.18, 0);
+    const bladeMat = new THREE.MeshStandardMaterial({
+      color: '#34203f', metalness: 0.82, roughness: 0.20,
+      emissive: '#a05fe0', emissiveIntensity: 1.25,
+    });
+    const blade = new THREE.Mesh(bladeGeo, bladeMat); blade.name = 'doom.blade'; blade.castShadow = true;
+
+    const guardGeo = new THREE.BoxGeometry(0.62, 0.075, 0.13); guardGeo.translate(0, 0.31, 0);
+    const gripGeo = new THREE.CylinderGeometry(0.055, 0.07, 0.48, 8); gripGeo.translate(0, 0.57, 0);
+    const pommelGeo = new THREE.OctahedronGeometry(0.11, 0); pommelGeo.translate(0, 0.84, 0);
+    const metalMat = new THREE.MeshStandardMaterial({ color: '#d14b66', metalness: 0.74, roughness: 0.28, emissive: '#671738', emissiveIntensity: 0.75 });
+    const handleMat = new THREE.MeshStandardMaterial({ color: '#201326', metalness: 0.25, roughness: 0.72, emissive: '#3c1339', emissiveIntensity: 0.35 });
+    const guard = new THREE.Mesh(guardGeo, metalMat); guard.name = 'doom.guard';
+    const grip = new THREE.Mesh(gripGeo, handleMat); grip.name = 'doom.grip';
+    const pommel = new THREE.Mesh(pommelGeo, metalMat); pommel.name = 'doom.pommel';
+
+    // The shrinking halo is the clock; the blade itself begins dropping only
+    // in the final quarter so anticipation and impact are separate beats.
+    const ringGeo = new THREE.TorusGeometry(0.43, 0.025, 7, 28);
+    const ringMat = new THREE.MeshBasicMaterial({ color: '#d879ff', transparent: true, opacity: 0.78, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+    const ring = new THREE.Mesh(ringGeo, ringMat); ring.name = 'doom.clock'; ring.position.y = 0.05; ring.rotation.x = Math.PI / 2;
+
+    group.add(blade, guard, grip, pommel, ring);
+    group.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.castShadow = true; } });
+    return group;
+  }
+
+  /** Bind one visible hanging knife to the live Doom status record. */
+  doomMark(target, record) {
+    if (!this.enabled || !target || !record || !this.root || !this._doomTemplate) return null;
+    let mark = this._doom.get(target);
+    if (!mark) {
+      const object = this._doomTemplate.clone(true);
+      // Geometry stays shared; dynamic countdown materials do not.
+      object.traverse(o => { if (o.isMesh && o.material) o.material = o.material.clone(); });
+      object.visible = true;
+      this.root.add(object);
+      mark = { object, ring: object.getObjectByName('doom.clock'), blade: object.getObjectByName('doom.blade'), record, impactT: 0, stacks: 1 };
+      this._doom.set(target, mark);
+    }
+    mark.record = record;
+    mark.stacks = record.stacks || 1;
+    return mark;
+  }
+
+  /** The combat authority calls this on the exact frame Doom deals damage. */
+  doomStrike(target) {
+    const mark = this._doom.get(target);
+    if (!mark) return;
+    mark.record = null;
+    mark.impactT = 0.14;
+  }
+
+  cancelDoom(target) { this._removeDoom(target); }
+
+  _removeDoom(target) {
+    const mark = this._doom.get(target);
+    if (!mark) return;
+    if (mark.object.parent) mark.object.parent.remove(mark.object);
+    mark.object.traverse(o => { if (o.isMesh && o.material) o.material.dispose(); });
+    this._doom.delete(target);
+  }
+
+  _updateDoom(dt, ctx) {
+    const now = ctx.time.t;
+    for (const [target, mark] of this._doom) {
+      if ((!target || target.dead || target.alive === false) && mark.impactT <= 0) { this._removeDoom(target); continue; }
+      const baseY = target?.root?.position?.y ?? target?.position?.y ?? 0;
+      const height = target?.height || Math.max(1.3, (target?.radius || 0.5) * 2.8);
+      const topY = baseY + height + 1.22;
+      const hitY = baseY + height * 0.72;
+      const pos = target?.position || _v.set(0, 0, 0);
+      let y = topY;
+
+      if (mark.record) {
+        const k = clamp01(mark.record.t / Math.max(0.001, mark.record.dur));
+        const drop = clamp01((k - 0.74) / 0.26);
+        const fall = drop * drop * drop;
+        y = topY + Math.sin(now * 5.2 + (target.id || 0)) * 0.075 * (1 - drop) + (hitY - topY) * fall;
+        const ringScale = Math.max(0.12, 1 - k * 0.88);
+        if (mark.ring) {
+          mark.ring.scale.setScalar(ringScale);
+          mark.ring.material.opacity = 0.30 + 0.56 * (1 - k);
+        }
+        if (mark.blade?.material) mark.blade.material.emissiveIntensity = 1.0 + 1.4 * k * k;
+        mark.object.rotation.y += dt * (1.1 + k * 3.4);
+        mark.object.rotation.z = Math.sin(now * 4.1) * 0.035 * (1 - drop);
+        const s = 1 + Math.min(0.24, (mark.stacks - 1) * 0.08);
+        mark.object.scale.setScalar(s);
+      } else {
+        y = hitY;
+        mark.impactT -= dt;
+        const s = Math.max(0.35, mark.impactT / 0.14);
+        mark.object.scale.set(1.15 - s * 0.1, s, 1.15 - s * 0.1);
+        if (mark.ring) mark.ring.material.opacity = 0;
+        if (mark.impactT <= 0) { this._removeDoom(target); continue; }
+      }
+      mark.object.position.set(pos.x, y, pos.z);
+    }
   }
 
   /** Resolve {type,color} into the 3-layer colour triple. */
@@ -439,6 +554,7 @@ export class VFX {
   _at(dt, fn) { this._pending.push({ t: this.ctx.time.t + dt, fn }); }
 
   clear() {
+    for (const target of [...this._doom.keys()]) this._removeDoom(target);
     this.particles.clear(); this.rings.clear(); this.slashes.clear();
     this.beams.clear(); this.trails.clear(); this.decals.clear();
     this._pending.length = 0;
@@ -459,6 +575,7 @@ export class VFX {
     this.trails.update(dt);
     this.decals.update(dt);
     this.screen.update(dt);
+    this._updateDoom(dt, ctx);
 
     // graceful degradation: if the pool is saturated, thin new emissions
     const load = this.particles.count / this.particles.cap;
@@ -474,6 +591,11 @@ export class VFX {
   resize() { }
 
   dispose() {
+    for (const target of [...this._doom.keys()]) this._removeDoom(target);
+    if (this._doomTemplate) {
+      this._doomTemplate.traverse(o => { if (o.isMesh) { o.geometry?.dispose?.(); o.material?.dispose?.(); } });
+      this._doomTemplate = null;
+    }
     this.particles.dispose(); this.rings.dispose(); this.slashes.dispose();
     this.beams.dispose(); this.trails.dispose(); this.decals.dispose();
     this.screen.dispose();
@@ -484,6 +606,7 @@ export class VFX {
   _captureState(name, ctx) {
     if (name === 'vfxburst') { this.clear(); this.rng.reseed('vfx:burst'); this._setupBurst(ctx); }
     else if (name === 'death') { this.clear(); this.rng.reseed('vfx:death'); this._setupDeath(ctx); }
+    else if (name === 'doom') { /* EnemyManager just authored the live Doom mark; retain it. */ }
     else if (name) { this.clear(); }
   }
 

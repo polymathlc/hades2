@@ -53,8 +53,8 @@ export const STATUS = {
     tick: 0.62, dps: 2.4, dpsPerStack: 2.6, poisePerTick: 6, fx: 'spark',
   },
   doom: {
-    // no tick damage at all — one big detonation on expiry. The tension is the
-    // effect; a doom stack you can see is a clock the player can read.
+    // No tick damage: a visible knife hangs above the victim, its halo counts
+    // down, and it falls during the final quarter before this burst resolves.
     color: '#a05fe0', type: 'arcane', maxStacks: 4, dur: 1.35, refresh: false,
     tick: 0, burst: 34, burstPerStack: 22, fx: 'rune',
   },
@@ -481,6 +481,7 @@ export class CombatSystem {
     rec.source = source || rec.source;
     rec.power = Math.max(rec.power || 0, power || 0);
     this.ctx.events.emit('status.applied', { target, kind, stacks: rec.stacks, color: D.color });
+    if (kind === 'doom') this.ctx.vfx?.doomMark?.(target, rec);
     // chill shatter: the payoff for a full stack bar
     if (kind === 'chill' && D.shatterAt && rec.stacks >= D.shatterAt) {
       rec.stacks = 0;
@@ -530,6 +531,10 @@ export class CombatSystem {
             const weakBonus = sourceMods && this._stack(e, 'weak') ? (sourceMods.doomVsWeak || 0) : 0;
             const authored = r.power > 0 ? r.power : D.burst + D.burstPerStack * (r.stacks - 1);
             const dmg = authored + (sourceMods?.doomDmg || 0) + weakBonus;
+            // The hanging knife has spent the final quarter of its timer
+            // falling. Resolve the hit on the exact frame its point reaches
+            // the target, then leave it embedded for a few frames of impact.
+            this.ctx.vfx?.doomStrike?.(e);
             this.applyDamage({ target: e, amount: dmg, type: D.type, source: r.source, pos: e.position, dir: null, poiseDamage: 999, ignoreIFrames: true });
             this.ctx.vfx?.shockwave?.(_v.set(e.position.x, 0.06, e.position.z), { radius: 2.4, color: D.color, life: 0.4 });
             this.ctx.vfx?.burst?.(_v.set(e.position.x, e.position.y + 1.0, e.position.z), { count: 20, color: D.color, speed: 8, spread: 1.2, kind: 'rune' });

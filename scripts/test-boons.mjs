@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BOONS, DUOS, BoonState, emptyMods, valuesFor } from '../src/game/boons.js';
 import { CombatSystem } from '../src/entities/combat.js';
+import { VFX } from '../src/vfx/index.js';
 
 const noop = () => {};
 const events = { emit: noop, on: noop };
@@ -19,10 +20,15 @@ function harness() {
   player.maxMana = player.mana = 100;
   player.tune = { hurtIFrames: 0 };
   const enemy = actor('enemy', 3, 0, 1000);
+  const doomMarks = [], doomStrikes = [];
   const ctx = {
     player, events, rng: { f: () => 0 }, world: { radiusAt: () => 20, bounds: { r: 20 } },
     ui: { setHealth: noop, setMana: noop, damageNumber: noop, toast: noop },
-    vfx: { burst: noop, beam: noop, shockwave: noop, impact: noop, slash: noop },
+    vfx: {
+      burst: noop, beam: noop, shockwave: noop, impact: noop, slash: noop,
+      doomMark: (target, record) => doomMarks.push({ target, record }),
+      doomStrike: target => doomStrikes.push(target),
+    },
     audio: { sfx: noop }, engine: { hitstop: noop }, CAPTURE: true,
   };
   ctx.boons = new BoonState(ctx);
@@ -35,7 +41,7 @@ function harness() {
     projectiles: { fire: (d) => (combat.lastProjectile = d, 1), forEachIncoming: noop },
   });
   ctx.combat = combat;
-  return { ctx, combat, player, enemy };
+  return { ctx, combat, player, enemy, doomMarks, doomStrikes };
 }
 
 const grant = (ctx, id, rarity = 'common') => {
@@ -43,6 +49,30 @@ const grant = (ctx, id, rarity = 'common') => {
   assert.ok(boon, `missing boon ${id}`);
   return ctx.boons.grant(ctx.boons.offer(boon, rarity));
 };
+
+// The visual authority owns exactly one tracking knife per doomed target.
+// Reapplication strengthens that mark, and the last quarter of the timer
+// moves it down from the hover point toward the enemy.
+{
+  const fx = new VFX();
+  fx.root = new THREE.Group();
+  fx._doomTemplate = fx._buildDoomKnife();
+  const target = actor('enemy', 4, 2, 100);
+  target.id = 42; target.height = 2;
+  const rec = { kind: 'doom', t: 0, dur: 1.35, stacks: 1 };
+  const first = fx.doomMark(target, rec);
+  rec.stacks = 3;
+  assert.equal(fx.doomMark(target, rec), first);
+  assert.equal(fx._doom.size, 1, 'Doom spawned overlapping knives on reapplication');
+  fx._updateDoom(1 / 60, { time: { t: 0.2 } });
+  const hoverY = first.object.position.y;
+  rec.t = 1.25;
+  fx._updateDoom(1 / 60, { time: { t: 1.25 } });
+  assert.ok(first.object.position.y < hoverY, 'Doom knife did not fall near expiry');
+  fx.cancelDoom(target);
+  assert.equal(fx._doom.size, 0);
+  fx._doomTemplate.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
+}
 
 // Every authored card must change modifier state and must never throw.
 for (const boon of [...BOONS, ...DUOS]) {
@@ -145,11 +175,17 @@ for (const boon of [...BOONS, ...DUOS]) {
 
 // Authored Doom/Hangover power, extended Chill duration, and wall slams.
 {
-  const { ctx, combat, player, enemy } = harness();
+  const { ctx, combat, player, enemy, doomMarks, doomStrikes } = harness();
   grant(ctx, 'ares.attack');
   combat.applyStatus(enemy, 'doom', 1, player, ctx.boons.mods.rider.attack.statusPower);
+  assert.equal(doomMarks.length, 1, 'Doom did not hang a knife over its target');
+  assert.equal(doomMarks[0].record.kind, 'doom');
   const before = enemy.health;
-  combat._statusTick(2);
+  combat._statusTick(1.0);
+  assert.equal(enemy.health, before, 'Doom dealt damage before the knife dropped');
+  assert.equal(doomStrikes.length, 0);
+  combat._statusTick(0.4);
+  assert.equal(doomStrikes.length, 1, 'Doom damage did not coincide with the knife strike');
   assert.equal(Math.round(before - enemy.health), 30, 'Doom ignored the card damage');
 
   ctx.boons.clear(); grant(ctx, 'hecate.passive'); grant(ctx, 'hecate.attack');

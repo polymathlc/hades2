@@ -313,6 +313,12 @@ export class EnemyManager {
   // ════════════════════════════════════════════════ CAPTURE STATES (§5) ═══
   _captureState(name, args, ctx) {
     if (name === 'combat') return this.setupCaptureCombat(ctx, args);
+    if (name === 'doom') {
+      const list = this.setupCaptureCombat(ctx, { depth: 3, plan: ['brute'] });
+      const target = list && list[0];
+      if (target) ctx.combat?.applyStatus?.(target, 'doom', 2, ctx.player, 72);
+      return target;
+    }
     if (name === 'death') return this.setupCaptureDeath(ctx, args);
     if (name === 'boss') return this.setupCaptureBoss(ctx, args);
   }
