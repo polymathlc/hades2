@@ -1,4 +1,4 @@
-// Six image-generated atlases supply the authored colour and brushwork for every
+// Seven image-generated atlases supply the authored colour and brushwork for every
 // named material recipe. The procedural baker still owns height-derived normals,
 // roughness, metalness, AO, emissive masks, and the stochastic anti-tiling pass.
 // Keeping those jobs separate gives the game hand-painted source art without
@@ -11,6 +11,7 @@ import propsUrl from '../assets/textures/generated/props-atlas.jpg';
 import charactersUrl from '../assets/textures/generated/characters-atlas.jpg';
 import tartarusV2Url from '../assets/textures/generated/tartarus-materials-v2-atlas.jpg';
 import creaturesPropsV3Url from '../assets/textures/generated/creatures-props-v3-atlas.jpg';
+import arenaBoonsV4Url from '../assets/textures/generated/arena-boons-v4-atlas.jpg';
 
 const GRID_COLS = 3;
 const GRID_ROWS = 2;
@@ -98,6 +99,20 @@ const ATLASES = [
       { col: 0, row: 1, name: 'tartarus-ceramic-v3', keys: ['ceramic.tartarus'], composite: { detail: 0.30, chroma: 0.07, sourceMix: 0.18 } },
       { col: 1, row: 1, name: 'black-forged-iron-v3', keys: ['iron.tartarus'], composite: { detail: 0.28, chroma: 0.05, sourceMix: 0.14 } },
       { col: 2, row: 1, name: 'charred-timber-v3', keys: ['wood.tartarus'], composite: { detail: 0.34, chroma: 0.055, sourceMix: 0.18 } },
+    ],
+  },
+  {
+    // Large-field materials are last so the enlarged arenas receive the broad
+    // macro variation authored for their new scale. Shrine and divine-gold
+    // keys are isolated to reward architecture instead of repainting the room.
+    name: 'arena-boons-v4', url: arenaBoonsV4Url,
+    tiles: [
+      { col: 0, row: 0, name: 'expanded-tartarus-floor-v4', keys: ['floor.tartarus'], composite: { detail: 0.34, chroma: 0.07, sourceMix: 0.20 } },
+      { col: 1, row: 0, name: 'tartarus-rim-masonry-v4', keys: ['stone.tartarus.rim'], composite: { detail: 0.32, chroma: 0.06, sourceMix: 0.18 } },
+      { col: 2, row: 0, name: 'divine-shrine-stone-v4', keys: ['shrine.divine'], composite: { detail: 0.30, chroma: 0.07, sourceMix: 0.17 } },
+      { col: 0, row: 1, name: 'divine-door-gold-v4', keys: ['gold.divine'], composite: { detail: 0.30, chroma: 0.08, sourceMix: 0.18 } },
+      { col: 1, row: 1, name: 'expanded-asphodel-floor-v4', keys: ['floor.asphodel'], composite: { detail: 0.32, chroma: 0.07, sourceMix: 0.17 } },
+      { col: 2, row: 1, name: 'expanded-elysium-floor-v4', keys: ['floor.elysium'], composite: { detail: 0.30, chroma: 0.07, sourceMix: 0.17 } },
     ],
   },
 ];
@@ -246,7 +261,7 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
   return texture;
 }
 
-/** Load and slice the six project-bound atlases into recipe-addressable maps. */
+/** Load and slice the seven project-bound atlases into recipe-addressable maps. */
 export async function loadGeneratedAlbedos(anisotropy = 8) {
   if (typeof document === 'undefined') return new Map();
   const loader = new THREE.TextureLoader();

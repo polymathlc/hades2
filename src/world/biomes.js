@@ -29,6 +29,9 @@ export const BIOMES = {
       floor: 'floor.tartarus',
       dais: 'floor.tartarus',
       wall: 'stone.tartarus',
+      rim: 'stone.tartarus.rim',
+      shrine: 'shrine.divine',
+      divine: 'gold.divine',
       bay: 'stone.tartarus.bay',
       column: 'stone.tartarus.column',
       arch: 'stone.tartarus.arch',
@@ -111,6 +114,9 @@ export const BIOMES = {
       floor: 'floor.asphodel',
       dais: 'floor.asphodel',
       wall: 'stone.asphodel',
+      rim: 'stone.asphodel',
+      shrine: 'shrine.divine',
+      divine: 'gold.divine',
       bay: 'stone.asphodel',
       column: 'stone.asphodel',
       arch: 'stone.asphodel',
@@ -174,6 +180,9 @@ export const BIOMES = {
       floor: 'floor.elysium',
       dais: 'floor.elysium',
       wall: 'marble.elysium',
+      rim: 'marble.elysium',
+      shrine: 'shrine.divine',
+      divine: 'gold.divine',
       bay: 'marble.elysium',
       column: 'marble.elysium',
       arch: 'marble.elysium',
@@ -235,24 +244,19 @@ export function isBiome(name) { return !!BIOMES[name]; }
  * chamber.js consumes these; biomes.js owns them so a designer can read the
  * whole vocabulary of the game's rooms in one place.
  */
-// ROOM SCALE (integration pass). The plans were authored at r=16.5..19, i.e.
-// 33-38m across. The play camera (entities/camera.js: fov 37, pitch 52,
-// distance 21.5) frames ~26m at the player's plane, so at that scale the
-// chamber's walls, colonnade and doors were ALWAYS outside the frame: every
-// gameplay shot was a hero standing on an unbounded floor with nothing behind
-// them, and the character had to be ~90px tall for any of the room to show.
-// Hades chambers read as ROOMS — you can see the boundary on three sides while
-// the character stays ~1/7 of frame height. The radii below are the authored
-// plans scaled by ~0.74 so the room fits the camera it is played through.
-// Everything else in world/ derives from bounds.r, so the whole kit follows.
+// ROOM SCALE. The arena now has a genuine combat field rather than a compact
+// presentation disc: common chambers are 32-35m across and the causeway is
+// nearly 37m. Camera, spawn rings, lighting and collision derive from the live
+// bounds, so the extra radius becomes playable flanking and kiting space while
+// the architecture still frames the far side of the screen.
 export const ARCHETYPES = {
   rotunda: {
     id: 'rotunda',
     title: 'The Rotunda',
     shape: 'circle',
-    radius: 12.6,
+    radius: 16.4,
     doors: 3,
-    peristyle: { count: 14, order: 'doric', h: 8.9, gapAtDoors: true },
+    peristyle: { count: 18, order: 'doric', h: 8.9, gapAtDoors: true },
     wall: { arcs: 'back', height: 5.4, storeys: 2 },
     dais: null,
     focal: 'apse',
@@ -262,10 +266,10 @@ export const ARCHETYPES = {
     id: 'oblong',
     title: 'The Long Hall',
     shape: 'oblong',
-    radius: 13.2,
+    radius: 17.2,
     aspect: 0.66,
     doors: 2,
-    peristyle: { count: 16, order: 'corinthian', h: 8.6, sides: true },
+    peristyle: { count: 20, order: 'corinthian', h: 8.6, sides: true },
     wall: { arcs: 'sides', height: 6.0, storeys: 2 },
     dais: null,
     focal: 'colonnade',
@@ -275,9 +279,9 @@ export const ARCHETYPES = {
     id: 'cruciform',
     title: 'The Cross Chamber',
     shape: 'cruciform',
-    radius: 13.2,
+    radius: 17.2,
     doors: 3,
-    peristyle: { count: 8, order: 'doric', h: 7.2, atCorners: true },
+    peristyle: { count: 12, order: 'doric', h: 7.2, atCorners: true },
     wall: { arcs: 'back', height: 5.0, storeys: 1 },
     dais: null,
     focal: 'crossing',
@@ -287,11 +291,11 @@ export const ARCHETYPES = {
     id: 'terrace',
     title: 'The Raised Dais',
     shape: 'circle',
-    radius: 12.3,
+    radius: 16.0,
     doors: 2,
-    peristyle: { count: 12, order: 'corinthian', h: 8.8 },
+    peristyle: { count: 16, order: 'corinthian', h: 8.8 },
     wall: { arcs: 'back', height: 6.4, storeys: 2 },
-    dais: { r: 5.3, h: 1.35, steps: 3, at: [0, -4.4] },
+    dais: { r: 6.2, h: 1.35, steps: 3, at: [0, -5.4] },
     focal: 'throne',
     weight: 1.0,
   },
@@ -299,10 +303,10 @@ export const ARCHETYPES = {
     id: 'causeway',
     title: 'The Causeway',
     shape: 'causeway',
-    radius: 14.4,
+    radius: 18.2,
     aspect: 0.42,
     doors: 2,
-    peristyle: { count: 10, order: 'doric', h: 6.8, sides: true },
+    peristyle: { count: 14, order: 'doric', h: 6.8, sides: true },
     wall: { arcs: 'none', height: 0, storeys: 0 },
     dais: null,
     focal: 'bridge',
@@ -313,9 +317,9 @@ export const ARCHETYPES = {
     id: 'hypostyle',
     title: 'The Pillared Hall',
     shape: 'rounded-square',
-    radius: 12.6,
+    radius: 16.6,
     doors: 3,
-    peristyle: { count: 12, order: 'corinthian', h: 9.2, grid: true },
+    peristyle: { count: 16, order: 'corinthian', h: 9.2, grid: true },
     wall: { arcs: 'back', height: 6.8, storeys: 2 },
     dais: null,
     focal: 'grid',
@@ -325,9 +329,9 @@ export const ARCHETYPES = {
     id: 'ossuary',
     title: 'The Ossuary Shelf',
     shape: 'lobed',
-    radius: 12.6,
+    radius: 16.4,
     doors: 2,
-    peristyle: { count: 9, order: 'doric', h: 6.4, ruined: true },
+    peristyle: { count: 12, order: 'doric', h: 6.4, ruined: true },
     wall: { arcs: 'back', height: 4.6, storeys: 1, ruined: true },
     dais: null,
     focal: 'ruin',

@@ -1,6 +1,6 @@
 # Generated texture atlas prompts
 
-These six project-bound atlases were produced with the built-in OpenAI image-generation tool.
+These seven project-bound atlases were produced with the built-in OpenAI image-generation tool.
 Every prompt requested an exact 3-column by 2-row, 1536×1024 atlas. At runtime, the game slices
 the 512×512 cells, closes opposite seams, and maps them to the named material recipes.
 
@@ -107,4 +107,26 @@ Lighting/mood: neutral material reference lighting only, even exposure; no baked
 Color palette: ink black #08070d, charcoal plum #18121f, deep oxblood #4b202a, dark crimson #6d2935, soot brown #2b1b1b, muted ivory #b9aa8e, restrained bronze #79613a, subtle cold iron #26313b.
 Constraints: flat material surfaces only; exact 3-by-2 grid; every cell square; seamless edges; no text, UI, border, separator line, watermark, logos, isolated objects, cast shadows, scene perspective, characters, dogs, body parts, amphora objects, chains, logs, bright orange fields, electric violet fields, or near-white highlights.
 Avoid: fluorescent color, generic noisy grunge, obvious repetition, perspective, baked directional lighting, large focal motifs, glossy plastic, emissive edges.
+```
+
+## Expanded arena and divine boons v4 atlas
+
+```text
+Use case: stylized-concept
+Asset type: exact 3-column by 2-row game texture atlas containing six seamless square albedo textures for a larger mythic underworld arena and divine boon architecture.
+Primary request: Create a fourth-pass material atlas for EREBUS — Descent. The arena is being enlarged, so every surface needs broad, readable macro variation that will not look repetitive across a 35-metre play space. The lower row supplies distinct crafted surfaces for shrine and boon-door geometry.
+Composition/framing: one exact 3:2 landscape atlas, three equal square cells across and two equal square cells down, crisp cell boundaries, no gutters, no frames, no labels; every cell filled edge-to-edge and designed to tile seamlessly on all four edges.
+Top row left-to-right:
+1. expanded Tartarus arena floor: very dark oxblood-black irregular Greek flagstones, varied slab scale, broad soot and dried-ichor sweeps, thin charcoal-plum joints, restrained warm worn edges;
+2. monumental arena rim masonry: near-black bloodstone blocks with chipped curb edges, deep mortar, sparse dull bronze mineral seams and broad hand-painted value shifts;
+3. divine shrine stone: charcoal-plum volcanic stone with shallow distributed laurel, starburst, crescent, wave, and thunder relief fragments, worn and partially erased so no single god dominates.
+Bottom row left-to-right:
+4. divine door gold: blackened hammered gold and bronze leaf, repeated small laurel and meander chasing, dark oxidized recesses, restrained sharp worn-gold flecks;
+5. expanded Asphodel floor: charred basalt paving, irregular cracked plates, ember-red hairline seams with large calm black fields, no glowing lava pools;
+6. expanded Elysium floor: aged warm ivory marble paving, irregular large slabs, muted lavender veins, sparse worn laurel-green and old-gold inlay fragments.
+Style/medium: premium hand-painted mythic action-game texture, bold directional brushwork, simplified macro forms readable from an isometric camera, tactile micro detail, ink-dark colored crevices, rich controlled values; not photographic, not flat vector.
+Lighting/mood: neutral material-reference lighting only and even exposure; no baked spotlight, no glow, no volumetric rays, no vignette.
+Color palette: ink #08070d, charcoal plum #18121f, oxblood #4b202a, dark crimson #6d2935, restrained bronze #80663c, worn gold #c3a25b, Asphodel ember #8f2f1d, Elysium ivory #cfc5af, lavender #70657f, laurel #456c55.
+Constraints: flat material surfaces only; exact 3-by-2 grid; every cell square; seamless edges; no text, UI, borders, separator lines, watermark, logos, isolated objects, cast shadows, scene perspective, characters, gods, faces, doors, columns, lightning bolts, waves, or large focal symbols.
+Avoid: fluorescent orange or violet fields, near-white highlights, glossy plastic, generic noisy grunge, obvious repetition, baked directional lighting, photoreal rubble, large motifs.
 ```

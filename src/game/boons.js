@@ -28,6 +28,9 @@ export const RARITY_LABEL = { common: 'Common', rare: 'Rare', epic: 'Epic', hero
 /** Weights used when a boon is offered without a forced rarity. */
 export const RARITY_WEIGHT = { common: 62, rare: 26, epic: 9, heroic: 3 };
 
+const rarityRank = (rarity) => Math.max(0, RARITIES.indexOf(rarity));
+const nextRarity = (rarity) => RARITIES[Math.min(RARITIES.length - 1, rarityRank(rarity) + 1)];
+
 export const GOD_INFO = {
   zeus:      { name: 'Zeus',      title: 'God of Thunder',        color: GODS.zeus,      status: 'shock', emblem: 'bolt' },
   poseidon:  { name: 'Poseidon',  title: 'God of the Sea',        color: GODS.poseidon,  status: null,    emblem: 'trident' },
@@ -60,7 +63,7 @@ export function valuesFor(boon, rarity) {
 // A rider is what a slot's hit carries: bonus damage, a damage type, and an
 // optional status the combat system already implements (burn/chill/shock/doom/weak).
 function rider(m, slot, o) {
-  const r = m.rider[slot] || (m.rider[slot] = { bonus: 0, type: null, status: null, stacks: 0, color: null, god: null, name: null });
+  const r = m.rider[slot] || (m.rider[slot] = { bonus: 0, type: null, status: null, stacks: 0, color: null, god: null, name: null, tier: 1 });
   if (o.bonus) r.bonus += o.bonus;
   if (o.type) r.type = o.type;
   if (o.status) { r.status = o.status; r.stacks += (o.stacks || 1); }
@@ -337,23 +340,28 @@ export class BoonState {
 
   grant(entry) {
     if (!entry || !entry.boon) return null;
+    const prev = this.byId.get(entry.boon.id);
+    // Re-offering an owned boon is an upgrade. Never let a later low roll
+    // replace an Epic/Heroic copy with a weaker one.
+    const requested = entry.rarity || 'common';
+    const rarity = prev && rarityRank(prev.rarity) > rarityRank(requested) ? prev.rarity : requested;
     const rec = {
-      boon: entry.boon, rarity: entry.rarity || 'common',
-      values: entry.values || valuesFor(entry.boon, entry.rarity || 'common'),
+      boon: entry.boon, rarity,
+      values: valuesFor(entry.boon, rarity),
       god: entry.boon.god || (entry.boon.gods && entry.boon.gods[0]),
       slot: entry.boon.slot || 'passive',
       duo: !!entry.boon.gods,
     };
-    const prev = this.byId.get(rec.boon.id);
     if (prev) {                                  // upgrade in place
       this.granted[this.granted.indexOf(prev)] = rec;
     } else {
       this.granted.push(rec);
+      if (rec.boon.gods) { for (const g of rec.boon.gods) this.godCount[g] = (this.godCount[g] || 0) + 1; }
+      else this.godCount[rec.god] = (this.godCount[rec.god] || 0) + 1;
     }
     this.byId.set(rec.boon.id, rec);
-    if (rec.boon.gods) { for (const g of rec.boon.gods) this.godCount[g] = (this.godCount[g] || 0) + 1; }
-    else this.godCount[rec.god] = (this.godCount[rec.god] || 0) + 1;
     this.rebuild();
+    this._syncPlayer();
     this.ctx?.events?.emit?.('boon.granted', { boon: rec.boon, rarity: rec.rarity, values: rec.values, record: rec });
     return rec;
   }
@@ -368,8 +376,40 @@ export class BoonState {
       const r = m.rider[k];
       if (r && r.status && m.status[r.status] > 1) r.stacks = Math.max(1, Math.round(r.stacks * m.status[r.status]));
     }
+    for (const rec of this.granted) {
+      const r = m.rider[rec.slot];
+      if (r && (!r.god || r.god === rec.god)) r.tier = Math.max(r.tier || 1, rarityRank(rec.rarity) + 1);
+    }
     this.mods = m;
     return m;
+  }
+
+  /** Publish persistent boon stats onto the hero; combat reads the rest live. */
+  _syncPlayer() {
+    const p = this.ctx?.player;
+    if (!p) return;
+    if (p._boonBaseMaxHealth == null) p._boonBaseMaxHealth = p.maxHealth;
+    if (p._boonBaseMaxMana == null) p._boonBaseMaxMana = p.maxMana;
+    const oldHealthMax = p.maxHealth;
+    const oldManaMax = p.maxMana;
+    p.maxHealth = p._boonBaseMaxHealth + this.mods.maxHealthAdd;
+    p.maxMana = p._boonBaseMaxMana + this.mods.maxManaAdd;
+    if (p.maxHealth > oldHealthMax) p.health += p.maxHealth - oldHealthMax;
+    if (p.maxMana > oldManaMax) p.mana += p.maxMana - oldManaMax;
+    p.health = Math.min(p.health, p.maxHealth);
+    p.mana = Math.min(p.mana, p.maxMana);
+    p.critChance = this.mods.critChance;
+    p.critMul = 2 + this.mods.critMul;
+    this.ctx.ui?.setHealth?.(p.health, p.maxHealth);
+    this.ctx.ui?.setMana?.(p.mana, p.maxMana);
+  }
+
+  clear() {
+    this.granted.length = 0;
+    this.byId.clear();
+    this.godCount = {};
+    this.mods = emptyMods();
+    this._syncPlayer();
   }
 
   /** Which duos are currently unlockable given the gods already met. */
@@ -397,6 +437,17 @@ export class BoonState {
     if (duos.length && (o.allowDuo !== false) && (rng ? rng.f() : 1) < (o.duoChance != null ? o.duoChance : 0.18)) {
       const d = rng ? rng.pick(duos) : duos[0];
       out.push(this.offer(d, (rng ? rng.f() : 0) < 0.5 ? 'epic' : 'heroic'));
+    }
+    // Once a god has blessed the run, boon doors can improve that exact gift.
+    // The card keeps its identity but moves one rarity tier, so the changed
+    // numbers and effect intensity are easy to understand.
+    const upgradeable = this.granted.filter(rec => rarityRank(rec.rarity) < RARITIES.length - 1 && (!o.god || rec.god === o.god));
+    const upgradeChance = o.upgradeChance != null ? o.upgradeChance : 0.48;
+    if (out.length < count && upgradeable.length && (o.preferUpgrade || (rng ? rng.f() : 0) < upgradeChance)) {
+      const rec = rng ? rng.pick(upgradeable) : upgradeable[0];
+      const upgrade = this.offer(rec.boon, nextRarity(rec.rarity));
+      upgrade.upgrade = true;
+      out.push(upgrade);
     }
     const gods = o.god ? [o.god] : GOD_KEYS;
     const pool = BOONS.filter(b => gods.includes(b.god) && !this.byId.has(b.id));

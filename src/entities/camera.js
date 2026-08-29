@@ -93,7 +93,7 @@ export const CAM_TUNING = {
   fov: 34,
   pitchDeg: 46,
   yawDeg: 45,
-  distance: 15.4,
+  distance: 17.8,
   lookHeight: 2.25,
   followTime: 0.185,      // spring smooth time, horizontal
   followTimeY: 0.30,
@@ -101,8 +101,8 @@ export const CAM_TUNING = {
   leadAim: 1.9,
   leadVel: 0.26,
   leadTime: 0.36,
-  heatPull: 2.8,          // metres of pull-back at full combat heat
-  heatFov: 1.6,
+  heatPull: 4.2,          // reveal the enlarged combat field as a wave fills it
+  heatFov: 2.2,
   pushIn: 2.4,            // reward push-in
   dashKick: 0.62,
   dashFov: 2.4,

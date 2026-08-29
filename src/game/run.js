@@ -45,8 +45,10 @@ export class RunState {
     this.depth = 0;
     this.biome = 'tartarus';
     this.boons = [];
+    this.obols = 0;
+    this.darkness = 0;
     this.seed = 1337;
-    this.state = 'playing';       // playing | cleared | transition | dead
+    this.state = 'playing';       // playing | cleared | choosing | transition | dead
     this.roomCleared = false;
     this.exits = [];
     this.kills = 0;
@@ -70,6 +72,7 @@ export class RunState {
     ctx.events.on('room.cleared', (e) => this._onCleared(e));
     ctx.events.on('player.died', () => this._onDeath());
     ctx.events.on('entity.died', (i) => { if (i && i.entity && i.entity !== ctx.player) this.kills++; });
+    ctx.events.on('boon.granted', () => { this.boons = ctx.boons?.list?.().slice() || []; });
     // A door can be entered from doors.js' own update; queue, never rebuild
     // underneath the iterator that called us.
     ctx.world?.doors?.onEnter?.((d) => this._onDoor(d));
@@ -175,6 +178,11 @@ export class RunState {
     // and the enter-trigger all come live together.
     this.ctx.world?.setCleared?.(true);
     this.exits = this.ctx.world?.getExits?.() || [];
+    const heal = this.ctx.boons?.mods?.clearHeal || 0;
+    if (heal > 0 && this.ctx.player) {
+      this.ctx.player.health = Math.min(this.ctx.player.maxHealth, this.ctx.player.health + heal);
+      this.ctx.ui?.setHealth?.(this.ctx.player.health, this.ctx.player.maxHealth);
+    }
     this.ctx.events.emit('run.roomCleared', {
       depth: this.depth, biome: this.biome, exits: this.exits,
       next: this.biomeFor(this.depth + 1), boss: !!(e && e.boss),
@@ -183,6 +191,44 @@ export class RunState {
 
   _onDoor(d) {
     if (this.state !== 'cleared' || this._pending) return;
+    if (d?.kind === 'boon') {
+      this.state = 'choosing';
+      this._claimBoon(d).catch(() => this._queueTransition(d));
+      return;
+    }
+    this._applyReward(d?.kind);
+    this._queueTransition(d);
+  }
+
+  async _claimBoon(d) {
+    const state = this.ctx.boons;
+    const rng = this._rng?.fork ? this._rng.fork(`boon:${this.depth}:${d?.index || 0}`) : this._rng;
+    const offers = state?.roll?.(rng, { count: 3, upgradeChance: 0.58 }) || [];
+    const choice = this.ctx.ui?.showBoonChoice?.(offers, { upgradeChance: 0.58 });
+    if (choice && typeof choice.then === 'function') await choice;
+    else if (offers[0]) state?.grant?.(offers[0]);
+    this.boons = state?.list?.().slice() || [];
+    this._queueTransition(d);
+  }
+
+  _applyReward(kind) {
+    const ctx = this.ctx;
+    if (kind === 'health' && ctx.player) {
+      const heal = Math.max(35, ctx.player.maxHealth * 0.35);
+      ctx.player.health = Math.min(ctx.player.maxHealth, ctx.player.health + heal);
+      ctx.ui?.setHealth?.(ctx.player.health, ctx.player.maxHealth);
+      ctx.ui?.toast?.('Centaur Heart', { color: '#de526f' });
+    } else if (kind === 'gold') {
+      this.obols += 75 + this.depth * 5;
+      ctx.ui?.setResources?.(this.obols, this.darkness);
+      ctx.ui?.toast?.('Charon’s Obols', { color: '#f2c14e' });
+    } else if (kind === 'weapon') {
+      ctx.combat?.cycleWeapon?.();
+    }
+  }
+
+  _queueTransition(d) {
+    if (this._pending) return;
     const next = this.depth + 1;
     this._pending = { depth: next, biome: this.biomeFor(next), door: d ? d.index : 0, kind: d ? d.kind : null };
     this.state = 'transition';
@@ -208,9 +254,12 @@ export class RunState {
     const ctx = this.ctx;
     this.seed = this._rng ? this._rng.int(1, 1e9) : (this.seed + 7919);
     this.boons.length = 0;
+    this.obols = 0; this.darkness = 0;
     this.kills = 0; this.rooms = 0;
     this.startedAt = ctx.time ? ctx.time.t : 0;
+    ctx.boons?.clear?.();
     ctx.player?.respawn?.();
+    ctx.ui?.setResources?.(0, 0);
     this.enterRoom(0, BIOMES[0]);
     ctx.events.emit('run.started', { seed: this.seed, biome: this.biome });
     return this;

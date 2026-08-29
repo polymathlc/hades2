@@ -166,14 +166,29 @@ export class CombatSystem {
   }
   cast({ source, origin, dir, power = 1 } = {}) {
     if (!source || !origin || !dir) return;
-    // the CAST is weapon-agnostic: a piercing arcane bolt that dooms
+    const mods = source === this.ctx.player ? this.ctx.boons?.mods : null;
+    const rider = mods?.rider?.cast || null;
+    const color = rider?.color || '#a05fe0';
+    const god = rider?.god;
+    const fxKind = ({ zeus: 'sparkFine', poseidon: 'wisp', athena: 'shard', aphrodite: 'mote', ares: 'rune', artemis: 'chev', dionysus: 'wisp', hermes: 'chev', hecate: 'rune', selene: 'star' })[god] || 'spark';
+    // The CAST remains weapon-agnostic, but its damage identity, status,
+    // seeking and burst size now visibly inherit the chosen god.
     this.projectiles.fire({
       x: origin.x, y: origin.y, z: origin.z, dx: dir.x, dz: dir.z,
-      kind: 'straight', speed: 30 + 8 * power, radius: 0.30, life: 1.4,
-      damage: 26 * power, type: 'arcane', pierce: 3, knockback: 3.2, hitstop: 62,
-      status: 'doom', statusStacks: 1, color: '#a05fe0', size: 1.5, coreSize: 1.3,
+      kind: mods?.castSeek ? 'homing' : 'straight', homing: mods?.castSeek ? 7.5 : 0,
+      speed: 30 + 8 * power, radius: 0.30 + Math.min(0.34, (mods?.castRadius || 0) * 0.12), life: 1.4,
+      damage: 26 * power * (mods?.castMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0),
+      type: rider?.type || 'arcane', pierce: 3, knockback: 3.2 + (mods?.knockback || 0), hitstop: 62,
+      status: rider?.status || 'doom', statusStacks: rider?.stacks || 1,
+      color, size: rider ? 1.55 + (rider.tier || 1) * 0.14 : 1.5,
+      coreSize: rider ? 1.30 + (rider.tier || 1) * 0.11 : 1.3,
+      blastRadius: mods?.castRadius || 0, crit: 0,
       source, hero: true, onExpire: 'impact',
     });
+    this.ctx.vfx?.burst?.(origin, { count: rider ? 15 + (rider.tier || 1) * 4 : 14, color, speed: 9, spread: 0.42, kind: fxKind, dir });
+    if (rider && (mods?.castRadius || ['poseidon', 'dionysus', 'selene'].includes(god))) {
+      this.ctx.vfx?.shockwave?.(this._v3a.set(origin.x, 0.07, origin.z), { radius: 1.6 + (mods?.castRadius || 0) * 0.35, color, life: 0.38 });
+    }
     this.ctx.events.emit('camera.shake', { amp: 0.07, dur: 0.18, freq: 28 });
   }
   summon({ source, pos, dir } = {}) {
@@ -209,6 +224,16 @@ export class CombatSystem {
     let amount = info.amount || 0;
     const type = info.type || 'physical';
 
+    if (t === ctx.player) {
+      const mods = ctx.boons?.mods;
+      if (mods?.dodge > 0 && this.rng.f() < mods.dodge) {
+        ctx.vfx?.burst?.(t.position.clone().setY(1.0), { count: 10, color: '#f2c14e', speed: 7, spread: 0.8, kind: 'chev' });
+        ctx.events.emit('damage.dodged', { target: t, source: info.source, pos: t.position });
+        return 0;
+      }
+      amount *= mods?.damageTaken || 1;
+    }
+
     // ── a blocking wielder gets first refusal ────────────────────────────
     if (t.blocking && t.blocking.absorb) amount = t.blocking.absorb({ ...info, amount });
     if (amount <= 0) return 0;
@@ -223,7 +248,7 @@ export class CombatSystem {
     // ── crit ────────────────────────────────────────────────────────────
     let crit = !!info.crit;
     if (!crit) {
-      const chance = (info.critChance ?? (src && src.critChance) ?? 0);
+      const chance = (info.critChance || 0) + ((src && src.critChance) || 0);
       if (chance > 0 && this.rng.f() < chance) crit = true;
     }
     if (crit) amount *= (info.critMul ?? (src && src.critMul) ?? 2.0);
@@ -371,7 +396,7 @@ export class CombatSystem {
   hit(h, e, nx, nz) {
     const dealt = this.applyDamage({
       target: e, amount: h.damage, type: h.type, crit: false,
-      critChance: (h.source && h.source.critChance) || (h.critBonus > 0 ? h.critBonus : 0),
+      critChance: h.critBonus > 0 ? h.critBonus : 0,
       dir: _v.set(nx, 0, nz), pos: _v2.set(e.position.x, e.position.y + 1.0, e.position.z),
       source: h.source, knockback: h.knockback, poiseDamage: h.poiseDamage,
       status: h.statusKind, statusStacks: h.statusStacks,
@@ -390,12 +415,28 @@ export class CombatSystem {
   projectileHit(p, e, nx, nz) {
     const dealt = this.applyDamage({
       target: e, amount: p.damage, type: p.type,
-      critChance: p.crit || (p.source && p.source.critChance) || 0,
+      critChance: p.crit || 0,
       dir: _v.set(nx, 0, nz), pos: _v2.set(e.position.x, e.position.y + 1.0, e.position.z),
       source: p.source, knockback: p.knockback, poiseDamage: p.poiseDamage,
       status: p.status, statusStacks: p.statusStacks,
     });
     if (dealt <= 0) return;
+    if (p.blastRadius > 0) {
+      const r2 = p.blastRadius * p.blastRadius;
+      for (const target of this._targets()) {
+        if (!target || target === e || target === p.source || target === this.ctx.player || target.dead || target.alive === false) continue;
+        const dx = target.position.x - e.position.x, dz = target.position.z - e.position.z;
+        if (dx * dx + dz * dz > r2) continue;
+        this.applyDamage({
+          target, amount: p.damage * 0.62, type: p.type, critChance: p.crit || 0,
+          dir: _v.set(dx, 0, dz).normalize(), pos: target.position, source: p.source,
+          knockback: p.knockback * 0.7, poiseDamage: p.poiseDamage,
+          status: p.status, statusStacks: p.statusStacks,
+        });
+      }
+      const blastColor = new THREE.Color(p.cr, p.cg, p.cb).getStyle();
+      this.ctx.vfx?.shockwave?.(_v2.set(e.position.x, 0.06, e.position.z), { radius: p.blastRadius, color: blastColor, life: 0.38 });
+    }
     this.hitstop(p.hitstop);
     if (p.shake) this.ctx.events.emit('camera.shake', { amp: p.shake, dur: 0.2, freq: 31 });
   }

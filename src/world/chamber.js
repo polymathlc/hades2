@@ -1182,7 +1182,7 @@ export class World {
     // built architecture in the FOREGROUND band §1.1 wants at high value. Its
     // indirect share is lifted so the curb, the coping and the parapet read as
     // a described edge instead of dissolving into the apron.
-    const stone = this._M(B.mats.wall, { variation: 0.22, litGain: 0.60, ambGain: 0.95, specGain: 1.30 });
+    const stone = this._M(B.mats.rim || B.mats.wall, { variation: 0.22, litGain: 0.60, ambGain: 0.95, specGain: 1.30 });
 
     // ---- the curb: a moulded stone edge all the way round ----------------
     // This is the island's LIT TOP EDGE. Without it the floor stops at a razor
@@ -2418,16 +2418,16 @@ export class World {
     // full of clutter is unreadable, and a clean centre is what lets the
     // character read as the subject.
     const slots = G.slots.slice();
-    for (let i = 0; i < 16; i++) {
-      const a = wa0 + (wa1 - wa0) * ((i + 0.5) / 16);
+    for (let i = 0; i < 22; i++) {
+      const a = wa0 + (wa1 - wa0) * ((i + 0.5) / 22);
       const rr = this.radiusAt(a) - 1.6 - f() * 1.4;
       slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 2.4, spread: 2.0 });
     }
     // the FAR mid-ring: a hall this size cannot have a ten-metre band of
     // nothing between the emblem and the colonnade. Debris goes on the far
     // side only — the near half stays clear so the play space reads (§1.8).
-    for (let i = 0; i < 7; i++) {
-      const a = 135 * DEG + (170 * DEG) * ((i + 0.5) / 7) + (f() - 0.5) * 0.2;
+    for (let i = 0; i < 10; i++) {
+      const a = 135 * DEG + (170 * DEG) * ((i + 0.5) / 10) + (f() - 0.5) * 0.2;
       const rr = R * (0.50 + f() * 0.22);
       slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 1.5, spread: 2.2 });
     }
@@ -2443,7 +2443,7 @@ export class World {
 
     const cols = this.props.scatter(kit, {
       rng, slots, mix: B.props.mix,
-      count: Math.round(58 * (B.props.density ?? 1)),
+      count: Math.round(76 * (B.props.density ?? 1)),
       keepOut,
       inside: (x, z, r) => this.insideXZ(x, z, r + 1.1),
       root: this.root,

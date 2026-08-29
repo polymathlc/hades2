@@ -57,11 +57,12 @@ const SHARED_SETS = [
   // blocking the main thread in the sync path is ~0.5s of black screen
   'obsidian', 'lava', 'bone', 'marble.elysium',
   'characterrig.hound.hide', 'characterrig.hound.limbs', 'characterrig.hound.keratin',
+  'shrine.divine', 'gold.divine',
 ];
 const BIOME_SETS = {
   tartarus: ['floor.tartarus', 'stone.tartarus', 'stone.tartarus.bay',
     'stone.tartarus.column', 'stone.tartarus.arch', 'rubble.tartarus',
-    'bone.tartarus', 'bronze.tartarus', 'iron.tartarus', 'ceramic.tartarus', 'wood.tartarus'],
+    'stone.tartarus.rim', 'bone.tartarus', 'bronze.tartarus', 'iron.tartarus', 'ceramic.tartarus', 'wood.tartarus'],
   asphodel: ['floor.asphodel', 'stone.asphodel'],
   elysium: ['floor.elysium', 'marble.elysium'],
 };

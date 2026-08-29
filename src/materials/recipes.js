@@ -2060,6 +2060,9 @@ RECIPES['ceramic.tartarus'] = RECIPES['rubble.tartarus'];
 RECIPES['characterrig.hound.hide'] = RECIPES['characterrig.cloth'];
 RECIPES['characterrig.hound.limbs'] = RECIPES['characterrig.hair'];
 RECIPES['characterrig.hound.keratin'] = RECIPES['characterrig.hair'];
+RECIPES['stone.tartarus.rim'] = RECIPES['stone.tartarus'];
+RECIPES['shrine.divine'] = RECIPES['stone.tartarus'];
+RECIPES['gold.divine'] = RECIPES['gold.filigree'];
 
 // aliases the world/props might reasonably ask for
 const ALIASES = {

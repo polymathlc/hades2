@@ -265,12 +265,12 @@ export class Doors {
     const bi = Math.floor(f() * Math.max(1, Math.min(anchors.length, pool.length)));
     if (bi > 0) { const t = pool[0]; pool[0] = pool[bi]; pool[bi] = t; }
 
-    const stone = kit.mat('wall');
+    const stone = kit.mat('shrine');
     // §9.5 relief pass: the jamb fret is the ornament closest to camera in the
     // whole room, so it is the one that most has to read as CUT stone. Mid
     // albedo + a hot specular arris + the moulding units' baked contact
     // occlusion (kit.js reliefShade) instead of white-on-black line-art.
-    const trim = kit.mat('leaf', {
+    const trim = kit.mat('divine', {
       vertexColors: true, tint: '#f4ece0', litGain: 1.02, ambGain: 0.60, specGain: 1.95,
     });
     const metal = kit.mat('metal');

@@ -319,12 +319,13 @@ export class WeaponRuntime {
   update(dt) {
     if (this.buffer > 0) this.buffer -= dt;
     if (this.blockT > 0) this.blockT -= dt;
+    const attackDt = this.actor === this.ctx.player ? dt * (this.ctx.boons?.mods?.attackSpeed || 1) : dt;
 
     switch (this.state) {
       case 'idle':
         if (this.buffer > 0 && this.weapon.combo) { this.buffer = 0; this._beginStep(this.weapon.combo[0], 0); }
         break;
-      case 'attack': this._stepAttack(dt); break;
+      case 'attack': this._stepAttack(attackDt); break;
       case 'charge': this._stepCharge(dt); break;
       case 'rush': this._stepRush(dt); break;
       case 'block': this._stepBlock(dt); break;
@@ -374,6 +375,11 @@ export class WeaponRuntime {
   _fire(s) {
     const A = this.actor, C = this.combat;
     const hb = s.hitbox;
+    const slot = s === this.weapon.special ? 'special' : 'attack';
+    const { mods, rider } = this._boon(slot);
+    const slotMul = slot === 'special' ? (mods?.specialMul || 1) : (mods?.attackMul || 1);
+    const damage = s.damage * slotMul * (mods?.dmgMul || 1) + (rider?.bonus || 0);
+    const color = rider?.color || (s.vfx && s.vfx.color) || this.weapon.palette.body;
     if (hb) {
       this.hbId = C.hitboxes.spawn({
         shape: hb.shape, owner: A, source: A,
@@ -381,23 +387,30 @@ export class WeaponRuntime {
         length: hb.length, halfWidth: hb.halfWidth, halfLength: hb.halfLength,
         offset: hb.offset, maxTargets: hb.maxTargets ?? 6, pierce: hb.pierce ?? 255,
         t0: 0, t1: s.t1 - s.t0, life: s.t1 - s.t0 + 0.02,
-        damage: s.damage, type: s.type || 'physical', knockback: s.knockback,
+        damage, type: rider?.type || s.type || 'physical', knockback: s.knockback + (mods?.knockback || 0),
         poiseDamage: s.poise, hitstop: s.hitstop, shake: s.shake ? s.shake.amp : 0,
-        status: s.status, crit: s.crit || 0,
-        color: (s.vfx && s.vfx.color) || this.weapon.palette.body,
+        status: rider?.status || s.status, statusStacks: rider?.stacks || 1,
+        crit: (s.crit || 0) + (this.weapon.critChance || 0),
+        color,
         tag: this.weaponId + ':' + s.name,
       });
     }
-    this._playVfx(s);
+    this._playVfx(s, rider, slot);
     this.ctx.audio?.sfx?.(s.sfx + '.hit', { pos: A.position, gain: 0.5 });
   }
 
-  _playVfx(s) {
+  _boon(slot) {
+    if (this.actor !== this.ctx.player) return { mods: null, rider: null };
+    const mods = this.ctx.boons?.mods || null;
+    return { mods, rider: mods?.rider?.[slot] || null };
+  }
+
+  _playVfx(s, rider = null, slot = 'attack') {
     const v = s.vfx; if (!v) return;
     const A = this.actor, ctx = this.ctx;
     const P = this.combat._v3a.set(A.position.x, v.y ?? 1.05, A.position.z);
     const D = this.combat._v3b.set(A.facing.x, 0, A.facing.y);
-    const col = v.color || this.weapon.palette.body;
+    const col = rider?.color || v.color || this.weapon.palette.body;
     if (v.call === 'slash') {
       ctx.vfx?.slash?.(P, D, { arc: v.arc ?? 130, radius: v.radius ?? 2.3, width: v.width ?? 0.44, color: col, glow: this.weapon.palette.glow, spin: v.spin });
     } else if (v.call === 'shockwave') {
@@ -407,6 +420,27 @@ export class WeaponRuntime {
       // tell you the hitbox is a line before the damage number does
       const b = this.combat._v3b.set(A.position.x + A.facing.x * (v.length ?? 3.8), v.y ?? 1.08, A.position.z + A.facing.y * (v.length ?? 3.8));
       ctx.vfx?.beam?.(P, b, { color: col, width: v.width ?? 0.30, life: 0.20 });
+    }
+    if (rider) this._playBoonFx(rider, P, D, slot);
+  }
+
+  _playBoonFx(rider, pos, dir, slot) {
+    const ctx = this.ctx, col = rider.color || '#f2c14e';
+    const tier = rider.tier || 1;
+    const kind = {
+      zeus: 'sparkFine', poseidon: 'wisp', athena: 'shard', aphrodite: 'mote',
+      ares: 'rune', artemis: 'chev', dionysus: 'wisp', hermes: 'chev',
+      hecate: 'rune', selene: 'star',
+    }[rider.god] || 'spark';
+    ctx.vfx?.burst?.(pos, {
+      count: (slot === 'special' ? 15 : 9) + tier * 3, color: col,
+      speed: slot === 'special' ? 9 : 6.5, spread: rider.god === 'poseidon' ? 1.15 : 0.65,
+      kind, dir,
+    });
+    if (['poseidon', 'athena', 'dionysus', 'selene'].includes(rider.god)) {
+      ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.07, this.actor.position.z), {
+        radius: (slot === 'special' ? 2.6 : 1.8) + tier * 0.12, color: col, life: 0.32,
+      });
     }
   }
 
@@ -444,16 +478,21 @@ export class WeaponRuntime {
   _loose(c, k, full) {
     const A = this.actor, P = c.projectile;
     const lerp = (a, b) => a + ((b ?? a) - a) * k;
-    const col = full && P.colorFull ? P.colorFull : P.color;
+    const slot = c.action === 'special' ? 'special' : 'attack';
+    const { mods, rider } = this._boon(slot);
+    const slotMul = slot === 'special' ? (mods?.specialMul || 1) : (mods?.attackMul || 1);
+    const col = rider?.color || (full && P.colorFull ? P.colorFull : P.color);
     const id = this.combat.projectiles.fire({
       x: A.position.x + A.facing.x * 0.7, y: 1.12, z: A.position.z + A.facing.y * 0.7,
       dx: A.facing.x, dz: A.facing.y,
       kind: P.kind, speed: lerp(P.speed, P.speedFull), radius: P.radius, life: P.life,
-      damage: lerp(P.damage, P.damageFull), type: P.type,
+      damage: lerp(P.damage, P.damageFull) * slotMul * (mods?.dmgMul || 1) + (rider?.bonus || 0),
+      type: rider?.type || P.type,
       pierce: Math.round(lerp(P.pierce, P.pierceFull)),
-      knockback: lerp(P.knockback, P.knockbackFull), hitstop: lerp(P.hitstop, P.hitstopFull),
+      knockback: lerp(P.knockback, P.knockbackFull) + (mods?.knockback || 0), hitstop: lerp(P.hitstop, P.hitstopFull),
       color: col, size: lerp(P.size, P.sizeFull), coreSize: lerp(P.coreSize, P.coreSizeFull),
-      crit: lerp(P.crit ?? 0, P.critFull ?? 0),
+      crit: lerp(P.crit ?? 0, P.critFull ?? 0) + (this.weapon.critChance || 0),
+      status: rider?.status || P.status, statusStacks: rider?.stacks || P.statusStacks || 1,
       source: A, hero: true, onExpire: P.onExpire || 'burst',
       shake: full ? 0.2 : 0.08,
     });
@@ -463,6 +502,7 @@ export class WeaponRuntime {
     this.ctx.audio?.sfx?.(full && c.sfxFull ? c.sfxFull : c.sfx, { pos: A.position });
     this.ctx.vfx?.burst?.(this.combat._v3a.set(A.position.x + A.facing.x * 0.8, 1.14, A.position.z + A.facing.y * 0.8),
       { count: full ? 22 : 9, color: col, speed: full ? 11 : 6, spread: 0.45, kind: 'chev', dir: this.combat._v3b.set(A.facing.x, 0.12, A.facing.y) });
+    if (rider) this._playBoonFx(rider, this.combat._v3a.set(A.position.x + A.facing.x, 1.1, A.position.z + A.facing.y), this.combat._v3b.set(A.facing.x, 0.12, A.facing.y), slot);
     this.ctx.events.emit('weapon.loose', { weapon: this.weaponId, charge: k, full, actor: A });
     if (full) this.ctx.engine?.slowmo?.(0.55, 0.10);
   }
@@ -470,6 +510,7 @@ export class WeaponRuntime {
   // ────────────────────────────────────────────────── shield rush / block ──
   _beginRush(full) {
     const c = this.weapon.charge;
+    const { mods, rider } = this._boon('special');
     this.state = 'rush'; this.t = 0; this.rootDone = 0; this._rushFull = full;
     this._rushDist = full ? c.dash.distanceFull : c.dash.distance;
     this._rushTime = full ? c.dash.timeFull : c.dash.time;
@@ -478,11 +519,16 @@ export class WeaponRuntime {
       shape: c.hitbox.shape, owner: this.actor, source: this.actor,
       radius: c.hitbox.radius, maxTargets: c.hitbox.maxTargets, pierce: c.hitbox.pierce,
       t0: 0, t1: this._rushTime, life: this._rushTime + 0.02,
-      damage: full ? c.damageFull : c.damage, knockback: full ? c.knockbackFull : c.knockback,
+      damage: (full ? c.damageFull : c.damage) * (mods?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0),
+      type: rider?.type || c.type || 'physical',
+      knockback: (full ? c.knockbackFull : c.knockback) + (mods?.knockback || 0),
       poiseDamage: c.poise, hitstop: full ? c.hitstopFull : c.hitstop,
-      shake: (full ? c.shakeFull : c.shake).amp, color: c.color, tag: 'shield:rush',
+      status: rider?.status, statusStacks: rider?.stacks || 1,
+      crit: this.weapon.critChance || 0,
+      shake: (full ? c.shakeFull : c.shake).amp, color: rider?.color || c.color, tag: 'shield:rush',
     });
-    this.ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.06, this.actor.position.z), { radius: full ? 2.6 : 1.8, color: c.color, life: 0.3 });
+    this.ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.06, this.actor.position.z), { radius: full ? 2.6 : 1.8, color: rider?.color || c.color, life: 0.3 });
+    if (rider) this._playBoonFx(rider, this.combat._v3a.set(this.actor.position.x, 1.0, this.actor.position.z), this.combat._v3b.set(this.actor.facing.x, 0, this.actor.facing.y), 'special');
     this.ctx.events.emit('camera.shake', full ? c.shakeFull : c.shake);
     this.ctx.audio?.sfx?.(c.sfx, { pos: this.actor.position });
   }

@@ -359,7 +359,7 @@ export class Player {
     if (inp.pressed('cast')) this.buf.cast = T.actionBuffer;
     if (inp.pressed('summon')) this.buf.summon = T.actionBuffer;
 
-    this.mana = Math.min(this.maxMana, this.mana + T.manaRegen * dt);
+    this.mana = Math.min(this.maxMana, this.mana + T.manaRegen * (ctx.boons?.mods?.manaRegenMul || 1) * dt);
     this.combatHeat = Math.max(0, this.combatHeat - dt * 0.55);
 
     if (this.state === 'dead') {
@@ -440,6 +440,9 @@ export class Player {
   // ─────────────────────────────────────────────────────────────── dash ────
   _startDash(ctx) {
     const T = this.tune;
+    const mods = ctx.boons?.mods;
+    const rider = mods?.rider?.dash;
+    const boonColor = rider?.color || '#5fd0ff';
     this.buf.dash = 0;
     // THE DASH IS THE ANSWER TO EVERY MISTAKE (weapons.js, verbatim). Tell the
     // arm first: it kills its own live hitbox, drops the guard and clears any
@@ -457,13 +460,28 @@ export class Player {
     this.act = { name: 'dash', t: 0, dur: T.dashTime, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
     this.animator.play('dash', { fade: 0.04, restart: true });
     this.velocity.multiplyScalar(0.25);
-    this.iframes = Math.max(this.iframes, T.dashIFrames[1]);
+    this.iframes = Math.max(this.iframes, T.dashIFrames[1] + (mods?.iframeAdd || 0) + Math.min(0.25, (mods?.deflect || 0) * 0.25));
     this.squash = -0.085;
     this._ghostQueue = [0.0, 0.055, 0.11];
     ctx.events.emit('player.dashed', { pos: this.position.clone(), dir: new THREE.Vector3(this.dash.dir.x, 0, this.dash.dir.y) });
     ctx.events.emit('camera.shake', { amp: 0.06, dur: 0.15, freq: 26 });
     ctx.audio?.sfx?.('dash', { pos: this.position });
-    ctx.vfx?.burst?.(this.position.clone().setY(0.85), { count: 14, color: '#5fd0ff', speed: 6.5, spread: 0.8, kind: 'wisp' });
+    ctx.vfx?.burst?.(this.position.clone().setY(0.85), {
+      count: rider ? 14 + (rider.tier || 1) * 4 : 14, color: boonColor, speed: rider ? 9 : 6.5, spread: 0.8,
+      kind: ({ zeus: 'sparkFine', poseidon: 'wisp', athena: 'shard', aphrodite: 'mote', ares: 'rune', artemis: 'chev', dionysus: 'wisp', hermes: 'chev', hecate: 'rune', selene: 'star' })[rider?.god] || 'wisp',
+    });
+    if (rider) {
+      const radius = 1.45 + (mods?.dashRadius || 0);
+      ctx.hitboxes?.spawn?.({
+        shape: 'circle', owner: this, source: this, follow: false,
+        x: this.position.x, z: this.position.z, radius,
+        t0: 0, t1: 0.10, life: 0.12, maxTargets: 8,
+        damage: rider.bonus || 0, type: rider.type || 'arcane',
+        knockback: 4 + (mods?.knockback || 0), status: rider.status, statusStacks: rider.stacks || 1,
+        color: boonColor, tag: `boon:dash:${rider.god || 'divine'}`,
+      });
+      ctx.vfx?.shockwave?.(this.position.clone().setY(0.06), { radius, color: boonColor, life: 0.36 });
+    }
   }
   _dashStep(dt, ctx) {
     const T = this.tune;
@@ -591,13 +609,14 @@ export class Player {
   // here and duplicates nothing in weapons.js.
   _startCast(ctx) {
     const T = this.tune;
+    const castSpeed = ctx.boons?.mods?.castSpeed || 1;
     if (this.mana < T.castCost) { this.buf.cast = 0; ctx.ui?.toast?.('Not enough mana', { color: '#5fd0ff' }); return; }
     this.mana -= T.castCost;
     ctx.ui?.setMana?.(this.mana, this.maxMana);
     this.buf.cast = 0;
     this.weapon?.cancel?.(); this.blocking = null;
     this.state = 'cast';
-    this.act = { name: 'cast', t: 0, dur: T.castDur, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
+    this.act = { name: 'cast', t: 0, dur: T.castDur / castSpeed, release: T.castRelease / castSpeed, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
     this._animKey = null;
     this.animator.play('cast', { fade: 0.06, restart: true });
     const w = this._wish(ctx, _v);
@@ -607,15 +626,15 @@ export class Player {
     ctx.events.emit('camera.shake', { amp: 0.035, dur: 0.12, freq: 30 });
   }
   _castStep(dt, ctx) {
-    const T = this.tune;
     this.act.t += dt;
-    if (!this.act.fired && this.act.t >= T.castRelease) {
+    if (!this.act.fired && this.act.t >= this.act.release) {
       this.act.fired = true;
       const dir3 = new THREE.Vector3(this.facing.x, 0, this.facing.y);
       const origin = this.position.clone().setY(1.12);
       ctx.combat?.cast?.({ source: this, origin, dir: dir3, power: 1 });
       ctx.events.emit('player.cast', { pos: origin, dir: dir3 });
-      ctx.vfx?.burst?.(origin, { count: 18, color: '#5fd0ff', speed: 9, spread: 0.35, kind: 'spark' });
+      const rider = ctx.boons?.mods?.rider?.cast;
+      ctx.vfx?.burst?.(origin, { count: 12, color: rider?.color || '#5fd0ff', speed: 9, spread: 0.35, kind: rider ? 'rune' : 'spark' });
       ctx.events.emit('camera.shake', { amp: 0.07, dur: 0.18, freq: 28 });
     }
     if (this.act.t >= this.act.dur) { this.state = 'move'; this._animLock = 0.05; }
@@ -632,14 +651,16 @@ export class Player {
     if (this.state !== 'dash') {
       const w = this._wish(ctx, _v);
       const has = w > 0.15 && wishScale > 0.001 && this.alive;
-      const tx = has ? _v.x * this.speed * wishScale : 0;
-      const tz = has ? _v.z * this.speed * wishScale : 0;
+      const boonMove = ctx.boons?.mods?.moveMul || 1;
+      const moveSpeed = this.speed * boonMove;
+      const tx = has ? _v.x * moveSpeed * wishScale : 0;
+      const tz = has ? _v.z * moveSpeed * wishScale : 0;
       // INPUT KICK — motion exists on the very first frame of input, then the
       // acceleration curve takes over. This is the whole "under 50ms" trick.
       if (has && !this._hadInput && wishScale > 0.5) {
         const n = Math.max(1e-4, Math.hypot(_v.x, _v.z));
-        this.velocity.x += (_v.x / n) * this.speed * T.inputKick;
-        this.velocity.z += (_v.z / n) * this.speed * T.inputKick;
+        this.velocity.x += (_v.x / n) * moveSpeed * T.inputKick;
+        this.velocity.z += (_v.z / n) * moveSpeed * T.inputKick;
       }
       this._hadInput = has;
       _v2.set(tx - this.velocity.x, 0, tz - this.velocity.z);

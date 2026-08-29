@@ -434,7 +434,7 @@ export class BoonOverlay {
       size: 13 * S, track: 0.32, weight: 700, align: 'center', color: lift(col, 0.34),
       shadow: '#07040d', shadowDy: 1.6 * S,
     });
-    const epithet = o.duo ? 'A DUO BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
+    const epithet = o.upgrade ? 'BOON UPGRADE' : o.duo ? 'A DUO BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
     if (epithet) tracked(g, epithet, cx, y + 190 * S, {
       size: 8.6 * S, track: 0.30, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.72),
     });
@@ -573,6 +573,7 @@ function normalise(x) {
     god,
     gods: x.gods || (x.boon && x.boon.gods) || [god],
     duo: !!(x.duo || (x.boon && x.boon.gods)),
+    upgrade: !!x.upgrade,
     rarity: RARITY[rarity] ? rarity : 'common',
     slot: x.slot || (x.boon && x.boon.slot) || 'passive',
     color: x.color || GOD_INFO[god]?.color || PAL.gold,
