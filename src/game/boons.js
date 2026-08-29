@@ -416,23 +416,33 @@ export class BoonState {
     if (!entry || !entry.boon) return null;
     const prev = this.byId.get(entry.boon.id);
     const incomingSlot = entry.boon.slot || 'passive';
+    let replaced = null;
     // Core action boons are mutually exclusive. Replacing them prevents two
     // gods' statuses from being folded into one corrupt rider and matches the
-    // familiar Hades loadout model. Calls/passives remain freely stackable.
+    // familiar Hades loadout model. The surrendered boon also tempers its
+    // successor: the replacement inherits the stronger tier and advances once.
+    // Calls/passives remain freely stackable.
     if (!prev && ['attack', 'special', 'cast', 'dash'].includes(incomingSlot)) {
       const old = this.granted.find(r => !r.duo && r.slot === incomingSlot);
       if (old) {
+        replaced = old;
         this.granted.splice(this.granted.indexOf(old), 1);
         this.byId.delete(old.boon.id);
         this.godCount[old.god] = Math.max(0, (this.godCount[old.god] || 1) - 1);
         if (!this.godCount[old.god]) delete this.godCount[old.god];
-        this.ctx?.events?.emit?.('boon.replaced', { old: old.boon, replacement: entry.boon, slot: incomingSlot });
       }
     }
     // Re-offering an owned boon is an upgrade. Never let a later low roll
-    // replace an Epic/Heroic copy with a weaker one.
+    // replace an Epic/Heroic copy with a weaker one. Replacement offers are
+    // normally promoted by offer() so the player sees the true card; direct
+    // callers receive the same promotion here exactly once.
     const requested = entry.rarity || 'common';
-    const rarity = prev && rarityRank(prev.rarity) > rarityRank(requested) ? prev.rarity : requested;
+    let rarity = prev && rarityRank(prev.rarity) > rarityRank(requested) ? prev.rarity : requested;
+    if (replaced) {
+      const inherited = rarityRank(replaced.rarity) > rarityRank(rarity) ? replaced.rarity : rarity;
+      const previewMatches = entry.replacementBoosted && entry.replaces === replaced.boon.id;
+      rarity = previewMatches ? inherited : nextRarity(inherited);
+    }
     const rec = {
       boon: entry.boon, rarity,
       values: this.values(entry.boon, rarity),
@@ -450,6 +460,10 @@ export class BoonState {
     this.byId.set(rec.boon.id, rec);
     this.rebuild();
     this._syncPlayer();
+    if (replaced) this.ctx?.events?.emit?.('boon.replaced', {
+      old: replaced.boon, oldRarity: replaced.rarity,
+      replacement: rec.boon, rarity: rec.rarity, values: rec.values, slot: incomingSlot,
+    });
     this.ctx?.events?.emit?.('boon.granted', { boon: rec.boon, rarity: rec.rarity, values: rec.values, record: rec });
     return rec;
   }
@@ -559,17 +573,34 @@ export class BoonState {
 
   /** Package a boon + rarity into the object the UI renders and grant() takes. */
   offer(boon, rarity = 'common') {
+    const slot = boon.slot || 'passive';
+    let replacement = null;
+    let replacementBoosted = false;
+    // Preview replacement transmutation on the card itself. This keeps the
+    // rarity label, description numbers and eventual runtime modifier in lock
+    // step instead of surprising the player only after they choose it.
+    if (['attack', 'special', 'cast', 'dash'].includes(slot) && !this.byId.has(boon.id)) {
+      replacement = this.granted.find(r => !r.duo && r.slot === slot) || null;
+      if (replacement) {
+        const inherited = rarityRank(replacement.rarity) > rarityRank(rarity) ? replacement.rarity : rarity;
+        rarity = nextRarity(inherited);
+        replacementBoosted = true;
+      }
+    }
     const values = this.values(boon, rarity);
     const god = boon.god || (boon.gods && boon.gods[0]);
     return {
       id: boon.id, boon, rarity, values,
       god, gods: boon.gods || [god],
-      slot: boon.slot || 'passive',
+      slot,
       name: boon.name,
       text: (() => { try { return boon.text(values); } catch (e) { return ''; } })(),
       color: GOD_INFO[god] ? GOD_INFO[god].color : '#f2c14e',
       duo: !!boon.gods,
       status: boon.status || null,
+      upgrade: replacementBoosted,
+      replacementBoosted,
+      replaces: replacement?.boon?.id || null,
     };
   }
 }

@@ -52,13 +52,38 @@ for (const boon of [...BOONS, ...DUOS]) {
   assert.notEqual(JSON.stringify(mods), before, `${boon.id} has no gameplay modifier`);
 }
 
+// A replacement previews and receives one stronger rarity tier, with its
+// potency recalculated at that tier. It inherits prior investment and caps at
+// Heroic rather than ever downgrading an upgraded slot.
+{
+  let h = harness();
+  grant(h.ctx, 'zeus.attack', 'common');
+  const tempest = BOONS.find(x => x.id === 'poseidon.attack');
+  const preview = h.ctx.boons.offer(tempest, 'common');
+  assert.equal(preview.rarity, 'rare');
+  assert.equal(preview.values.dmg, 18);
+  assert.equal(preview.upgrade, true);
+  assert.equal(preview.replaces, 'zeus.attack');
+  const replacement = h.ctx.boons.grant(preview);
+  assert.equal(replacement.rarity, 'rare');
+  assert.equal(h.ctx.boons.mods.rider.attack.bonus, 18, 'replacement potency did not reach runtime');
+
+  h = harness();
+  grant(h.ctx, 'zeus.attack', 'rare');
+  assert.equal(h.ctx.boons.offer(tempest, 'common').rarity, 'epic', 'replacement lost the old boon tier');
+  h = harness();
+  grant(h.ctx, 'zeus.attack', 'heroic');
+  assert.equal(h.ctx.boons.offer(tempest, 'common').rarity, 'heroic', 'replacement exceeded the rarity cap');
+}
+
 // Core slots replace instead of corrupting one shared status rider.
 {
   const { ctx } = harness();
   for (const b of BOONS.filter((x) => x.slot === 'attack')) grant(ctx, b.id);
   assert.equal(ctx.boons.list().filter((x) => x.slot === 'attack').length, 1);
   assert.equal(ctx.boons.mods.rider.attack.god, BOONS.filter((x) => x.slot === 'attack').at(-1).god);
-  assert.ok(ctx.boons.mods.rider.attack.stacks <= 3, 'cross-god status stacks leaked into the replacement');
+  const final = ctx.boons.list().find(x => x.slot === 'attack');
+  assert.equal(ctx.boons.mods.rider.attack.stacks, final.values.chill, 'cross-god status stacks leaked into the replacement');
 }
 
 // Athena exposure affects subsequent damage and her action window deflects.
