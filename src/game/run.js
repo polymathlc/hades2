@@ -36,7 +36,7 @@
 
 import { GOD_INFO, GOD_KEYS } from './boons.js';
 import { MetaProgression } from './meta.js';
-import { HomeBase, NectarDrop } from '../world/homebase.js';
+import { HomeBase, NectarDrop, TitanBloodDrop } from '../world/homebase.js';
 
 // The descent. Three biomes, four chambers each, a boss on the last of each —
 // spawner.js already treats depth % 5 === 0 as a boss room, so the biome
@@ -91,13 +91,15 @@ export class RunState {
     ctx.events.on('run.start', () => { if (this.state === 'home') this.startRun(); });
     ctx.events.on('run.abandon', () => this.enterHome());
     ctx.events.on('home.altarClosed', () => this._home?.releaseAltar?.());
-    ctx.events.on('capture.state', ({ name }) => {
+    ctx.events.on('capture.state', ({ name, args }) => {
       if (name === 'home') this.enterHome({ initial: true });
       else if (name === 'altar') {
         this.enterHome({ initial: true });
         if (this.meta && this.meta.nectar < 6) this.meta.nectar = 6; // capture-only preview; never save
-        ctx.ui?.setResources?.(0, this.meta?.nectar || 0);
+        if (this.meta && this.meta.titanBlood < 4) this.meta.titanBlood = 4; // capture-only preview; never save
+        ctx.ui?.setResources?.(0, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
         ctx.ui?.showHomeUpgrades?.(this.meta);
+        if (args?.page) ctx.ui?.nectarUI?._setPage?.(args.page);
       }
     });
     // A door can be entered from doors.js' own update; queue, never rebuild
@@ -148,7 +150,7 @@ export class RunState {
     this.obols = 0;
     this.nectar = this.meta?.nectar || 0;
     this.selectedWeapon = null;
-    ctx.ui?.setResources?.(0, this.nectar);
+    ctx.ui?.setResources?.(0, this.nectar, this.meta?.titanBlood || 0);
 
     this._home = new HomeBase(ctx, {
       onPortal: () => this.startRun(),
@@ -162,7 +164,7 @@ export class RunState {
         return true;
       },
     }).enter();
-    ctx.events.emit('home.entered', { nectar: this.nectar, gods: this.meta?.snapshot?.().gods || {} });
+    ctx.events.emit('home.entered', { nectar: this.nectar, titanBlood: this.meta?.titanBlood || 0, gods: this.meta?.snapshot?.().gods || {} });
     return this;
   }
 
@@ -191,7 +193,7 @@ export class RunState {
     ctx.boons?.clear?.();
     ctx.player?.respawn?.();
     ctx.ui?.clearRunBoons?.();
-    ctx.ui?.setResources?.(0, this.meta?.nectar || 0);
+    ctx.ui?.setResources?.(0, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
     this.biome = 'tartarus';
     this.enterRoom(0, 'tartarus');
     ctx.events.emit('run.started', {
@@ -349,7 +351,7 @@ export class RunState {
       ctx.ui?.toast?.('Centaur Heart', { color: '#de526f' });
     } else if (kind === 'gold') {
       this.obols += 75 + this.depth * 5;
-      ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0);
+      ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
       ctx.ui?.toast?.('Charon’s Obols', { color: '#f2c14e' });
     }
   }
@@ -369,16 +371,28 @@ export class RunState {
     if (!entity || this.state === 'home' || this._rewardedBosses.has(rewardKey)) return;
     this._rewardedBosses.add(rewardKey);
     const amount = 2;
-    const drop = new NectarDrop(this.ctx, i.pos || entity.position, amount, gained => {
+    const origin = i.pos || entity.position;
+    const nectarPos = origin.clone?.() || { ...origin };
+    if (nectarPos) nectarPos.x = (nectarPos.x || 0) - 0.8;
+    const drop = new NectarDrop(this.ctx, nectarPos, amount, gained => {
       this.meta?.awardNectar?.(gained, { source: 'boss' });
       this.nectar = this.meta?.nectar || 0;
-      this.ctx.ui?.setResources?.(this.obols, this.nectar);
+      this.ctx.ui?.setResources?.(this.obols, this.nectar, this.meta?.titanBlood || 0);
       this.ctx.ui?.toast?.(`NECTAR +${gained} · BANKED AT THE CROSSROADS`, { color: '#d8b6ff', dur: 3.2 });
       this.ctx.events.emit('boss.nectarCollected', { entity, amount: gained, total: this.nectar });
     });
     this._drops.push(drop);
+    const bloodPos = origin.clone?.() || { ...origin };
+    if (bloodPos) bloodPos.x = (bloodPos.x || 0) + 0.8;
+    const blood = new TitanBloodDrop(this.ctx, bloodPos, 1, gained => {
+      this.meta?.awardTitanBlood?.(gained, { source: 'boss' });
+      this.ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
+      this.ctx.ui?.toast?.(`TITAN BLOOD +${gained} · FORGE UPGRADES UNLOCKED`, { color: '#ff756b', dur: 3.2 });
+      this.ctx.events.emit('boss.titanBloodCollected', { entity, amount: gained, total: this.meta?.titanBlood || 0 });
+    });
+    this._drops.push(blood);
     const bossName = entity.def?.label || i?.name || 'THE BOSS';
-    this.ctx.ui?.toast?.(`${bossName.toUpperCase()} DROPPED NECTAR`, { color: '#b884ff', dur: 2.5 });
+    this.ctx.ui?.toast?.(`${bossName.toUpperCase()} DROPPED NECTAR + TITAN BLOOD`, { color: '#ff9a6b', dur: 2.8 });
   }
 
   _clearDrops() {

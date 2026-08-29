@@ -65,7 +65,7 @@ export class HUD {
     this.roomLabel = '';
     this.roomT = -9;
 
-    this.obols = 0; this.nectar = 0;
+    this.obols = 0; this.nectar = 0; this.titanBlood = 0;
     this.boons = [];                      // [{god, rarity, slot, name}]
     this.boonPop = new Map();
 
@@ -491,11 +491,12 @@ export class HUD {
     }
   }
 
-  // ══════════════════════════════════════════════════ obols / Nectar ═══════
+  // ══════════════════════════════════ obols / Nectar / Titan Blood ═══════
   _resources(g, W, H, S, t) {
     const items = [
       { v: this.obols, c: PAL.gold, glyph: 'obol', label: 'OBOLS' },
       { v: this.nectar, c: '#b884ff', glyph: 'nectar', label: 'NECTAR' },
+      { v: this.titanBlood, c: '#ff5968', glyph: 'blood', label: 'TITAN BLOOD' },
     ];
     let x = W - 26 * S;
     for (let i = items.length - 1; i >= 0; i--) {
@@ -514,13 +515,21 @@ export class HUD {
         cg.addColorStop(0, '#ffe9a8'); cg.addColorStop(0.5, '#f2c14e'); cg.addColorStop(1, '#6d4416');
         g.beginPath(); g.arc(gcx, gcy, 7.4 * S, 0, 6.2832); g.fillStyle = cg; g.fill();
         g.beginPath(); g.arc(gcx, gcy, 4 * S, 0, 6.2832); g.strokeStyle = 'rgba(60,34,8,0.7)'; g.lineWidth = 1.1 * S; g.stroke();
-      } else {
+      } else if (it.glyph === 'nectar') {
         g.save(); g.translate(gcx, gcy);
         const cg = g.createLinearGradient(-7 * S, -8 * S, 7 * S, 8 * S);
         cg.addColorStop(0, '#f0dcff'); cg.addColorStop(0.48, '#b884ff'); cg.addColorStop(1, '#56218f');
         plaqueRect(g, -5.5 * S, -5.2 * S, 11 * S, 13 * S, 3 * S); g.fillStyle = cg; g.fill();
         g.fillStyle = '#f2c14e'; g.fillRect(-3.2 * S, -8.0 * S, 6.4 * S, 3.1 * S);
         g.strokeStyle = 'rgba(242,222,255,0.55)'; g.lineWidth = 0.9 * S; g.stroke();
+        g.restore();
+      } else {
+        g.save(); g.translate(gcx, gcy);
+        const cg = g.createRadialGradient(-2 * S, -3 * S, 0.5 * S, 0, 0, 9 * S);
+        cg.addColorStop(0, '#ffd2b5'); cg.addColorStop(0.34, '#ff5968'); cg.addColorStop(1, '#620817');
+        g.beginPath(); g.moveTo(0, -8.5 * S); g.bezierCurveTo(7 * S, -2 * S, 7 * S, 4 * S, 0, 8 * S);
+        g.bezierCurveTo(-7 * S, 4 * S, -7 * S, -2 * S, 0, -8.5 * S); g.closePath(); g.fillStyle = cg; g.fill();
+        g.strokeStyle = rgba('#ffd19f', 0.65); g.lineWidth = 0.9 * S; g.stroke();
         g.restore();
       }
       tracked(g, txt, bx + w - 10 * S, y + h * 0.68, {

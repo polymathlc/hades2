@@ -87,10 +87,10 @@ entering the portal; that arm is bound for the entire descent.
 - Ornate architecture with real carved relief — chamfered profiles, baked contact occlusion that
   survives instancing
 - Six enemy families designed to pass a black-shape silhouette test, plus a three-phase boss
-- Crossroads home base with a run portal, boss-dropped Nectar, persistent saves, and two permanent upgrade tracks for every god
+- Crossroads home base with a run portal, boss-dropped Nectar and Titan Blood, persistent saves, three permanent god paths (Boon Mastery, Legacy, Devotion), and Attack/Special/Cast weapon forges
 - Attack-token AI so only N enemies commit at once — the mechanism that keeps fights readable
 - Drawn-shape VFX atlas, ribbon trails, pooled instanced particles
-- Ornate HUD and god-coloured boon cards with generated deity portraits, rarity upgrades, and god-specific combat VFX
+- Ornate HUD and god-coloured boon cards with generated deity portraits, rarity upgrades, god-specific combat VFX, and Hephaestus gates that always offer current-weapon Attack/Special/Cast choices
 - Synthesised adaptive score: Karplus-Strong plucked strings, procedural impulse responses per
   biome, stems that layer with combat intensity
 

@@ -277,43 +277,71 @@ export const BOONS = [
   // weapon's rules without replacing an Olympian Attack/Special/Cast/Dash.
   B('hephaestus.blade.wave', 'hephaestus', 'forge', 'Furnace Wave', { dmg: 32 },
     v => `The Blade combo finisher launches a molten wave for ${v.dmg} damage.`,
-    (m, v) => { m.forge.blade.wave = Math.max(m.forge.blade.wave, v.dmg); }, { weapon: 'blade' }),
+    (m, v) => { m.forge.blade.wave = Math.max(m.forge.blade.wave, v.dmg); }, { weapon: 'blade', forgeAction: 'attack' }),
   B('hephaestus.blade.echo', 'hephaestus', 'forge', 'Echo-Tempered Edge', { dmg: 22 },
     v => `Blade finishers strike a second time in a wide forged ring for ${v.dmg} damage.`,
-    (m, v) => { m.forge.blade.echo = Math.max(m.forge.blade.echo, v.dmg); }, { weapon: 'blade' }),
+    (m, v) => { m.forge.blade.echo = Math.max(m.forge.blade.echo, v.dmg); }, { weapon: 'blade', forgeAction: 'attack' }),
   B('hephaestus.blade.ember', 'hephaestus', 'forge', 'Emberbrand', { stacks: 3 },
     v => `Every Blade hit brands foes with ${v.stacks} Hangover-like ember stacks.`,
-    (m, v) => { m.forge.blade.ember = Math.max(m.forge.blade.ember, v.stacks); }, { weapon: 'blade' }),
+    (m, v) => { m.forge.blade.ember = Math.max(m.forge.blade.ember, v.stacks); }, { weapon: 'blade', forgeAction: 'attack' }),
+  B('hephaestus.blade.special', 'hephaestus', 'forge', 'Cyclone Temper', { pct: 18 },
+    v => `The Blade Special gains +${v.pct}% damage from a balanced bronze counterweight.`,
+    (m, v) => { m.forge.blade.specialMul *= 1 + v.pct / 100; }, { weapon: 'blade', forgeAction: 'special' }),
+  B('hephaestus.blade.cast', 'hephaestus', 'forge', 'Crucible Cast', { pct: 16, radius: 1.8 },
+    v => `Your Cast gains +${v.pct}% damage and erupts across ${v.radius}m on impact.`,
+    (m, v) => { m.forge.blade.castMul *= 1 + v.pct / 100; m.forge.blade.castBlast = Math.max(m.forge.blade.castBlast, v.radius); },
+    { weapon: 'blade', forgeAction: 'cast' }),
 
   B('hephaestus.spear.trident', 'hephaestus', 'forge', 'Trident Temper', {},
     () => `A fully charged Spear throw splits into three forged prongs.`,
-    (m) => { m.forge.spear.trident = true; }, { weapon: 'spear' }),
+    (m) => { m.forge.spear.trident = true; }, { weapon: 'spear', forgeAction: 'special' }),
   B('hephaestus.spear.recall', 'hephaestus', 'forge', 'Volcanic Recall', { radius: 2.8 },
     v => `The returning Spear erupts in a ${v.radius}m blast when it strikes.`,
-    (m, v) => { m.forge.spear.recallBlast = Math.max(m.forge.spear.recallBlast, v.radius); }, { weapon: 'spear' }),
+    (m, v) => { m.forge.spear.recallBlast = Math.max(m.forge.spear.recallBlast, v.radius); }, { weapon: 'spear', forgeAction: 'special' }),
   B('hephaestus.spear.seek', 'hephaestus', 'forge', 'Magnetic Harpoon', { turn: 5 },
     v => `Thrown Spears bend toward foes; recalled Spears pull home with +${v.turn} tracking force.`,
-    (m, v) => { m.forge.spear.homing = Math.max(m.forge.spear.homing, v.turn); }, { weapon: 'spear' }),
+    (m, v) => { m.forge.spear.homing = Math.max(m.forge.spear.homing, v.turn); }, { weapon: 'spear', forgeAction: 'special' }),
+  B('hephaestus.spear.attack', 'hephaestus', 'forge', 'Adamant Point', { pct: 20 },
+    v => `Spear Attack and Dash-Strike damage gain +${v.pct}%.`,
+    (m, v) => { m.forge.spear.attackMul *= 1 + v.pct / 100; }, { weapon: 'spear', forgeAction: 'attack' }),
+  B('hephaestus.spear.cast', 'hephaestus', 'forge', 'Skewer Cast', { pct: 16, pierce: 2 },
+    v => `Your Cast gains +${v.pct}% damage and pierces ${v.pierce} additional foes.`,
+    (m, v) => { m.forge.spear.castMul *= 1 + v.pct / 100; m.forge.spear.castPierce = Math.max(m.forge.spear.castPierce, v.pierce); },
+    { weapon: 'spear', forgeAction: 'cast' }),
 
   B('hephaestus.bow.triple', 'hephaestus', 'forge', 'Triple-Forged String', {},
     () => `A fully drawn Bow fires a tight fan of three arrows.`,
-    (m) => { m.forge.bow.triple = true; }, { weapon: 'bow' }),
+    (m) => { m.forge.bow.triple = true; }, { weapon: 'bow', forgeAction: 'attack' }),
   B('hephaestus.bow.explosive', 'hephaestus', 'forge', 'Blast-Capped Arrows', { radius: 3.2 },
     v => `Full-charge arrows explode across ${v.radius}m on impact.`,
-    (m, v) => { m.forge.bow.blast = Math.max(m.forge.bow.blast, v.radius); }, { weapon: 'bow' }),
+    (m, v) => { m.forge.bow.blast = Math.max(m.forge.bow.blast, v.radius); }, { weapon: 'bow', forgeAction: 'attack' }),
   B('hephaestus.bow.seek', 'hephaestus', 'forge', 'Living Bronze Fletching', { turn: 6 },
     v => `Full-charge arrows seek enemies with ${v.turn} homing force.`,
-    (m, v) => { m.forge.bow.homing = Math.max(m.forge.bow.homing, v.turn); }, { weapon: 'bow' }),
+    (m, v) => { m.forge.bow.homing = Math.max(m.forge.bow.homing, v.turn); }, { weapon: 'bow', forgeAction: 'attack' }),
+  B('hephaestus.bow.special', 'hephaestus', 'forge', 'Backdraft Kick', { pct: 22 },
+    v => `The Bow Special gains +${v.pct}% damage and breaks through heavier armor.`,
+    (m, v) => { m.forge.bow.specialMul *= 1 + v.pct / 100; }, { weapon: 'bow', forgeAction: 'special' }),
+  B('hephaestus.bow.cast', 'hephaestus', 'forge', 'Hunter-Seeking Cast', { pct: 16, turn: 6 },
+    v => `Your Cast gains +${v.pct}% damage and seeks foes with ${v.turn} tracking force.`,
+    (m, v) => { m.forge.bow.castMul *= 1 + v.pct / 100; m.forge.bow.castSeek = Math.max(m.forge.bow.castSeek, v.turn); },
+    { weapon: 'bow', forgeAction: 'cast' }),
 
   B('hephaestus.shield.ram', 'hephaestus', 'forge', 'Furnace Ram', { dmg: 38 },
     v => `A full Shield Rush releases a second molten shockwave for ${v.dmg} damage.`,
-    (m, v) => { m.forge.shield.ram = Math.max(m.forge.shield.ram, v.dmg); }, { weapon: 'shield' }),
+    (m, v) => { m.forge.shield.ram = Math.max(m.forge.shield.ram, v.dmg); }, { weapon: 'shield', forgeAction: 'special' }),
   B('hephaestus.shield.bank', 'hephaestus', 'forge', 'Masterwork Reprisal', { dmg: 44 },
     v => `A perfect block banks ${v.dmg} damage for your next Shield Rush.`,
-    (m, v) => { m.forge.shield.bank = Math.max(m.forge.shield.bank, v.dmg); }, { weapon: 'shield' }),
+    (m, v) => { m.forge.shield.bank = Math.max(m.forge.shield.bank, v.dmg); }, { weapon: 'shield', forgeAction: 'special' }),
   B('hephaestus.shield.reflect', 'hephaestus', 'forge', 'Mirrored Anvil', { dmg: 28 },
     v => `Reflecting a projectile also blasts nearby foes for ${v.dmg} damage.`,
-    (m, v) => { m.forge.shield.reflect = Math.max(m.forge.shield.reflect, v.dmg); }, { weapon: 'shield' }),
+    (m, v) => { m.forge.shield.reflect = Math.max(m.forge.shield.reflect, v.dmg); }, { weapon: 'shield', forgeAction: 'special' }),
+  B('hephaestus.shield.attack', 'hephaestus', 'forge', 'Weighted Rim', { pct: 20 },
+    v => `Shield Attack combos gain +${v.pct}% damage.`,
+    (m, v) => { m.forge.shield.attackMul *= 1 + v.pct / 100; }, { weapon: 'shield', forgeAction: 'attack' }),
+  B('hephaestus.shield.cast', 'hephaestus', 'forge', 'Ricochet Cast', { pct: 16, bounces: 2 },
+    v => `Your Cast gains +${v.pct}% damage and ricochets ${v.bounces} times.`,
+    (m, v) => { m.forge.shield.castMul *= 1 + v.pct / 100; m.forge.shield.castBounces = Math.max(m.forge.shield.castBounces, v.bounces); },
+    { weapon: 'shield', forgeAction: 'cast' }),
 ];
 
 // ═══════════════════════════════════════════════════════════ DUO BOONS ════
@@ -367,10 +395,10 @@ export function emptyMods() {
     status: { burn: 1, chill: 1, shock: 1, doom: 1, weak: 1 },
     statusDuration: { burn: 1, chill: 1, shock: 1, doom: 1, weak: 1 },
     forge: {
-      blade: { wave: 0, echo: 0, ember: 0 },
-      spear: { trident: false, recallBlast: 0, homing: 0 },
-      bow: { triple: false, blast: 0, homing: 0 },
-      shield: { ram: 0, bank: 0, reflect: 0 },
+      blade: { attackMul: 1, specialMul: 1, castMul: 1, wave: 0, echo: 0, ember: 0, castBlast: 0 },
+      spear: { attackMul: 1, specialMul: 1, castMul: 1, trident: false, recallBlast: 0, homing: 0, castPierce: 0 },
+      bow: { attackMul: 1, specialMul: 1, castMul: 1, triple: false, blast: 0, homing: 0, castSeek: 0 },
+      shield: { attackMul: 1, specialMul: 1, castMul: 1, ram: 0, bank: 0, reflect: 0, castBounces: 0 },
     },
   };
 }
@@ -527,13 +555,40 @@ export class BoonState {
    */
   roll(rng, o = {}) {
     const count = o.count || 3;
-    const pickR = () => {
+    const pickR = (god = o.god) => {
       if (o.rarity) return o.rarity;
-      const total = RARITIES.reduce((s, r) => s + RARITY_WEIGHT[r], 0);
+      const weights = this.ctx?.meta?.rarityWeights?.(god) || RARITY_WEIGHT;
+      const total = RARITIES.reduce((s, r) => s + weights[r], 0);
       let x = (rng ? rng.f() : 0.5) * total;
-      for (const r of RARITIES) { x -= RARITY_WEIGHT[r]; if (x <= 0) return r; }
+      for (const r of RARITIES) { x -= weights[r]; if (x <= 0) return r; }
       return 'common';
     };
+    // A forge chamber is a compact build decision, not three variants of the
+    // same button. It always presents one current-weapon Attack, Special and
+    // Cast temper. Owned choices advance rarity once all choices in that path
+    // have been discovered.
+    if (o.god === 'hephaestus' && o.weapon && count === 3) {
+      const offers = [];
+      for (const action of ['attack', 'special', 'cast']) {
+        const authored = BOONS.filter(b => b.god === 'hephaestus' && b.weapon === o.weapon && b.forgeAction === action);
+        const fresh = authored.filter(b => !this.byId.has(b.id));
+        const upgradeable = this.granted.filter(rec => rec.god === 'hephaestus' && rec.boon.weapon === o.weapon
+          && rec.boon.forgeAction === action && rarityRank(rec.rarity) < RARITIES.length - 1);
+        if (fresh.length) {
+          const boon = rng ? rng.pick(fresh) : fresh[0];
+          offers.push(this.offer(boon, pickR('hephaestus')));
+        } else if (upgradeable.length) {
+          const rec = rng ? rng.pick(upgradeable) : upgradeable[0];
+          const offer = this.offer(rec.boon, nextRarity(rec.rarity));
+          offer.upgrade = true;
+          offers.push(offer);
+        } else if (authored.length) {
+          const boon = rng ? rng.pick(authored) : authored[0];
+          offers.push(this.offer(boon, 'heroic'));
+        }
+      }
+      if (offers.length === count) return offers;
+    }
     const out = [];
     // a duo, if earned, always takes the first slot — it is the run's reward
     const duos = this.availableDuos().filter(d => !o.god || d.gods.includes(o.god));
@@ -566,7 +621,7 @@ export class BoonState {
       const b = (rng && guard < 40) ? rng.pick(src) : src[seq++ % src.length];
       if (!b || used.has(b.id)) continue;
       used.add(b.id);
-      out.push(this.offer(b, pickR()));
+      out.push(this.offer(b, pickR(b.god)));
     }
     return out;
   }

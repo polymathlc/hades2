@@ -361,19 +361,24 @@ export class HomeBase {
 
 /** A boss reward that visibly drops, then homes to the hero and is banked. */
 export class NectarDrop {
-  constructor(ctx, pos, amount = 2, onCollect = () => {}) {
+  constructor(ctx, pos, amount = 2, onCollect = () => {}, style = {}) {
     this.ctx = ctx;
     this.amount = amount;
     this.onCollect = onCollect;
+    this.style = {
+      name: style.name || 'reward.nectar', label: style.label || 'NECTAR', key: style.key || '✦',
+      color: style.color || '#b884ff', emissive: style.emissive || '#6b2ccf', glow: style.glow || '#d8b6ff',
+      metal: style.metal || '#f2c14e', metalEmissive: style.metalEmissive || '#6d4416', kind: style.kind || 'shard',
+    };
     this.t = 0;
     this.dead = false;
     this.root = new THREE.Group();
-    this.root.name = 'reward.nectar';
+    this.root.name = this.style.name;
     this.root.position.copy(pos || new THREE.Vector3()).setY(0.45);
     this.geo = [];
     this.mats = [];
-    const purple = new THREE.MeshStandardMaterial({ color: '#b884ff', emissive: '#6b2ccf', emissiveIntensity: 2.4, roughness: 0.2, transparent: true, opacity: 0.88 });
-    const gold = new THREE.MeshStandardMaterial({ color: '#f2c14e', emissive: '#6d4416', emissiveIntensity: 0.45, metalness: 0.8, roughness: 0.3 });
+    const purple = new THREE.MeshStandardMaterial({ color: this.style.color, emissive: this.style.emissive, emissiveIntensity: 2.4, roughness: 0.2, transparent: true, opacity: 0.88 });
+    const gold = new THREE.MeshStandardMaterial({ color: this.style.metal, emissive: this.style.metalEmissive, emissiveIntensity: 0.45, metalness: 0.8, roughness: 0.3 });
     this.mats.push(purple, gold);
     const profile = [new THREE.Vector2(0.0, 0.0), new THREE.Vector2(0.28, 0.04), new THREE.Vector2(0.34, 0.34), new THREE.Vector2(0.24, 0.68), new THREE.Vector2(0.14, 0.82), new THREE.Vector2(0.14, 1.02), new THREE.Vector2(0.0, 1.06)];
     const bodyG = new THREE.LatheGeometry(profile, 20); this.geo.push(bodyG);
@@ -383,9 +388,9 @@ export class NectarDrop {
     const haloG = new THREE.TorusGeometry(0.52, 0.045, 8, 32); this.geo.push(haloG);
     const halo = new THREE.Mesh(haloG, gold); halo.rotation.x = Math.PI / 2; halo.position.y = 0.45; this.root.add(halo);
     this.halo = halo;
-    const light = new THREE.PointLight('#b884ff', 8, 7, 2); light.position.y = 0.65; this.root.add(light);
+    const light = new THREE.PointLight(this.style.color, 8, 7, 2); light.position.y = 0.65; this.root.add(light);
     ctx.scene?.add?.(this.root);
-    ctx.ui?.prompt?.(this.root.position, `NECTAR ×${amount}`, { key: '✦', height: 2.1, dur: 4 });
+    ctx.ui?.prompt?.(this.root.position, `${this.style.label} ×${amount}`, { key: this.style.key, height: 2.1, dur: 4 });
   }
 
   update(dt) {
@@ -405,8 +410,8 @@ export class NectarDrop {
         this.root.position.z += dz / d * step;
       }
       if (d < 0.8) {
-        this.ctx.vfx?.burst?.(p.clone().setY(1.1), { count: 24, color: '#b884ff', speed: 8, spread: 1.0, kind: 'shard' });
-        this.ctx.vfx?.shockwave?.(p.clone().setY(0.06), { radius: 2.4, color: '#d8b6ff', life: 0.55 });
+        this.ctx.vfx?.burst?.(p.clone().setY(1.1), { count: 24, color: this.style.color, speed: 8, spread: 1.0, kind: this.style.kind });
+        this.ctx.vfx?.shockwave?.(p.clone().setY(0.06), { radius: 2.4, color: this.style.glow, life: 0.55 });
         this.onCollect(this.amount);
         this.dispose();
         return true;
@@ -421,6 +426,17 @@ export class NectarDrop {
     this.root.removeFromParent();
     for (const geometry of this.geo) geometry.dispose?.();
     for (const material of this.mats) material.dispose?.();
+  }
+}
+
+/** Blood of the Titans: a rarer boss forge resource, banked independently. */
+export class TitanBloodDrop extends NectarDrop {
+  constructor(ctx, pos, amount = 1, onCollect = () => {}) {
+    super(ctx, pos, amount, onCollect, {
+      name: 'reward.titanBlood', label: 'TITAN BLOOD', key: '◆',
+      color: '#ff4f5e', emissive: '#8f0718', glow: '#ff9a6b',
+      metal: '#d9a64c', metalEmissive: '#5a230e', kind: 'sparkFine',
+    });
   }
 }
 

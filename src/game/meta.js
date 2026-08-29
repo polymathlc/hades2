@@ -6,7 +6,13 @@ import { GOD_KEYS } from './boons.js';
 
 export const META_SAVE_KEY = 'erebus.meta.v1';
 export const META_MAX_RANK = 5;
+export const WEAPON_MAX_RANK = 5;
 export const GOD_FAVOR_PER_RANK = 0.20;
+export const GOD_TRACKS = Object.freeze(['boon', 'passive', 'devotion']);
+export const WEAPON_TRACKS = Object.freeze(['attack', 'special', 'cast']);
+export const META_WEAPONS = Object.freeze({
+  blade: 'Stygian Blade', spear: 'Eternal Spear', bow: 'Heart-Seeking Bow', shield: 'Shield of Chaos',
+});
 
 export const GOD_LEGACIES = {
   zeus:      { name: 'Olympian Authority', text: r => `All damage +${r * 2}%`, apply: (m, r) => { m.dmgMul *= 1 + r * 0.02; } },
@@ -26,8 +32,12 @@ const cleanRank = value => Math.max(0, Math.min(META_MAX_RANK, Math.floor(Number
 
 function blankGods() {
   const gods = {};
-  for (const god of GOD_KEYS) gods[god] = { boon: 0, passive: 0 };
+  for (const god of GOD_KEYS) gods[god] = { boon: 0, passive: 0, devotion: 0 };
   return gods;
+}
+
+function blankWeapons() {
+  return Object.fromEntries(Object.keys(META_WEAPONS).map(id => [id, { attack: 0, special: 0, cast: 0 }]));
 }
 
 export class MetaProgression {
@@ -37,18 +47,26 @@ export class MetaProgression {
       try { return globalThis.localStorage; } catch (e) { return null; }
     })();
     this.nectar = 0;
+    this.titanBlood = 0;
     this.gods = blankGods();
-    this.version = 1;
+    this.weapons = blankWeapons();
+    this.version = 2;
   }
 
   load() {
     let data = null;
     try { data = JSON.parse(this.storage?.getItem?.(META_SAVE_KEY) || 'null'); } catch (e) { data = null; }
     this.nectar = Math.max(0, Math.floor(Number(data?.nectar) || 0));
+    this.titanBlood = Math.max(0, Math.floor(Number(data?.titanBlood) || 0));
     this.gods = blankGods();
     for (const god of GOD_KEYS) {
       this.gods[god].boon = cleanRank(data?.gods?.[god]?.boon);
       this.gods[god].passive = cleanRank(data?.gods?.[god]?.passive);
+      this.gods[god].devotion = cleanRank(data?.gods?.[god]?.devotion);
+    }
+    this.weapons = blankWeapons();
+    for (const weapon of Object.keys(META_WEAPONS)) {
+      for (const track of WEAPON_TRACKS) this.weapons[weapon][track] = cleanRank(data?.weapons?.[weapon]?.[track]);
     }
     this.ctx?.events?.emit?.('meta.loaded', this.snapshot());
     return this;
@@ -62,22 +80,47 @@ export class MetaProgression {
   snapshot() {
     const gods = {};
     for (const god of GOD_KEYS) gods[god] = { ...this.gods[god] };
-    return { version: this.version, nectar: this.nectar, gods };
+    const weapons = {};
+    for (const weapon of Object.keys(META_WEAPONS)) weapons[weapon] = { ...this.weapons[weapon] };
+    return { version: this.version, nectar: this.nectar, titanBlood: this.titanBlood, gods, weapons };
   }
 
   rank(god, track = 'boon') { return cleanRank(this.gods[god]?.[track]); }
   cost(god, track = 'boon') {
     const rank = this.rank(god, track);
     if (rank >= META_MAX_RANK) return 0;
-    return rank + (track === 'passive' ? 2 : 1);
+    return rank + (track === 'boon' ? 1 : 2);
   }
   boonMultiplier(god) { return 1 + this.rank(god, 'boon') * 0.10; }
-  investment(god) { return this.rank(god, 'boon') + this.rank(god, 'passive'); }
+  investment(god) { return GOD_TRACKS.reduce((sum, track) => sum + this.rank(god, track), 0); }
   appearanceBonus(god) { return this.investment(god) * GOD_FAVOR_PER_RANK; }
   appearanceWeight(god) { return 1 + this.appearanceBonus(god); }
   appearanceWeights() {
     return Object.fromEntries(GOD_KEYS.map(god => [god, this.appearanceWeight(god)]));
   }
+  /** Devotion moves offers out of Common without changing deterministic rolls. */
+  rarityWeights(god) {
+    const rank = this.rank(god, 'devotion');
+    return {
+      common: Math.max(12, 62 - rank * 8),
+      rare: 26 + rank * 4,
+      epic: 9 + rank * 2.5,
+      heroic: 3 + rank * 1.5,
+    };
+  }
+  rareOrBetterChance(god) {
+    const w = this.rarityWeights(god), total = w.common + w.rare + w.epic + w.heroic;
+    return total > 0 ? (w.rare + w.epic + w.heroic) / total : 0;
+  }
+
+  weaponRank(weapon, track = 'attack') {
+    return cleanRank(this.weapons[weapon]?.[track]);
+  }
+  weaponCost(weapon, track = 'attack') {
+    const rank = this.weaponRank(weapon, track);
+    return rank >= WEAPON_MAX_RANK ? 0 : rank + 1;
+  }
+  weaponMultiplier(weapon, track = 'attack') { return 1 + this.weaponRank(weapon, track) * 0.05; }
 
   awardNectar(amount = 1, o = {}) {
     const gained = Math.max(0, Math.floor(Number(amount) || 0));
@@ -90,8 +133,19 @@ export class MetaProgression {
     return gained;
   }
 
+  awardTitanBlood(amount = 1, o = {}) {
+    const gained = Math.max(0, Math.floor(Number(amount) || 0));
+    if (!gained) return 0;
+    this.titanBlood += gained;
+    this.save();
+    const payload = { amount: gained, total: this.titanBlood, source: o.source || 'boss' };
+    this.ctx?.events?.emit?.('titanBlood.awarded', payload);
+    this.ctx?.events?.emit?.('titanBlood.changed', payload);
+    return gained;
+  }
+
   upgrade(god, track = 'boon') {
-    if (!GOD_KEYS.includes(god) || !['boon', 'passive'].includes(track)) return { ok: false, reason: 'invalid' };
+    if (!GOD_KEYS.includes(god) || !GOD_TRACKS.includes(track)) return { ok: false, reason: 'invalid' };
     const rank = this.rank(god, track);
     if (rank >= META_MAX_RANK) return { ok: false, reason: 'max', rank, cost: 0 };
     const cost = this.cost(god, track);
@@ -107,10 +161,33 @@ export class MetaProgression {
     return result;
   }
 
+  upgradeWeapon(weapon, track = 'attack') {
+    if (!META_WEAPONS[weapon] || !WEAPON_TRACKS.includes(track)) return { ok: false, reason: 'invalid' };
+    const rank = this.weaponRank(weapon, track);
+    if (rank >= WEAPON_MAX_RANK) return { ok: false, reason: 'max', rank, cost: 0 };
+    const cost = this.weaponCost(weapon, track);
+    if (this.titanBlood < cost) return { ok: false, reason: 'titanBlood', rank, cost, titanBlood: this.titanBlood };
+    this.titanBlood -= cost;
+    this.weapons[weapon][track] = rank + 1;
+    this.save();
+    const result = { ok: true, weapon, track, rank: rank + 1, cost, titanBlood: this.titanBlood };
+    this.ctx?.boons?.rebuild?.();
+    this.ctx?.boons?._syncPlayer?.();
+    this.ctx?.events?.emit?.('weapon.metaUpgraded', result);
+    this.ctx?.events?.emit?.('titanBlood.changed', { amount: -cost, total: this.titanBlood, source: 'altar' });
+    return result;
+  }
+
   applyPassives(mods) {
     for (const god of GOD_KEYS) {
       const rank = this.rank(god, 'passive');
       if (rank) GOD_LEGACIES[god]?.apply?.(mods, rank);
+    }
+    const weapon = this.ctx?.combat?.weaponId;
+    if (weapon && this.weapons[weapon]) {
+      mods.attackMul *= this.weaponMultiplier(weapon, 'attack');
+      mods.specialMul *= this.weaponMultiplier(weapon, 'special');
+      mods.castMul *= this.weaponMultiplier(weapon, 'cast');
     }
     return mods;
   }

@@ -5,7 +5,7 @@ import { WeaponRuntime } from '../src/entities/weapons.js';
 import { Player } from '../src/entities/player.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
-import { HomeBase, HOME_ALTAR_POS } from '../src/world/homebase.js';
+import { HomeBase, HOME_ALTAR_POS, TitanBloodDrop } from '../src/world/homebase.js';
 import { RunState } from '../src/game/run.js';
 import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
@@ -133,6 +133,15 @@ for (const name of ['tartarus', 'asphodel', 'elysium']) {
   assert.ok(Math.hypot(player.position.x - HOME_ALTAR_POS.x, player.position.z - HOME_ALTAR_POS.z) >= 3.47);
   assert.equal(player.velocity.lengthSq(), 0);
   assert.equal(player.knock.lengthSq(), 0);
+}
+
+{
+  const scene = new THREE.Scene();
+  const drop = new TitanBloodDrop({ scene, player: { position: new THREE.Vector3(99, 0, 99) }, ui: { prompt: noop } }, new THREE.Vector3(), 1);
+  assert.equal(drop.root.name, 'reward.titanBlood');
+  assert.equal(drop.style.label, 'TITAN BLOOD');
+  assert.ok(scene.children.includes(drop.root), 'Titan Blood was not spawned into the boss arena');
+  drop.dispose();
 }
 
 // A duplicate altar-open event must preserve the pre-modal input state so one
@@ -481,6 +490,7 @@ for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
   const offers = ctx.boons.roll(rng, { count: 3, god: 'hephaestus', weapon, allowDuo: false });
   assert.equal(offers.length, 3, `${weapon} forge did not offer three cards`);
   assert.ok(offers.every(o => o.god === 'hephaestus' && o.boon.weapon === weapon));
+  assert.deepEqual(new Set(offers.map(o => o.boon.forgeAction)), new Set(['attack', 'special', 'cast']), `${weapon} forge did not cover every action path`);
   for (const offer of offers) ctx.boons.grant(offer);
   assert.equal(ctx.boons.list().filter(r => r.god === 'hephaestus').length, 3);
 }
@@ -497,6 +507,7 @@ for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
 {
   const { ctx, runtime, fired, hitboxes } = harness('blade');
   for (const boon of BOONS.filter(b => b.god === 'hephaestus' && b.weapon === 'blade')) ctx.boons.grant(ctx.boons.offer(boon));
+  assert.ok(ctx.boons.mods.forge.blade.specialMul > 1 && ctx.boons.mods.forge.blade.castMul > 1);
   runtime.stepIndex = runtime.weapon.combo.length - 1;
   runtime._fire(runtime.weapon.combo.at(-1));
   assert.ok(fired.some(x => x.tag === 'forge:blade-wave'));
@@ -512,6 +523,9 @@ for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
 for (const weapon of ['spear', 'bow']) {
   const { ctx, runtime, fired } = harness(weapon);
   for (const boon of BOONS.filter(b => b.god === 'hephaestus' && b.weapon === weapon)) ctx.boons.grant(ctx.boons.offer(boon));
+  assert.ok(ctx.boons.mods.forge[weapon].castMul > 1);
+  if (weapon === 'spear') assert.ok(ctx.boons.mods.forge.spear.attackMul > 1);
+  else assert.ok(ctx.boons.mods.forge.bow.specialMul > 1);
   runtime._loose(runtime.weapon.charge, 1, true);
   assert.equal(fired.length, 3, `${weapon} full shot did not split three ways`);
   assert.ok(fired.every(x => x.kind === 'homing'), `${weapon} homing forge was not consumed`);
@@ -532,6 +546,7 @@ for (const weapon of ['spear', 'bow']) {
 {
   const { ctx, runtime, hitboxes } = harness('shield');
   for (const boon of BOONS.filter(b => b.god === 'hephaestus' && b.weapon === 'shield')) ctx.boons.grant(ctx.boons.offer(boon));
+  assert.ok(ctx.boons.mods.forge.shield.attackMul > 1 && ctx.boons.mods.forge.shield.castMul > 1);
   runtime.state = 'block'; runtime.t = 0.01;
   assert.equal(runtime.absorb({ amount: 20, dir: { x: -1, z: 0 } }), 0);
   assert.ok(runtime._forgeBank > 0, 'perfect block did not bank forge damage');
@@ -542,6 +557,33 @@ for (const weapon of ['spear', 'bow']) {
   runtime.combat.projectiles.forEachIncoming = (_a, _r, fn) => fn({ x: 1, z: 0 });
   runtime._stepBlock(0.01);
   assert.ok(hitboxes.some(x => x.tag === 'forge:shield-reflect'));
+}
+
+// Every arm now has a real Hephaestus Cast path, each with a distinct weapon
+// rule on top of the shared damage temper.
+for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
+  const events = new Bus(), fired = [];
+  const player = { position: new THREE.Vector3(), facing: new THREE.Vector2(1, 0), maxHealth: 100, maxMana: 100, health: 100, mana: 100 };
+  const ctx = {
+    player, events, CAPTURE: true,
+    ui: { setHealth: noop, setMana: noop },
+    vfx: { burst: noop, beam: noop, shockwave: noop },
+  };
+  ctx.boons = new BoonState(ctx);
+  const combat = Object.create(CombatSystem.prototype);
+  Object.assign(combat, {
+    ctx, weaponId: weapon, projectiles: { fire: spec => (fired.push(spec), fired.length) },
+    _v3a: new THREE.Vector3(), _boonPulses: [],
+  });
+  ctx.combat = combat;
+  for (const boon of BOONS.filter(b => b.god === 'hephaestus' && b.weapon === weapon)) ctx.boons.grant(ctx.boons.offer(boon));
+  combat.cast({ source: player, origin: new THREE.Vector3(0, 1, 0), dir: new THREE.Vector3(1, 0, 0), power: 1 });
+  const shot = fired.at(-1);
+  assert.ok(shot && shot.damage > 26, `${weapon} Cast temper did not improve damage`);
+  if (weapon === 'blade') assert.ok(shot.blastRadius > 0, 'Blade Cast did not erupt');
+  if (weapon === 'spear') assert.ok(shot.pierce > 3, 'Spear Cast did not gain pierce');
+  if (weapon === 'bow') assert.equal(shot.kind, 'homing', 'Bow Cast did not seek');
+  if (weapon === 'shield') assert.ok(shot.kind === 'bounce' && shot.bounces > 0, 'Shield Cast did not ricochet');
 }
 
 // Displayed controls are all live actions; dead debug/map bindings stay out.
@@ -604,4 +646,4 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 }
 
 assert.equal(GOD_KEYS.length, 11);
-console.log('features ok: 12 enemies, 3 unique bosses, 11 gods, god-locked gates, 12 live forges, audio bridge');
+console.log('features ok: 12 enemies, 3 unique bosses, 11 gods, god-locked gates, 20 Attack/Special/Cast forges, audio bridge');

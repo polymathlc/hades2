@@ -432,10 +432,11 @@ export class WeaponRuntime {
     const slot = s === this.weapon.special ? 'special' : 'attack';
     const { mods, rider } = this._boon(slot);
     const slotMul = slot === 'special' ? (mods?.specialMul || 1) : (mods?.attackMul || 1);
+    const forge = this._forge();
+    const forgeActionMul = slot === 'special' ? (forge?.specialMul || 1) : (forge?.attackMul || 1);
     const dashBonus = slot === 'attack' && A._boonPostDash && rider?.postDashBonus ? rider.postDashBonus : 0;
     if (dashBonus) A._boonPostDash = false;
-    const damage = s.damage * slotMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus;
-    const forge = this._forge();
+    const damage = s.damage * slotMul * forgeActionMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus;
     const forgeMul = mods?.forgeMul || 1;
     const color = rider?.color || (s.vfx && s.vfx.color) || this.weapon.palette.body;
     if (hb) {
@@ -595,6 +596,7 @@ export class WeaponRuntime {
     if (dashBonus) A._boonPostDash = false;
     const forge = this._forge();
     const forgeMul = mods?.forgeMul || 1;
+    const forgeActionMul = slot === 'special' ? (forge?.specialMul || 1) : (forge?.attackMul || 1);
     const homing = full && ((this.weaponId === 'spear' ? forge?.homing : 0) || (this.weaponId === 'bow' ? forge?.homing : 0));
     const blastRadius = full && this.weaponId === 'bow' ? (forge?.blast || 0) : 0;
     const spec = {
@@ -602,7 +604,7 @@ export class WeaponRuntime {
       dx: A.facing.x, dz: A.facing.y,
       kind: homing ? 'homing' : P.kind, homing: homing || 0,
       speed: lerp(P.speed, P.speedFull), radius: P.radius, life: P.life,
-      damage: lerp(P.damage, P.damageFull) * slotMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus,
+      damage: lerp(P.damage, P.damageFull) * slotMul * forgeActionMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus,
       type: rider?.type || P.type,
       pierce: Math.round(lerp(P.pierce, P.pierceFull)),
       knockback: lerp(P.knockback, P.knockbackFull) + (rider?.knockback || 0) + (mods?.knockback || 0), hitstop: lerp(P.hitstop, P.hitstopFull),
@@ -661,7 +663,7 @@ export class WeaponRuntime {
       shape: c.hitbox.shape, owner: this.actor, source: this.actor,
       radius: c.hitbox.radius, maxTargets: c.hitbox.maxTargets, pierce: c.hitbox.pierce,
       t0: 0, t1: this._rushTime, life: this._rushTime + 0.02,
-      damage: (full ? c.damageFull : c.damage) * (mods?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0) + banked,
+      damage: (full ? c.damageFull : c.damage) * (mods?.specialMul || 1) * (forge?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0) + banked,
       type: rider?.type || c.type || 'physical',
       knockback: (full ? c.knockbackFull : c.knockback) + (rider?.knockback || 0) + (mods?.knockback || 0),
       poiseDamage: c.poise, hitstop: full ? c.hitstopFull : c.hitstop,
@@ -796,7 +798,7 @@ export class WeaponRuntime {
       kind: 'homing', homing: 12 + (forge?.homing || 0), target: A,
       returnTarget: A, returnRadius: (A.radius || 0.5) + 0.48,
       speed: c.recall.speed, radius: c.recall.radius, life: Math.max(0.45, distance / c.recall.speed + 0.45),
-      damage: returnDamage * (mods?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0),
+      damage: returnDamage * (mods?.specialMul || 1) * (forge?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0),
       pierce: c.recall.pierce, knockback: c.recall.knockback + (rider?.knockback || 0) + (mods?.knockback || 0),
       hitstop: c.recall.hitstop, color: c.recall.color, source: A, hero: true, size: 1.2,
       blastRadius: (forge?.recallBlast || 0) * forgeMul,

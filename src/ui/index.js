@@ -119,6 +119,7 @@ export class UI {
     E.on('entity.died', (i) => { if (i && i.entity) { this.labels.removeEnemy(i.entity); if (i.entity.def && i.entity.def.boss) this.labels.setBoss(null); } });
     E.on('boon.granted', (i) => { if (i) this.hud.addBoon(i.record || i); });
     E.on('nectar.changed', (i) => { if (i && i.total != null) this.setResources(null, i.total); });
+    E.on('titanBlood.changed', (i) => { if (i && i.total != null) this.setResources(null, null, i.total); });
     E.on('weapon.equipped', (i) => this.hud.setWeapon(i));
     E.on('room.entered', (i) => { if (i && i.room) this.setRoom(i.room.depth, i.room.biome); });
     E.on('biome.changed', (i) => { if (i && i.name) this.setRoom(null, i.name); });
@@ -238,7 +239,12 @@ export class UI {
   clearPrompts() { this.labels.clearPrompts(); }
   sigil(pos, o) { this.labels.sigil(pos, o); }
   clearSigils() { this.labels.clearSigils(); }
-  setResources(obols, nectar) { if (obols != null) this.hud.obols = obols; if (nectar != null) this.hud.nectar = nectar; this.dirty = true; }
+  setResources(obols, nectar, titanBlood) {
+    if (obols != null) this.hud.obols = obols;
+    if (nectar != null) this.hud.nectar = nectar;
+    if (titanBlood != null) this.hud.titanBlood = titanBlood;
+    this.dirty = true;
+  }
   setSummary(o) { Object.assign(this.menus.summary, o || {}); this.dirty = true; }
 
   // ═══════════════════════════════════════════════════════════ LOOP ═══════
@@ -425,7 +431,7 @@ export class UI {
     h.setCast(2, 3); h.setDash(1, 2);
     h.setWeapon({ id: 'blade', name: 'Stygian Blade' });
     h.weaponCd = 0.34;
-    h.obols = 137; h.nectar = 4;
+    h.obols = 137; h.nectar = 4; h.titanBlood = 2;
     h.depth = 7; h.biome = (ctx.run && ctx.run.biome) || 'tartarus';
     h.roomT = -99;                                  // the plaque already says it; no banner
     h.boons.length = 0; h.boonPop.clear();

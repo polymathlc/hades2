@@ -201,6 +201,8 @@ export class CombatSystem {
     if (!source || !origin || !dir) return;
     const mods = source === this.ctx.player ? this.ctx.boons?.mods : null;
     const rider = mods?.rider?.cast || null;
+    const forge = source === this.ctx.player ? mods?.forge?.[this.weaponId] : null;
+    const forgeCastMul = forge?.castMul || 1;
     const color = rider?.color || '#a05fe0';
     const god = rider?.god;
     const fxKind = ({ zeus: 'sparkFine', poseidon: 'wisp', athena: 'shard', aphrodite: 'mote', ares: 'rune', artemis: 'chev', dionysus: 'wisp', hermes: 'chev', hecate: 'rune', selene: 'star' })[god] || 'spark';
@@ -210,7 +212,7 @@ export class CombatSystem {
       this._boonPulses.push({
         kind: 'beam', t: 0, interval: 0.20, left: 5, source,
         x: origin.x, z: origin.z, dx: dir.x, dz: dir.z,
-        damage: rider.bonus * power * (mods.castMul || 1) * (mods.dmgMul || 1) / 5,
+        damage: rider.bonus * power * (mods.castMul || 1) * forgeCastMul * (mods.dmgMul || 1) / 5,
         type: rider.type || 'arcane', color, god, status: rider.status,
         statusStacks: rider.stacks || 1, statusPower: rider.statusPower || 0,
       });
@@ -220,21 +222,24 @@ export class CombatSystem {
       return;
     }
     const damage = mods?.castTicks && rider
-      ? rider.bonus * power * (mods.castMul || 1) * (mods.dmgMul || 1)
-      : 26 * power * (mods?.castMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0);
+      ? rider.bonus * power * (mods.castMul || 1) * forgeCastMul * (mods.dmgMul || 1)
+      : 26 * power * (mods?.castMul || 1) * forgeCastMul * (mods?.dmgMul || 1) + (rider?.bonus || 0);
+    const forgeSeek = forge?.castSeek || 0;
+    const forgeBounces = forge?.castBounces || 0;
+    const castHoming = Math.max(mods?.castSeek ? 7.5 : 0, forgeSeek);
     // The CAST remains weapon-agnostic, but its damage identity, status,
     // seeking and burst size now visibly inherit the chosen god.
     this.projectiles.fire({
       x: origin.x, y: origin.y, z: origin.z, dx: dir.x, dz: dir.z,
-      kind: mods?.castSeek ? 'homing' : 'straight', homing: mods?.castSeek ? 7.5 : 0,
+      kind: castHoming ? 'homing' : forgeBounces ? 'bounce' : 'straight', homing: castHoming,
       speed: 30 + 8 * power, radius: 0.30 + Math.min(0.34, (mods?.castRadius || 0) * 0.12), life: 1.4,
       damage,
-      type: rider?.type || 'arcane', pierce: 3, knockback: 3.2 + (mods?.knockback || 0), hitstop: 62,
+      type: rider?.type || 'arcane', pierce: 3 + Math.round(forge?.castPierce || 0), bounces: Math.round(forgeBounces), knockback: 3.2 + (mods?.knockback || 0), hitstop: 62,
       poiseDamage: god === 'athena' ? 999 : damage * 0.4,
       status: rider ? rider.status : 'doom', statusStacks: rider?.stacks || 1, statusPower: rider?.statusPower || 0,
       color, size: rider ? 1.55 + (rider.tier || 1) * 0.14 : 1.5,
       coreSize: rider ? 1.30 + (rider.tier || 1) * 0.11 : 1.3,
-      blastRadius: mods?.castRadius || 0, crit: rider?.critChance || 0,
+      blastRadius: Math.max(mods?.castRadius || 0, forge?.castBlast || 0), crit: rider?.critChance || 0,
       forks: mods?.castForks || 0, castTicks: mods?.castTicks || 0, tickDamage: rider?.bonus || 0,
       boonGod: god, boonSlot: 'cast', expose: rider?.expose || 0,
       source, hero: true, onExpire: 'impact',
@@ -244,6 +249,9 @@ export class CombatSystem {
       this.ctx.vfx?.shockwave?.(this._v3a.set(origin.x, 0.07, origin.z), { radius: 1.6 + (mods?.castRadius || 0) * 0.35, color, life: 0.38 });
     }
     this.ctx.events.emit('camera.shake', { amp: 0.07, dur: 0.18, freq: 28 });
+    if (forge && (forge.castMul > 1 || forge.castBlast || forge.castPierce || forge.castSeek || forge.castBounces)) {
+      this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'cast' });
+    }
   }
   summon({ source, pos, dir } = {}) {
     if (!source || !pos) return;
