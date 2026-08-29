@@ -255,7 +255,7 @@ export const BOONS = [
     (m, v) => { m.manaRegenMul *= (1 + v.mana / 100); m.statusDuration.chill *= 1.25; }),
 
   // ── SELENE — moon magick, the Call ───────────────────────────────────────
-  B('selene.call', 'selene', 'call', 'Moon Water', { dmg: 60 },
+  B('selene.call', 'selene', 'call', 'Moon Water', { dmg: 42 },
     v => `Your Call detonates moonlight for ${v.dmg} damage around you.`,
     (m, v) => { rider(m, 'call', { bonus: v.dmg, type: 'arcane', color: GODS.selene, god: 'selene', name: 'Moon Water' }); }),
   B('selene.cast', 'selene', 'cast', 'Lunar Ray', { dmg: 30 },

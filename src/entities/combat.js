@@ -221,12 +221,16 @@ export class CombatSystem {
     if (!source || !pos) return;
     const mods = source === this.ctx.player ? this.ctx.boons?.mods : null;
     const call = mods?.rider?.call;
+    // R is a commitment, not a projectile fountain. The old fallback had no
+    // recharge at all and each of its three motes carried 255 pierce for six
+    // seconds, so rapidly tapping R could erase a room. Calls and the fallback
+    // now share the same visible recharge state.
+    if ((source._boonCallCd || 0) > 0) {
+      this.ctx.ui?.toast?.(`Call recharging: ${source._boonCallCd.toFixed(1)}s`, { color: call?.color || '#8ef0d0' });
+      return false;
+    }
     if (call) {
-      if ((source._boonCallCd || 0) > 0) {
-        this.ctx.ui?.toast?.(`Call recharging: ${source._boonCallCd.toFixed(1)}s`, { color: call.color });
-        return false;
-      }
-      const radius = 5.0 + (call.tier || 1) * 0.25;
+      const radius = 4.25 + (call.tier || 1) * 0.15;
       const damage = (call.bonus || 0) * (mods.callMul || 1) * (mods.dmgMul || 1);
       for (const target of this._targets()) {
         if (!target || target === source || target === this.ctx.player || target.dead || target.alive === false) continue;
@@ -234,11 +238,11 @@ export class CombatSystem {
         if (dx * dx + dz * dz > radius * radius) continue;
         const d = Math.hypot(dx, dz) || 1;
         this.applyDamage({ target, amount: damage, type: call.type || 'arcane', source,
-          dir: this._v3a.set(dx / d, 0, dz / d), pos: target.position, knockback: 7,
+          dir: this._v3a.set(dx / d, 0, dz / d), pos: target.position, knockback: 5,
           status: call.status, statusStacks: call.stacks || 1, statusPower: call.statusPower || 0,
           boonGod: call.god, boonSlot: 'call' });
       }
-      source._boonCallCd = 10 / Math.max(0.25, mods.callCharge || 1);
+      source._boonCallCd = 14 / Math.max(0.25, mods.callCharge || 1);
       if (mods.callRefund > 0 && source.mana != null) {
         source.mana = Math.min(source.maxMana || source.mana, source.mana + mods.callRefund);
         this.ctx.ui?.setMana?.(source.mana, source.maxMana);
@@ -249,16 +253,18 @@ export class CombatSystem {
       this.ctx.events.emit('camera.shake', { amp: 0.24, dur: 0.42, freq: 24 });
       return true;
     }
-    // three orbiting shade-motes: a small, readable "I have power right now"
+    // Three short-lived shade motes remain readable and useful, but each can
+    // now hit only three foes instead of piercing the room indefinitely.
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * Math.PI * 2;
       this.projectiles.fire({
-        x: pos.x + Math.cos(a) * 2.4, y: 1.15, z: pos.z + Math.sin(a) * 2.4,
-        kind: 'orbit', orbitX: pos.x, orbitZ: pos.z, orbitRadius: 2.4, orbitSpeed: 3.1, orbitAngle: a,
-        radius: 0.30, life: 6.0, damage: 9, type: 'arcane', pierce: 255,
-        knockback: 2.0, hitstop: 30, color: '#8ef0d0', size: 1.2, source,
+        x: pos.x + Math.cos(a) * 2.25, y: 1.15, z: pos.z + Math.sin(a) * 2.25,
+        kind: 'orbit', orbitX: pos.x, orbitZ: pos.z, orbitRadius: 2.25, orbitSpeed: 2.8, orbitAngle: a,
+        radius: 0.26, life: 4.5, damage: 7, type: 'arcane', pierce: 3,
+        knockback: 1.4, hitstop: 24, color: '#8ef0d0', size: 1.05, source,
       });
     }
+    source._boonCallCd = 14;
     this.ctx.events.emit('player.summoned', { pos });
     return true;
   }

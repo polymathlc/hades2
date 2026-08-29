@@ -73,7 +73,7 @@ for (const boon of [...BOONS, ...DUOS]) {
   assert.equal(combat.applyDamage({ target: player, amount: 20, source: enemy }), 0);
 }
 
-// Zeus retaliation and Selene Call are live combat effects.
+// Zeus retaliation and the rebalanced Selene Call are live combat effects.
 {
   const { ctx, combat, player, enemy } = harness();
   grant(ctx, 'zeus.passive', 'heroic');
@@ -84,7 +84,23 @@ for (const boon of [...BOONS, ...DUOS]) {
   enemy.position.set(2, 0, 0);
   const before = enemy.health;
   assert.equal(combat.summon({ source: player, pos: player.position.clone(), dir: new THREE.Vector2(1, 0) }), true);
-  assert.ok(enemy.health < before && player._boonCallCd > 0, 'Call did not damage or begin recharge');
+  assert.equal(before - enemy.health, 42, 'Common Moon Water damage drifted from its nerfed value');
+  assert.equal(player._boonCallCd, 14, 'Moon Water must use the longer Call recharge');
+  assert.equal(combat.summon({ source: player, pos: player.position.clone(), dir: new THREE.Vector2(1, 0) }), false);
+  assert.equal(before - enemy.health, 42, 'Call dealt damage while recharging');
+}
+
+// The fallback R summon cannot be spammed or pierce an entire room anymore.
+{
+  const { combat, player } = harness();
+  const fired = [];
+  combat.projectiles.fire = d => (fired.push(d), fired.length);
+  assert.equal(combat.summon({ source: player, pos: player.position.clone(), dir: new THREE.Vector2(1, 0) }), true);
+  assert.equal(fired.length, 3);
+  assert.ok(fired.every(p => p.damage === 7 && p.life === 4.5 && p.pierce === 3));
+  assert.equal(player._boonCallCd, 14, 'Fallback summon must begin recharge');
+  assert.equal(combat.summon({ source: player, pos: player.position.clone(), dir: new THREE.Vector2(1, 0) }), false);
+  assert.equal(fired.length, 3, 'Fallback summon spawned more motes while recharging');
 }
 
 // Cast variants publish their mechanics into the projectile/pulse authority.
