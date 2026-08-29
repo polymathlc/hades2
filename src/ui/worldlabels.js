@@ -52,6 +52,7 @@ export class WorldLabels {
     this.barBy.clear();
     this.prompts.length = 0; this.sigils.length = 0;
     this.boss = null;
+    this.ui.dirty = true;
   }
 
   // ── API ──────────────────────────────────────────────────────────────────
@@ -111,7 +112,7 @@ export class WorldLabels {
     if (this.prompts.length > 8) this.prompts.shift();
     this.ui.dirty = true;
   }
-  clearPrompts() { this.prompts.length = 0; }
+  clearPrompts() { this.prompts.length = 0; this.ui.dirty = true; }
 
   sigil(worldPos, o = {}) {
     if (!worldPos) return;
@@ -119,7 +120,7 @@ export class WorldLabels {
     if (this.sigils.length > 6) this.sigils.shift();
     this.ui.dirty = true;
   }
-  clearSigils() { this.sigils.length = 0; }
+  clearSigils() { this.sigils.length = 0; this.ui.dirty = true; }
 
   // ── update ───────────────────────────────────────────────────────────────
   update(dt, t) {

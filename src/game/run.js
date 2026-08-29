@@ -209,6 +209,11 @@ export class RunState {
    */
   enterRoom(depth, biome, o = {}) {
     const ctx = this.ctx;
+    // World-space gate UI belongs to exactly one room. Clear it before the
+    // chamber is rebuilt so a previous room can never project stale labels
+    // onto the new geometry.
+    ctx.ui?.clearPrompts?.();
+    ctx.ui?.clearSigils?.();
     this._clearDrops();
     this.depth = depth;
     this.rooms++;
@@ -287,6 +292,7 @@ export class RunState {
     // and the enter-trigger all come live together.
     this.ctx.world?.setCleared?.(true);
     this.exits = this.ctx.world?.getExits?.() || [];
+    this.ctx.ui?.clearPrompts?.();
     this.ctx.ui?.clearSigils?.();
     for (const exit of this.exits) {
       if (!exit?.god || !exit?.anchor) continue;
@@ -306,6 +312,10 @@ export class RunState {
 
   _onDoor(d) {
     if (this.state !== 'cleared' || this._pending) return;
+    // The chosen gate is no longer an available choice. Remove the entire
+    // previous set immediately, including while the boon modal is open.
+    this.ctx.ui?.clearPrompts?.();
+    this.ctx.ui?.clearSigils?.();
     // Crossing any gate earns an audience with one deity. The sigil reward
     // still resolves (health or obols), then the run pauses before
     // rebuilding the next chamber until one of that god's three boons is chosen.

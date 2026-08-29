@@ -5,6 +5,7 @@ import { WeaponRuntime } from '../src/entities/weapons.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
 import { HomeBase } from '../src/world/homebase.js';
+import { RunState } from '../src/game/run.js';
 import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
 import { BIOMES } from '../src/world/biomes.js';
@@ -17,6 +18,33 @@ class Bus {
 }
 const noop = () => {};
 const rng = { f: () => 0.314159, pick: a => a[0] };
+
+// A clear publishes one fresh set; choosing any gate removes that whole set
+// before the boon overlay/next chamber can show behind it.
+{
+  let prompts = ['old'], sigils = ['old'];
+  const exits = [
+    { god: 'zeus', kind: 'boon', anchor: new THREE.Vector3(1, 0, 0) },
+    { god: 'poseidon', kind: 'gold', anchor: new THREE.Vector3(-1, 0, 0) },
+  ];
+  const run = new RunState();
+  run.ctx = {
+    world: { setCleared: noop, getExits: () => exits },
+    ui: {
+      clearPrompts: () => { prompts = []; }, clearSigils: () => { sigils = []; },
+      prompt: (_p, text) => prompts.push(text), sigil: (_p, o) => sigils.push(o.god),
+    },
+    boons: { mods: {} }, events: new Bus(), player: null,
+  };
+  run.state = 'playing'; run.roomCleared = false;
+  run._onCleared({});
+  assert.deepEqual(prompts, ['Zeus · BOON', 'Poseidon · GOLD']);
+  assert.deepEqual(sigils, ['zeus', 'poseidon']);
+  run._claimBoon = () => new Promise(() => {});
+  run._onDoor({ kind: 'boon', god: 'zeus' });
+  assert.deepEqual(prompts, []);
+  assert.deepEqual(sigils, []);
+}
 
 // Each biome owns exactly one distinct divine landmark. The chained shade and
 // repeated perimeter statues must never return through biome configuration.
