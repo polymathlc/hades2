@@ -87,7 +87,7 @@ const WEAPON_ANIM = {
   blade:  { _fallback: 'attack1', _charge: 'attack3', _block: 'guard', _rush: 'dash',
             cut1: 'attack1', cut2: 'attack2', lunge: 'attack3', dashcut: 'attack1', sweep: 'special' },
   spear:  { _fallback: 'thrust1', _charge: 'throwWind', _block: 'guard', _rush: 'rush',
-            poke1: 'thrust1', poke2: 'thrust2', spin: 'spin', loose: 'throw' },
+            poke1: 'thrust1', poke2: 'thrust2', dashthrust: 'thrust1', spin: 'spin', loose: 'throw' },
   bow:    { _fallback: 'loose', _charge: 'draw', _block: 'guard', _rush: 'rush',
             loose: 'loose', kick: 'special' },
   shield: { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
@@ -516,6 +516,13 @@ export class Player {
         this._dashBoonBlast(ctx, this._dashBoon.rider, this._dashBoon.mods, this._dashBoon.color);
       }
       this._dashBoon = null;
+      // Movement and attack aim are independent. `_startDash()` faces the
+      // travel direction so the dash pose reads correctly, but the runtime
+      // consumes a queued Dash-Strike at the start of the next fixed step.
+      // Restore the LIVE cursor/stick aim here, after all dash displacement,
+      // so both the attack hitbox and its root motion commit toward the
+      // reticle. An ordinary dash keeps its travel-facing direction.
+      if (this.weapon?.dashQueued) this._faceCursor();
       this.state = 'move';
       this._animLock = 0.14;
       this.squash = 0.13;

@@ -19,6 +19,7 @@ import {
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
+import { upsertHudBoon, hudBoonSlotLabel } from './hud-boons.js';
 
 /** A value that eases toward its target with a small, controlled overshoot. */
 class Spring {
@@ -100,13 +101,11 @@ export class HUD {
   setWeapon(w) { if (w) { this.weapon = { id: w.id || w, name: w.name || String(w) }; this.ui.dirty = true; } }
   addBoon(rec) {
     if (!rec) return;
-    const god = rec.god || rec.boon?.god || (rec.gods && rec.gods[0]);
-    if (!god) return;
-    const e = { god, rarity: (rec.rarity || 'common'), slot: rec.slot || rec.boon?.slot || 'passive', name: rec.name || rec.boon?.name || '' };
-    const i = this.boons.findIndex(b => b.god === e.god && b.slot === e.slot);
-    if (i >= 0) this.boons[i] = e; else this.boons.push(e);
-    if (this.boons.length > 8) this.boons.shift();
-    this.boonPop.set(e.god + e.slot, this.ui.now());
+    const before = this.boons;
+    this.boons = upsertHudBoon(before, rec, 8);
+    const boon = this.boons.find(x => x.id === (rec.id || rec.boon?.id));
+    if (!boon) return;
+    this.boonPop.set(boon.id, this.ui.now());
     this.ui.dirty = true;
   }
 
@@ -425,6 +424,9 @@ export class HUD {
   // ═════════════════════════════════════════════════════════ boon rail ════
   _boonRail(g, W, H, S, t) {
     if (!this.boons.length) return;
+    // Preserve a readable minimum for the information-dense rail. Eight rows
+    // at this scale still clear the bottom-left combat cluster at 1024x576.
+    S = Math.max(S, 0.82);
     const x = 54 * S, y0 = 112 * S, step = 56 * S, r = 22 * S;
     // rail
     const railH = (this.boons.length - 1) * step + r * 2.4;
@@ -437,10 +439,36 @@ export class HUD {
       const b = this.boons[i];
       const cy = y0 + i * step;
       const info = GOD_INFO[b.god]; if (!info) continue;
-      const pop = this.boonPop.get(b.god + b.slot);
+      const pop = this.boonPop.get(b.id);
       const pa = pop != null ? clamp01((t - pop) / 0.45) : 1;
       const sc = pop != null && pa < 1 ? ease.overshoot(pa, 1.6) : 1;
-      g.save(); g.translate(x, cy); g.scale(sc, sc);
+      g.save();
+
+      // The compact label turns the old row of unexplained god portraits into
+      // a live loadout. Its restrained backing preserves the left-edge glance
+      // path without covering combat, even at the 1024x576 minimum viewport.
+      const labelX = x + 15 * S, labelY = cy - 16 * S;
+      const labelW = 126 * S, labelH = 32 * S;
+      plaqueRect(g, labelX, labelY, labelW, labelH, 5 * S);
+      const pg = g.createLinearGradient(labelX, labelY, labelX + labelW, labelY);
+      pg.addColorStop(0, rgba('#0b0714', 0.94));
+      pg.addColorStop(0.72, rgba(mix('#120a1c', info.color, 0.12), 0.82));
+      pg.addColorStop(1, 'rgba(10,6,18,0.08)');
+      g.fillStyle = pg; g.fill();
+      const R = RARITY[b.rarity] || RARITY.common;
+      g.strokeStyle = rgba(R.text, 0.52); g.lineWidth = Math.max(0.75, 0.9 * S); g.stroke();
+      tracked(g, hudBoonSlotLabel(b), labelX + 21 * S, labelY + 12 * S, {
+        size: 8 * S, track: 0.24, weight: 700, align: 'left', color: rgba(info.color, 0.96),
+        shadow: '#05030b', shadowDy: 1 * S,
+      });
+      const name = (b.name || `${info.name} Boon`).toUpperCase();
+      const compactName = name.length > 20 ? name.slice(0, 19).trimEnd() + '…' : name;
+      tracked(g, compactName, labelX + 21 * S, labelY + 25 * S, {
+        size: 8.4 * S, track: 0.07, weight: 600, align: 'left', color: '#f4ead6',
+        shadow: '#05030b', shadowDy: 1 * S,
+      });
+
+      g.translate(x, cy); g.scale(sc, sc);
       // hex setting
       g.beginPath();
       for (let k = 0; k < 6; k++) { const a = k * 1.0472 + 0.5236; const px = Math.cos(a) * r, py = Math.sin(a) * r; k ? g.lineTo(px, py) : g.moveTo(px, py); }
@@ -454,7 +482,6 @@ export class HUD {
       const bl = g.createRadialGradient(0, 0, r * 0.15, 0, 0, r * 1.9);
       bl.addColorStop(0, rgba(info.color, 0.30)); bl.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = bl; g.beginPath(); g.arc(0, 0, r * 1.9, 0, 6.2832); g.fill(); g.restore();
-      const R = RARITY[b.rarity] || RARITY.common;
       g.strokeStyle = rgba(R.text, 0.75); g.lineWidth = 0.9 * S;
       g.beginPath();
       for (let k = 0; k < 6; k++) { const a = k * 1.0472 + 0.5236; const px = Math.cos(a) * r * 0.72, py = Math.sin(a) * r * 0.72; k ? g.lineTo(px, py) : g.moveTo(px, py); }

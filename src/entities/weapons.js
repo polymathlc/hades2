@@ -136,6 +136,19 @@ export const WEAPONS = {
         sfx: 'spear.spin',
       }),
     ],
+    // DASH-STRIKE: a longer, narrower commitment than the Blade's dashcut.
+    // The Spear should turn a dash into precise reach, not another circular
+    // clear. It uses the normal Attack slot so Olympian riders, crit chance
+    // and Hermes' post-dash payoff all remain part of the player's build.
+    dashAttack: step({
+      name: 'dashthrust', windup: 0.080, active: 0.065, recovery: 0.205,
+      hitbox: { shape: 'capsule', radius: 0.70, length: 4.65, offset: [0.45, 0], maxTargets: 4, pierce: 4 },
+      damage: 21, type: 'physical', knockback: 5.4, poise: 16, hitstop: 74,
+      shake: { amp: 0.105, dur: 0.18, freq: 33 },
+      root: { distance: 1.75, ease: 2.35 },
+      vfx: { call: 'thrust', length: 5.0, width: 0.38, y: 1.08, color: RIM },
+      sfx: 'spear.poke2',
+    }),
     // CHARGED THROW: hold to wind, release to throw. The spear sticks where it
     // lands and is RECALLED — the recall is its own damaging projectile.
     charge: {

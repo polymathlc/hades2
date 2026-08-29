@@ -434,7 +434,10 @@ export class UI {
       ['hecate', 'heroic', 'cast'], ['hermes', 'common', 'dash'],
       ['artemis', 'rare', 'passive'], ['poseidon', 'common', 'call'],
     ];
-    for (const [god, rarity, slot] of tray) h.addBoon({ god, rarity, slot, name: '' });
+    for (const [god, rarity, slot] of tray) h.addBoon({
+      id: `${god}.capture.${slot}`, god, rarity, slot,
+      name: slot === 'passive' ? 'Pressure Points' : `${GOD_INFO[god]?.name || god} ${slot}`,
+    });
     h.boonPop.clear();
 
     // the life bar caught mid damage-lag: drop life just before the shot

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BOONS, BoonState, GOD_INFO, GOD_KEYS } from '../src/game/boons.js';
 import { WeaponRuntime } from '../src/entities/weapons.js';
+import { Player } from '../src/entities/player.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
 import { HomeBase, HOME_ALTAR_POS } from '../src/world/homebase.js';
@@ -262,9 +263,9 @@ assert.ok(planA.every(x => x.kind !== 'weapon'), 'a chamber gate can replace the
   assert.ok(offers.every(o => o.gods.includes('zeus')));
 }
 
-function harness(weaponId) {
+function harness(weaponId, actor = null) {
   const events = new Bus();
-  const player = {
+  const player = actor || {
     position: new THREE.Vector3(), facing: new THREE.Vector2(1, 0), radius: 0.5,
     health: 100, maxHealth: 100, mana: 100, maxMana: 100, state: 'move',
     onWeaponState: noop,
@@ -373,12 +374,106 @@ function harness(weaponId) {
   assert.equal(runtime.step?.name, 'cut1', 'expired dash intent changed a later standing Attack');
 }
 
+// The Spear has its own long, narrow Dash-Strike rather than borrowing the
+// Blade's arc. It must preserve Attack boons and the post-dash payoff while
+// leaving the standing three-hit sequence untouched.
 {
   const { runtime } = harness('spear');
   runtime.press('attack');
-  assert.equal(runtime.queueDashAttack(), false, 'an arm without dashAttack data accepted the route');
   runtime.update(1 / 120);
-  assert.equal(runtime.step?.name, 'poke1', 'unsupported dash route swallowed the spear attack');
+  assert.equal(runtime.step?.name, 'poke1', 'standing Spear Attack no longer starts poke1');
+}
+
+{
+  const { ctx, player, runtime, hitboxes } = harness('spear');
+  const hermes = BOONS.find(b => b.id === 'hermes.attack');
+  ctx.boons.grant(ctx.boons.offer(hermes));
+  player._boonPostDash = true;
+  player.state = 'dash';
+  const start = player.position.clone();
+
+  runtime.press('attack');
+  assert.equal(runtime.queueDashAttack(), true, 'Spear rejected its authored Dash-Strike');
+  for (let i = 0; i < 36; i++) runtime.update(1 / 120);
+  assert.equal(runtime.state, 'idle', 'Spear Dash-Strike began inside the movement dash');
+  assert.equal(hitboxes.length, 0, 'Spear Dash-Strike hit during the movement dash');
+  assert.equal(player.position.distanceTo(start), 0, 'Spear Dash-Strike root motion began during the movement dash');
+
+  player.state = 'move';
+  runtime.update(1 / 120);
+  assert.equal(runtime.step?.name, 'dashthrust', 'Spear Dash+Attack fell back to poke1');
+  assert.equal(runtime.stepIndex, -2, 'Spear Dash-Strike entered the standing combo chain');
+  runtime.update(runtime.step.t0 + 1 / 120);
+
+  const strike = hitboxes.find(x => x.tag === 'spear:dashthrust');
+  assert.ok(strike, 'Spear Dash-Strike never produced its hitbox');
+  assert.equal(strike.shape, 'capsule', 'Spear Dash-Strike lost its precise line identity');
+  assert.equal(strike.length, 4.65);
+  assert.equal(strike.boonGod, 'hermes', 'Spear Dash-Strike did not inherit the Attack boon');
+  assert.equal(strike.boonSlot, 'attack');
+  assert.equal(player._boonPostDash, false, 'Spear Dash-Strike did not consume the post-dash payoff');
+}
+
+// Player-level direction handoff: moving north while aiming east must keep
+// the movement dash north, then snap both Blade and Spear Dash-Strikes to the
+// live cursor before the runtime emits root motion or a hitbox. This catches
+// the controller/runtime ordering bug that a runtime-only distance check did
+// not: a wrong-way strike still moved a non-zero distance.
+for (const [weaponId, tag] of [['blade', 'blade:dashcut'], ['spear', 'spear:dashthrust']]) {
+  const player = new Player();
+  const { ctx, runtime, hitboxes } = harness(weaponId, player);
+  player.weapon = runtime;
+  player.animator = { playAdditive: noop };
+  player.state = 'dash';
+  player.dash.dir.set(0, 1);                 // movement input: north
+  player.dash.t = 0;
+  player.dash.travelled = 0;
+  player.aimDir.set(1, 0);                  // live cursor: east
+  player._mouseSeen = true;
+
+  runtime.press('attack');
+  assert.equal(runtime.queueDashAttack(), true);
+  runtime.update(0.30);                     // intent survives the live dash
+  player._dashStep(player.tune.dashTime, ctx);
+
+  const dashExit = player.position.clone();
+  assert.ok(Math.abs(dashExit.x) < 1e-9, `${weaponId} dash drifted toward cursor before exit`);
+  assert.ok(Math.abs(dashExit.z - player.tune.dashDistance) < 1e-9, `${weaponId} dash no longer follows movement input`);
+  assert.ok(player.facing.dot(player.aimDir) > 0.999999, `${weaponId} Dash-Strike did not snap to live cursor aim`);
+
+  runtime.update(1 / 120);
+  assert.equal(runtime.step, runtime.weapon.dashAttack);
+  runtime.update(runtime.step.t0 + 1 / 120);
+  const strike = hitboxes.find(x => x.tag === tag);
+  assert.ok(strike, `${weaponId} Dash-Strike did not emit its hitbox`);
+  assert.ok(strike.owner.facing.dot(player.aimDir) > 0.999999, `${weaponId} hitbox owner faced away from cursor`);
+
+  const root = new THREE.Vector2(player.position.x - dashExit.x, player.position.z - dashExit.z);
+  assert.ok(root.length() > 0.01, `${weaponId} Dash-Strike emitted no root motion`);
+  assert.ok(root.normalize().dot(player.aimDir) > 0.999999, `${weaponId} root motion diverged from cursor aim`);
+}
+
+// No queued attack means no aim snap: a plain movement dash still ends facing
+// the direction it travelled.
+{
+  const player = new Player();
+  const { ctx, runtime } = harness('shield', player);
+  player.weapon = runtime;
+  player.animator = { playAdditive: noop };
+  player.state = 'dash';
+  player.dash.dir.set(0, 1);
+  player.aimDir.set(1, 0);
+  player._mouseSeen = true;
+  player._dashStep(player.tune.dashTime, ctx);
+  assert.ok(player.facing.dot(player.dash.dir) > 0.999999, 'ordinary dash facing was redirected to cursor');
+}
+
+{
+  const { runtime } = harness('shield');
+  runtime.press('attack');
+  assert.equal(runtime.queueDashAttack(), false, 'an arm without Dash-Strike data accepted the route');
+  runtime.update(1 / 120);
+  assert.equal(runtime.step?.name, 'punch1', 'unsupported dash route swallowed the Shield attack');
 }
 
 for (const weapon of ['blade', 'spear', 'bow', 'shield']) {

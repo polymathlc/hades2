@@ -124,9 +124,12 @@ const ATLASES = [
     tiles: [
       { col: 0, row: 0, name: 'readable-basalt-floor-v5', keys: ['floor.asphodel'], composite: { detail: 0.38, chroma: 0.055, sourceMix: 0.30 } },
       { col: 1, row: 0, name: 'slate-plum-wall-v5', keys: ['stone.asphodel'], composite: { detail: 0.36, chroma: 0.055, sourceMix: 0.27 } },
-      { col: 2, row: 0, name: 'cooled-obsidian-v5', keys: ['obsidian.asphodel'], composite: { detail: 0.36, chroma: 0.045, sourceMix: 0.25 } },
+      // Rubble is part of the volcanic architecture, not part of the skeleton
+      // dressing. Sharing this already-decoded tile keeps the atlas/VRAM cost
+      // unchanged while separating environmental debris from readable bone.
+      { col: 2, row: 0, name: 'cooled-obsidian-v5', keys: ['obsidian.asphodel', 'rubble.asphodel'], composite: { detail: 0.36, chroma: 0.045, sourceMix: 0.25 } },
       { col: 0, row: 1, name: 'controlled-lava-v5', keys: ['lava.asphodel'], composite: { detail: 0.28, chroma: 0.055, sourceMix: 0.32 } },
-      { col: 1, row: 1, name: 'pale-ash-rubble-v5', keys: ['rubble.asphodel', 'bone.asphodel'], composite: { detail: 0.34, chroma: 0.035, sourceMix: 0.29 } },
+      { col: 1, row: 1, name: 'pale-ash-bone-v5', keys: ['bone.asphodel'], composite: { detail: 0.34, chroma: 0.035, sourceMix: 0.29 } },
       { col: 2, row: 1, name: 'blackened-asphodel-metal-v5', keys: ['bronze.asphodel', 'iron.asphodel'], composite: { detail: 0.32, chroma: 0.045, sourceMix: 0.25 } },
     ],
   },

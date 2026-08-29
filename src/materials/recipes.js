@@ -2082,7 +2082,36 @@ RECIPES['gold.divine'] = RECIPES['gold.filigree'];
 // the proven procedural normal/roughness/emissive support maps underneath.
 RECIPES['obsidian.asphodel'] = RECIPES.obsidian;
 RECIPES['lava.asphodel'] = RECIPES.lava;
-RECIPES['rubble.asphodel'] = RECIPES.bone;
+// Asphodel rubble used to reuse `bone` byte-for-byte. Large debris chunks then
+// arrived at character value and shared the same ivory grain as the skeleton
+// dressing, so neither material had a distinct role. Reuse the existing
+// obsidian synthesis instead (same number/size of baked sets and draw calls),
+// but temper its glass into rough, ash-lifted volcanic slag. The generated
+// albedo binding above shares the already-decoded cooled-obsidian tile too.
+RECIPES['rubble.asphodel'] = {
+  size: BASE,
+  build(n, rng, seed) {
+    const slag = RECIPES.obsidian.build(n, rng, seed);
+    for (let i = 0; i < slag.height.length; i++) {
+      const j = i * 3;
+      // Lift only enough for silhouette and facet readability; bone remains
+      // roughly 2.5x brighter and therefore keeps its authored gameplay cue.
+      slag.rgb[j] = clamp01((slag.rgb[j] / 255) * 1.16 + 0.030) * 255;
+      slag.rgb[j + 1] = clamp01((slag.rgb[j + 1] / 255) * 1.14 + 0.027) * 255;
+      slag.rgb[j + 2] = clamp01((slag.rgb[j + 2] / 255) * 1.12 + 0.040) * 255;
+      slag.rough[i] = clamp01(slag.rough[i] + 0.26);
+    }
+    slag.params = { ...slag.params, envMapIntensity: 0.52 };
+    slag.paint = {
+      ...slag.paint,
+      triScale: 0.42,
+      macroTint: '#454052',
+      variation: 0.10,
+      variationTint: '#5b5263',
+    };
+    return slag;
+  },
+};
 RECIPES['bone.asphodel'] = RECIPES.bone;
 RECIPES['bronze.asphodel'] = RECIPES['bronze.verdigris'];
 RECIPES['iron.asphodel'] = RECIPES['iron.dark'];
