@@ -4,7 +4,7 @@
 //
 // Two or three ornate doorways stand at the arena rim. Each advertises what
 // lies beyond with a REWARD SIGIL burning over its keystone (boon / health /
-// gold / weapon). While enemies live the doors are SEALED: bronze leaves shut,
+// gold). While enemies live the doors are SEALED: bronze leaves shut,
 // the sigil banked down to a dull ember, the threshold dark. On `room.cleared`
 // each door unseals — the sigil blooms to full chroma, the leaves swing, and a
 // column of the biome's complement hue opens in the doorway.
@@ -30,7 +30,6 @@ export const REWARDS = {
   boon:   { label: 'Boon of the Gods', color: '#c9b8ff', core: '#ffffff', glyph: 0 },
   health: { label: 'Restoration',      color: '#ff5a7a', core: '#ffd8dd', glyph: 1 },
   gold:   { label: 'Obols',            color: '#ffd24d', core: '#fff3c0', glyph: 2 },
-  weapon: { label: 'Arms of the Dead', color: '#7ee0ff', core: '#e8fbff', glyph: 3 },
 };
 export const REWARD_KINDS = Object.keys(REWARDS);
 
@@ -39,7 +38,9 @@ export function planDoorChoices(count, random = () => 0.5) {
   const n = Math.max(0, count | 0);
   const rest = ['gold', 'health'];
   for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); const t = rest[i]; rest[i] = rest[j]; rest[j] = t; }
-  const rewards = ['boon', 'weapon', ...rest];
+  // Infernal Arms are chosen once, physically, at the Crossroads. A chamber
+  // gate can never replace the weapon bound to the current descent.
+  const rewards = ['boon', ...rest];
   const bi = Math.floor(random() * Math.max(1, Math.min(n, rewards.length)));
   if (bi > 0) { const t = rewards[0]; rewards[0] = rewards[bi]; rewards[bi] = t; }
   const gods = GOD_KEYS.slice();

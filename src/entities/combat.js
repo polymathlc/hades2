@@ -103,6 +103,10 @@ export class CombatSystem {
     // the player's weapon. Other actors get one on demand via runtimeFor().
     this.runtimes = new Map();
     this.weaponId = 'blade';
+    // A descent binds one Infernal Arm. HomeBase is the only system allowed
+    // to choose it; once the portal is crossed every later swap request is
+    // rejected here, including rewards and any future UI/debug caller.
+    this.weaponLocked = false;
     this.playerDrivesBlade = true;   // see special()
 
     ctx.hitboxes = this.hitboxes;
@@ -146,16 +150,40 @@ export class CombatSystem {
     else if (weaponId && r.weaponId !== weaponId) r.equip(weaponId);
     return r;
   }
-  /** ctx.combat.equip('spear') — swaps the player's arm. */
-  equip(id) {
+  /** Equip at the Crossroads. During a descent only the bound arm is legal. */
+  equip(id, o = {}) {
     if (!WEAPONS[id]) return null;
+    if (this.weaponLocked && id !== this.weaponId && !o.force) {
+      this.ctx.ui?.toast?.('INFERNAL ARM BOUND FOR THIS DESCENT', { color: WEAPONS[this.weaponId]?.palette?.body || '#c9b8ff' });
+      return null;
+    }
     this.weaponId = id;
     const p = this.ctx.player;
-    if (p) this.runtimeFor(p, id).equip(id);
-    this.ctx.ui?.toast?.(WEAPONS[id].name, { color: WEAPONS[id].palette.body });
+    // runtimeFor(actor, id) already performs the swap when the id differs.
+    // Calling equip() again here emitted duplicate HUD/audio events.
+    if (p) this.runtimeFor(p, id);
+    if (!o.silent) this.ctx.ui?.toast?.(WEAPONS[id].name, { color: WEAPONS[id].palette.body });
     return WEAPONS[id];
   }
-  cycleWeapon() { const i = WEAPON_IDS.indexOf(this.weaponId); return this.equip(WEAPON_IDS[(i + 1) % WEAPON_IDS.length]); }
+  lockWeapon(id = this.weaponId) {
+    const weapon = this.equip(id, { force: true, silent: true });
+    if (!weapon) return null;
+    this.weaponLocked = true;
+    this.ctx.events?.emit?.('weapon.locked', { id, weapon });
+    return weapon;
+  }
+  unlockWeapon() {
+    this.weaponLocked = false;
+    this.ctx.events?.emit?.('weapon.unlocked', { id: this.weaponId });
+  }
+  cycleWeapon(o = {}) {
+    if (this.weaponLocked && !o.force) {
+      this.ctx.ui?.toast?.('INFERNAL ARM BOUND FOR THIS DESCENT', { color: WEAPONS[this.weaponId]?.palette?.body || '#c9b8ff' });
+      return null;
+    }
+    const i = WEAPON_IDS.indexOf(this.weaponId);
+    return this.equip(WEAPON_IDS[(i + 1) % WEAPON_IDS.length], o);
+  }
 
   // ── hooks player.js already calls (ARCHITECTURE §2, do not rename) ──────
   special({ source, origin, dir } = {}) {

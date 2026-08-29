@@ -64,6 +64,7 @@ export class RunState {
     this._home = null;
     this._drops = [];
     this._rewardedBosses = new Set();
+    this.selectedWeapon = null;
   }
 
   async init(ctx) {
@@ -133,6 +134,7 @@ export class RunState {
     ctx.enemies?.clear?.();
     ctx.boons?.clear?.();
     ctx.player?.respawn?.();
+    ctx.combat?.unlockWeapon?.();
     ctx.ui?.clearRunBoons?.();
     ctx.ui?.screen?.('game');
 
@@ -144,11 +146,20 @@ export class RunState {
     this._deathT = 0;
     this.obols = 0;
     this.nectar = this.meta?.nectar || 0;
+    this.selectedWeapon = null;
     ctx.ui?.setResources?.(0, this.nectar);
 
     this._home = new HomeBase(ctx, {
       onPortal: () => this.startRun(),
       onAltar: () => ctx.ui?.showHomeUpgrades?.(this.meta),
+      onWeapon: (id) => {
+        const weapon = ctx.combat?.equip?.(id, { force: true, silent: true });
+        if (!weapon) return false;
+        this.selectedWeapon = id;
+        ctx.ui?.toast?.(`${weapon.name.toUpperCase()} · BOUND FOR NEXT DESCENT`, { color: weapon.palette.body, dur: 2.4 });
+        ctx.events.emit('home.weaponSelected', { id, weapon });
+        return true;
+      },
     }).enter();
     ctx.events.emit('home.entered', { nectar: this.nectar, gods: this.meta?.snapshot?.().gods || {} });
     return this;
@@ -158,6 +169,13 @@ export class RunState {
   startRun() {
     if (this.state !== 'home') return false;
     const ctx = this.ctx;
+    if (!this.selectedWeapon) {
+      ctx.ui?.toast?.('CHOOSE AN INFERNAL ARM BEFORE ENTERING', { color: '#7ee0ff', dur: 2.5 });
+      return false;
+    }
+    const boundWeapon = ctx.combat?.lockWeapon?.(this.selectedWeapon)
+      || ctx.combat?.equip?.(this.selectedWeapon, { force: true, silent: true });
+    if (!boundWeapon) return false;
     ctx.ui?.nectarUI?.close?.();
     this._home?.dispose?.();
     this._home = null;
@@ -175,7 +193,10 @@ export class RunState {
     ctx.ui?.setResources?.(0, this.meta?.nectar || 0);
     this.biome = 'tartarus';
     this.enterRoom(0, 'tartarus');
-    ctx.events.emit('run.started', { seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0 });
+    ctx.events.emit('run.started', {
+      seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0,
+      weapon: this.selectedWeapon,
+    });
     return true;
   }
 
@@ -286,7 +307,7 @@ export class RunState {
   _onDoor(d) {
     if (this.state !== 'cleared' || this._pending) return;
     // Crossing any gate earns an audience with one deity. The sigil reward
-    // still resolves (health, obols or a weapon), then the run pauses before
+    // still resolves (health or obols), then the run pauses before
     // rebuilding the next chamber until one of that god's three boons is chosen.
     if (d?.kind !== 'boon') this._applyReward(d?.kind);
     this.state = 'choosing';
@@ -319,8 +340,6 @@ export class RunState {
       this.obols += 75 + this.depth * 5;
       ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0);
       ctx.ui?.toast?.('Charon’s Obols', { color: '#f2c14e' });
-    } else if (kind === 'weapon') {
-      ctx.combat?.cycleWeapon?.();
     }
   }
 

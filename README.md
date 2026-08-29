@@ -46,13 +46,11 @@ npm run build && npm run preview
 |---|---|
 | **W A S D** / arrows | Move (camera-relative, 8-direction) |
 | **Left mouse** | Attack toward cursor — melee combos or the bow’s charged shot |
-| **Right mouse** / **E** | Cursor-aimed special (weapon-dependent: sweep, spear throw, kick, guard) |
+| **Right mouse** | Cursor-aimed special (weapon-dependent: sweep, spear throw, kick, guard) |
 | **Q** | Cast |
 | **Space** / **Shift** | Dash — i-frames during the active window, cancels attack recovery |
-| **1 2 3 4** | Equip blade / spear / bow / shield |
-| **X** or **C** | Cycle weapon |
 | **R** | God Call / Summon |
-| **F** | Interact (home altar, doors, rewards) |
+| **E** or **F** | Interact; approach a hovering weapon at home and press to equip it |
 | **Esc** | Pause |
 | **H** | Open the in-game controls guide |
 
@@ -62,7 +60,8 @@ and the Menu button pauses. The pause menu includes persistent Master, Music, an
 ### The four weapons
 
 Each is a separate rhythm, not a reskin — timings, cancel windows, hitbox shapes and knockback are
-authored as data in `src/entities/weapons.js`.
+authored as data in `src/entities/weapons.js`. Choose one from the hovering Crossroads armory before
+entering the portal; that arm is bound for the entire descent.
 
 - **Stygian Blade** — fast 3-hit combo, third hit a committed lunge with root motion
 - **Spear** — long reach poke combo, plus a charged throw that sticks and is recalled

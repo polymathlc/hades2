@@ -93,9 +93,6 @@ const WEAPON_ANIM = {
   shield: { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
             punch1: 'bash1', punch2: 'bash2' },
 };
-/** 1..4 pick an arm directly; X / C cycle. */
-const WEAPON_KEYS = { Digit1: 'blade', Digit2: 'spear', Digit3: 'bow', Digit4: 'shield' };
-
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const _ray = new THREE.Raycaster();
@@ -199,18 +196,6 @@ export class Player {
     // trap for the next caller. Clearing it restores AGENT-COMBAT's stated
     // design ("Every other arm is ours end to end") for the blade as well.
     if (ctx.combat) ctx.combat.playerDrivesBlade = false;
-
-    if (!ctx.CAPTURE) {
-      this._onKey = (e) => {
-        if (e.repeat || !this.ctx?.combat || this.ctx?.input?.enabled === false) return;
-        const pick = WEAPON_KEYS[e.code];
-        if (pick) this.ctx.combat.equip?.(pick);
-        else if (e.code === 'KeyX' || e.code === 'KeyC') this.ctx.combat.cycleWeapon?.();
-        else return;
-        this._animKey = null;
-      };
-      addEventListener('keydown', this._onKey);
-    }
 
     ctx.events.on('damage.dealt', (info) => { if (info && info.target === this) this._onHurt(info); });
     ctx.events.on('entity.died', (info) => { if (info && info.entity === this) this._onDeath(); });
@@ -353,7 +338,6 @@ export class Player {
       const hold = W.weapon.block ? 'special' : (W.weapon.charge && W.weapon.charge.action);
       if (hold && inp.released(hold)) { this._faceCursor(); W.release(hold); }
     }
-    if (inp.pressed('swap')) { ctx.combat?.cycleWeapon?.(); this._animKey = null; }
     // A committed step can run longer than a normal buffer, and eating the
     // dash that gets you out of it is the worst thing this controller can do.
     if (inp.pressed('dash')) this.buf.dash = (W && W.busy) ? 0.55 : T.dashBuffer;

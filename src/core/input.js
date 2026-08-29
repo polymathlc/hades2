@@ -2,8 +2,8 @@ import * as THREE from 'three';
 const KEYMAP = {
   KeyW:'up', KeyS:'down', KeyA:'left', KeyD:'right',
   ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right',
-  Space:'dash', ShiftLeft:'dash', KeyE:'special', KeyQ:'cast', KeyR:'summon',
-  KeyF:'interact', Escape:'pause', KeyH:'help',
+  Space:'dash', ShiftLeft:'dash', KeyQ:'cast', KeyR:'summon',
+  KeyE:'interact', KeyF:'interact', Escape:'pause', KeyH:'help',
 };
 export class Input {
   constructor(){

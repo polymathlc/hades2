@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BOONS, BoonState, GOD_INFO, GOD_KEYS } from '../src/game/boons.js';
 import { WeaponRuntime } from '../src/entities/weapons.js';
+import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
+import { HomeBase } from '../src/world/homebase.js';
 import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
 import { BIOMES } from '../src/world/biomes.js';
@@ -37,6 +39,45 @@ assert.deepEqual(planA, planB);
 assert.equal(new Set(planA.map(x => x.god)).size, 3);
 assert.ok(planA.some(x => x.kind === 'boon'));
 assert.ok(planA.every(x => GOD_INFO[x.god]));
+assert.ok(planA.every(x => x.kind !== 'weapon'), 'a chamber gate can replace the run-bound weapon');
+
+// The Crossroads owns four physical, hovering arms and reports the selected
+// one through its interaction callback.
+{
+  let selected = null, selections = 0;
+  const home = new HomeBase({}, { onWeapon: id => (selected = id, selections++, true) });
+  const stone = new THREE.MeshStandardMaterial(), bronze = new THREE.MeshStandardMaterial(), dark = new THREE.MeshStandardMaterial();
+  home._buildArmory(stone, bronze, dark);
+  assert.deepEqual(home.armory.map(a => a.id).sort(), ['blade', 'bow', 'shield', 'spear']);
+  assert.ok(home.armory.every(a => a.hover.position.y > 1.5), 'an Infernal Arm is not hovering');
+  assert.equal(home._selectWeapon('bow'), true);
+  assert.equal(selected, 'bow');
+  assert.equal(home.selectedWeapon, 'bow');
+  assert.equal(home.armory.filter(a => a.selected).length, 1);
+  home._selectWeapon('bow');
+  assert.equal(selections, 1, 'holding Interact repeated the same home equip');
+  home.dispose(); stone.dispose(); bronze.dispose(); dark.dispose();
+}
+
+// Once the portal binds an arm, every central swap path rejects a new one
+// until the hero returns home and unlocks the arsenal.
+{
+  const events = new Bus();
+  let equippedEvents = 0;
+  events.on('weapon.equipped', () => equippedEvents++);
+  const combat = Object.create(CombatSystem.prototype);
+  combat.ctx = { player: {}, events, ui: { toast: noop } };
+  combat.runtimes = new Map(); combat.weaponId = 'blade'; combat.weaponLocked = false;
+  assert.equal(combat.lockWeapon('spear')?.name, 'Eternal Spear');
+  assert.equal(equippedEvents, 1, 'one equip produced duplicate runtime events');
+  assert.equal(combat.weaponLocked, true);
+  assert.equal(combat.equip('bow'), null);
+  assert.equal(combat.cycleWeapon(), null);
+  assert.equal(combat.weaponId, 'spear');
+  combat.unlockWeapon();
+  assert.equal(combat.equip('bow')?.name, 'Heart-Seeking Bow');
+  assert.equal(equippedEvents, 2);
+}
 
 // Even if a duo is unlocked and forced, an unrelated god gate cannot show it.
 {
@@ -140,6 +181,8 @@ for (const weapon of ['spear', 'bow']) {
 const controlText = CONTROL_ROWS.flat().join(' ').toLowerCase();
 for (const action of ['move', 'aim', 'attack', 'special', 'cast', 'dash', 'call', 'interact', 'pause']) assert.ok(controlText.includes(action));
 assert.ok(!controlText.includes('debug') && !controlText.includes('map'));
+assert.ok(controlText.includes('approach an arm at home'));
+assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
 // Canvas sliders reach the real audio authority, including before unlock.
 {

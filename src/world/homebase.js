@@ -4,9 +4,16 @@
 
 import * as THREE from 'three';
 import { GOD_INFO, GOD_KEYS } from '../game/boons.js';
+import { WEAPONS, WEAPON_IDS } from '../entities/weapons.js';
 
 const PORTAL_POS = new THREE.Vector3(0, 0, -7.0);
 const ALTAR_POS = new THREE.Vector3(6.4, 0, 0.2);
+const ARMORY_POS = {
+  blade:  new THREE.Vector3(-6.3, 0, 4.3),
+  spear:  new THREE.Vector3(-2.25, 0, 6.75),
+  bow:    new THREE.Vector3(2.25, 0, 6.75),
+  shield: new THREE.Vector3(6.3, 0, 4.3),
+};
 
 function standard(color, emissive = 0x000000, emissiveIntensity = 0) {
   return new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.22, emissive, emissiveIntensity });
@@ -17,11 +24,14 @@ export class HomeBase {
     this.ctx = ctx;
     this.onPortal = o.onPortal || (() => {});
     this.onAltar = o.onAltar || (() => {});
+    this.onWeapon = o.onWeapon || (() => false);
     this.root = new THREE.Group();
     this.root.name = 'home.base';
     this._geo = [];
     this._ownedMats = [];
     this._portalTriggered = false;
+    this.armory = [];
+    this.selectedWeapon = null;
     this.t = 0;
   }
 
@@ -49,6 +59,7 @@ export class HomeBase {
 
     this._buildPortal(stone, bronze, dark);
     this._buildAltar(shrine, bronze, dark);
+    this._buildArmory(stone, bronze, dark);
 
     // Crossroads lighting is subject-first: a broad cool fill preserves the
     // hero silhouette while a small warm forge bounce separates the altar.
@@ -72,7 +83,10 @@ export class HomeBase {
     ctx.ui?.clearPrompts?.();
     ctx.ui?.prompt?.(PORTAL_POS, 'WALK THROUGH · BEGIN THE DESCENT', { key: 'W', height: 4.75, dur: 1e9 });
     ctx.ui?.prompt?.(ALTAR_POS, 'OFFER NECTAR · ALTAR OF THE GODS', { key: 'F', height: 3.0, dur: 1e9 });
-    ctx.ui?.prompt?.(new THREE.Vector3(-5.8, 0, 3.8), 'CONTROLS & AUDIO SETTINGS', { key: 'H', height: 2.0, dur: 1e9 });
+    ctx.ui?.prompt?.(new THREE.Vector3(-6.2, 0, -2.2), 'CONTROLS & AUDIO SETTINGS', { key: 'H', height: 2.0, dur: 1e9 });
+    for (const arm of this.armory) {
+      ctx.ui?.prompt?.(arm.position, `${WEAPONS[arm.id].name.toUpperCase()} · EQUIP FOR THIS DESCENT`, { key: 'E', height: 3.35, dur: 1e9 });
+    }
     ctx.ui?.setRoom?.(0, 'crossroads');
     ctx.ui?.toast?.('THE CROSSROADS · HOME', { color: '#d8b6ff', dur: 3.0 });
     return this;
@@ -156,6 +170,91 @@ export class HomeBase {
     g.add(light);
   }
 
+  _rod(a, b, radius, material, parent) {
+    const delta = b.clone().sub(a), length = delta.length();
+    const mesh = this._mesh(new THREE.CylinderGeometry(radius, radius, length, 10), material, parent);
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+    return mesh;
+  }
+
+  _buildWeaponModel(id, parent, core, body, dark) {
+    if (id === 'blade') {
+      const blade = this._mesh(new THREE.BoxGeometry(0.20, 1.55, 0.10), core, parent); blade.position.y = 0.24;
+      const tip = this._mesh(new THREE.ConeGeometry(0.145, 0.38, 4), core, parent); tip.position.y = 1.205; tip.rotation.y = Math.PI / 4;
+      const guard = this._mesh(new THREE.BoxGeometry(0.88, 0.13, 0.18), body, parent); guard.position.y = -0.60;
+      const grip = this._mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.58, 10), dark, parent); grip.position.y = -0.94;
+      const pommel = this._mesh(new THREE.OctahedronGeometry(0.17, 0), body, parent); pommel.position.y = -1.28;
+      parent.rotation.z = -0.16;
+    } else if (id === 'spear') {
+      const shaft = this._mesh(new THREE.CylinderGeometry(0.065, 0.075, 2.45, 10), dark, parent); shaft.position.y = -0.05;
+      const collar = this._mesh(new THREE.CylinderGeometry(0.16, 0.11, 0.30, 8), body, parent); collar.position.y = 1.26;
+      const head = this._mesh(new THREE.ConeGeometry(0.25, 0.72, 4), core, parent); head.position.y = 1.74; head.rotation.y = Math.PI / 4;
+      const butt = this._mesh(new THREE.ConeGeometry(0.12, 0.35, 6), body, parent); butt.position.y = -1.48; butt.rotation.z = Math.PI;
+      parent.rotation.z = 0.12;
+    } else if (id === 'bow') {
+      const curve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(0.18, -1.12, 0), new THREE.Vector3(0.52, -0.62, 0),
+        new THREE.Vector3(0.05, 0, 0), new THREE.Vector3(0.52, 0.62, 0), new THREE.Vector3(0.18, 1.12, 0),
+      ]);
+      this._mesh(new THREE.TubeGeometry(curve, 28, 0.085, 8, false), body, parent);
+      this._rod(new THREE.Vector3(0.18, -1.12, 0), new THREE.Vector3(0.18, 1.12, 0), 0.018, core, parent);
+      this._rod(new THREE.Vector3(-0.58, -0.04, 0.05), new THREE.Vector3(0.72, -0.04, 0.05), 0.025, dark, parent);
+      const arrow = this._mesh(new THREE.ConeGeometry(0.09, 0.28, 6), core, parent); arrow.position.set(0.81, -0.04, 0.05); arrow.rotation.z = -Math.PI / 2;
+      parent.rotation.z = -0.08;
+    } else if (id === 'shield') {
+      const disk = this._mesh(new THREE.CylinderGeometry(0.86, 0.86, 0.18, 32), body, parent); disk.rotation.x = Math.PI / 2;
+      const rim = this._mesh(new THREE.TorusGeometry(0.78, 0.10, 10, 36), core, parent); rim.position.z = 0.11;
+      const boss = this._mesh(new THREE.SphereGeometry(0.28, 16, 10), core, parent); boss.scale.z = 0.55; boss.position.z = 0.18;
+      for (let i = 0; i < 8; i++) {
+        const a = i / 8 * Math.PI * 2;
+        const stud = this._mesh(new THREE.SphereGeometry(0.055, 8, 6), dark, parent);
+        stud.position.set(Math.cos(a) * 0.56, Math.sin(a) * 0.56, 0.22);
+      }
+      parent.rotation.x = -0.10;
+    }
+  }
+
+  _buildArmory(stone, bronze, dark) {
+    for (let i = 0; i < WEAPON_IDS.length; i++) {
+      const id = WEAPON_IDS[i], weapon = WEAPONS[id], position = ARMORY_POS[id];
+      const station = new THREE.Group();
+      station.name = `home.armory.${id}`;
+      station.position.copy(position);
+      this.root.add(station);
+
+      const plinth = this._mesh(new THREE.CylinderGeometry(1.12, 1.35, 0.34, 12), stone, station); plinth.position.y = 0.17;
+      const top = this._mesh(new THREE.CylinderGeometry(0.92, 1.06, 0.16, 12), dark, station); top.position.y = 0.42;
+      const ringMat = this._m(new THREE.MeshStandardMaterial({
+        color: weapon.palette.body, emissive: weapon.palette.glow, emissiveIntensity: 0.72,
+        roughness: 0.28, metalness: 0.72, transparent: true, opacity: 0.72,
+      }));
+      const ring = this._mesh(new THREE.TorusGeometry(0.78, 0.055, 8, 36), ringMat, station);
+      ring.rotation.x = Math.PI / 2; ring.position.y = 0.54;
+
+      const hover = new THREE.Group();
+      hover.name = `infernal-arm.${id}`;
+      hover.position.y = 2.05;
+      station.add(hover);
+      const core = this._m(new THREE.MeshStandardMaterial({ color: weapon.palette.core, emissive: weapon.palette.core, emissiveIntensity: 0.52, roughness: 0.22, metalness: 0.92 }));
+      const body = this._m(new THREE.MeshStandardMaterial({ color: weapon.palette.body, emissive: weapon.palette.glow, emissiveIntensity: 0.72, roughness: 0.35, metalness: 0.82 }));
+      const grip = this._m(new THREE.MeshStandardMaterial({ color: '#17111f', emissive: weapon.palette.glow, emissiveIntensity: 0.16, roughness: 0.72, metalness: 0.35 }));
+      this._buildWeaponModel(id, hover, core, body, grip);
+
+      const light = new THREE.PointLight(weapon.palette.glow, 2.6, 6.5, 2);
+      light.position.y = 2.15; station.add(light);
+      this.armory.push({ id, position, station, hover, ring, light, phase: i * Math.PI * 0.5, selected: false });
+    }
+  }
+
+  _selectWeapon(id) {
+    if (id === this.selectedWeapon) return true;
+    if (!WEAPONS[id] || this.onWeapon(id) === false) return false;
+    this.selectedWeapon = id;
+    for (const arm of this.armory) arm.selected = arm.id === id;
+    return true;
+  }
+
   update(dt) {
     this.t += dt;
     if (this.portalCore?.material?.uniforms) this.portalCore.material.uniforms.uTime.value = this.t;
@@ -172,14 +271,40 @@ export class HomeBase {
         gem.position.y = 0.18 + Math.sin(this.t * 2 + gem.userData.phase) * 0.06;
       }
     }
+    for (const arm of this.armory) {
+      arm.hover.position.y = 2.05 + Math.sin(this.t * 2.0 + arm.phase) * 0.16;
+      arm.hover.rotation.y += dt * (arm.selected ? 1.05 : 0.42);
+      const targetScale = arm.selected ? 1.14 : 1;
+      const scale = THREE.MathUtils.lerp(arm.hover.scale.x, targetScale, Math.min(1, dt * 8));
+      arm.hover.scale.setScalar(scale);
+      arm.ring.rotation.z -= dt * (arm.selected ? 1.4 : 0.35);
+      arm.ring.material.emissiveIntensity = arm.selected ? 3.1 : 0.72;
+      arm.ring.material.opacity = arm.selected ? 1 : 0.72;
+      arm.light.intensity = (arm.selected ? 6.2 : 2.6) + Math.sin(this.t * 3.2 + arm.phase) * 0.45;
+    }
 
     const p = this.ctx.player?.position;
     if (!p) return;
     const pd = Math.hypot(p.x - PORTAL_POS.x, p.z - PORTAL_POS.z);
-    if (!this._portalTriggered && pd < 1.18) {
+    // The visible threshold is a 2.05m ring on a broad plinth. The old 1.18m
+    // trigger sat behind the plinth approach, so a hero could visibly stand
+    // in the portal without crossing. Match the interaction to its footprint.
+    if (!this._portalTriggered && pd < 1.88) {
       this._portalTriggered = true;
       this.onPortal();
       return;
+    }
+    if (pd > 2.45) this._portalTriggered = false;
+    if (this.ctx.input?.pressed?.('interact')) {
+      let nearest = null, distance = Infinity;
+      for (const arm of this.armory) {
+        const d = Math.hypot(p.x - arm.position.x, p.z - arm.position.z);
+        if (d < distance) { nearest = arm; distance = d; }
+      }
+      if (nearest && distance < 2.05) {
+        this._selectWeapon(nearest.id);
+        return;
+      }
     }
     const ad = Math.hypot(p.x - ALTAR_POS.x, p.z - ALTAR_POS.z);
     if (ad < 2.5 && this.ctx.input?.pressed?.('interact')) this.onAltar();
