@@ -8,6 +8,7 @@ import { WEAPONS, WEAPON_IDS } from '../entities/weapons.js';
 
 const PORTAL_POS = new THREE.Vector3(0, 0, -7.0);
 const ALTAR_POS = new THREE.Vector3(6.4, 0, 0.2);
+const MIRROR_POS = new THREE.Vector3(-6.35, 0, -1.9);
 // The altar's widest plinth is 2.65m. Keep the hero capsule outside it while
 // leaving the interaction range comfortably reachable from the floor.
 const ALTAR_SAFE_RADIUS = 3.22;
@@ -29,6 +30,7 @@ export class HomeBase {
     this.ctx = ctx;
     this.onPortal = o.onPortal || (() => {});
     this.onAltar = o.onAltar || (() => {});
+    this.onMirror = o.onMirror || (() => {});
     this.onWeapon = o.onWeapon || (() => false);
     this.root = new THREE.Group();
     this.root.name = 'home.base';
@@ -64,6 +66,7 @@ export class HomeBase {
 
     this._buildPortal(stone, bronze, dark);
     this._buildAltar(shrine, bronze, dark);
+    this._buildMirror(stone, bronze, dark);
     this._buildArmory(stone, bronze, dark);
 
     // Crossroads lighting is subject-first: a broad cool fill preserves the
@@ -88,7 +91,8 @@ export class HomeBase {
     ctx.ui?.clearPrompts?.();
     ctx.ui?.prompt?.(PORTAL_POS, 'WALK THROUGH · BEGIN THE DESCENT', { key: 'W', height: 4.75, dur: 1e9 });
     ctx.ui?.prompt?.(ALTAR_POS, 'OFFER NECTAR · ALTAR OF THE GODS', { key: 'F', height: 3.0, dur: 1e9 });
-    ctx.ui?.prompt?.(new THREE.Vector3(-6.2, 0, -2.2), 'CONTROLS & AUDIO SETTINGS', { key: 'H', height: 2.0, dur: 1e9 });
+    ctx.ui?.prompt?.(MIRROR_POS, 'MIRROR OF NIGHT · SPEND DARKNESS', { key: 'F', height: 3.25, dur: 1e9 });
+    ctx.ui?.prompt?.(new THREE.Vector3(0, 0, -2.5), 'CONTROLS & AUDIO SETTINGS', { key: 'H', height: 2.0, dur: 1e9 });
     for (const arm of this.armory) {
       ctx.ui?.prompt?.(arm.position, `${WEAPONS[arm.id].name.toUpperCase()} · EQUIP FOR THIS DESCENT`, { key: 'E', height: 3.35, dur: 1e9 });
     }
@@ -173,6 +177,51 @@ export class HomeBase {
     const light = new THREE.PointLight('#ffb166', 4.8, 10, 2);
     light.position.y = 2.0;
     g.add(light);
+  }
+
+  _buildMirror(stone, bronze, dark) {
+    const g = new THREE.Group();
+    g.name = 'home.mirrorOfNight';
+    g.position.copy(MIRROR_POS);
+    g.rotation.y = Math.PI * 0.42;
+    this.root.add(g);
+
+    const base = this._mesh(new THREE.CylinderGeometry(1.05, 1.28, 0.34, 10), stone, g);
+    base.position.y = 0.17;
+    const stem = this._mesh(new THREE.BoxGeometry(0.32, 1.1, 0.34), dark, g);
+    stem.position.y = 0.92;
+    const frameMat = this._m(new THREE.MeshStandardMaterial({
+      color: '#8b6332', emissive: '#5c2b82', emissiveIntensity: 0.42,
+      metalness: 0.82, roughness: 0.34,
+    }));
+    const outer = this._mesh(new THREE.TorusGeometry(1.12, 0.15, 10, 48), frameMat, g);
+    outer.position.y = 2.28;
+    const crown = this._mesh(new THREE.ConeGeometry(0.34, 0.62, 5), bronze, g);
+    crown.position.y = 3.58;
+    for (const sx of [-1, 1]) {
+      const wing = this._mesh(new THREE.BoxGeometry(0.52, 0.09, 0.16), frameMat, g);
+      wing.position.set(sx * 0.93, 3.18, 0);
+      wing.rotation.z = sx * 0.42;
+    }
+
+    const mirrorMat = this._m(new THREE.ShaderMaterial({
+      transparent: true, depthWrite: true, side: THREE.DoubleSide,
+      uniforms: { uTime: { value: 0 }, uDark: { value: new THREE.Color('#120821') }, uGlow: { value: new THREE.Color('#9f67ff') } },
+      vertexShader: 'varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+      fragmentShader: `varying vec2 vUv; uniform float uTime; uniform vec3 uDark; uniform vec3 uGlow;
+        void main(){ vec2 p=vUv-.5; float r=length(p); float veil=.12+.08*sin((p.y+p.x)*18.0-uTime*1.4);
+          float stars=pow(max(0.0,sin(p.x*91.0+p.y*57.0+uTime)*sin(p.y*73.0-p.x*41.0)),18.0);
+          vec3 c=mix(uDark,uGlow,veil+stars*.75+(1.0-r)*.08); gl_FragColor=vec4(c,.96); }`,
+    }));
+    const surface = this._mesh(new THREE.CircleGeometry(0.96, 48), mirrorMat, g);
+    surface.name = 'home.mirrorOfNight.surface';
+    surface.position.set(0, 2.28, 0.055);
+    surface.castShadow = false;
+    this.mirrorSurface = surface;
+    const light = new THREE.PointLight('#8c5cff', 4.2, 8, 2);
+    light.position.set(0, 2.35, 0.8);
+    g.add(light);
+    this.mirrorLight = light;
   }
 
   _rod(a, b, radius, material, parent) {
@@ -305,6 +354,8 @@ export class HomeBase {
     if (this.runes) this.runes.rotation.z = this.t * 0.10;
     if (this.portalLight) this.portalLight.intensity = 9.5 + Math.sin(this.t * 3.1) * 1.4;
     if (this.altarPool) this.altarPool.rotation.y = this.t * 0.32;
+    if (this.mirrorSurface?.material?.uniforms) this.mirrorSurface.material.uniforms.uTime.value = this.t;
+    if (this.mirrorLight) this.mirrorLight.intensity = 3.8 + Math.sin(this.t * 2.3) * 0.7;
     if (this.godLights) {
       for (const gem of this.godLights.children) {
         gem.rotation.y += dt * 0.8;
@@ -337,6 +388,11 @@ export class HomeBase {
     }
     if (pd > 2.45) this._portalTriggered = false;
     if (this.ctx.input?.pressed?.('interact')) {
+      const md = Math.hypot(p.x - MIRROR_POS.x, p.z - MIRROR_POS.z);
+      if (md < 2.15) {
+        this.onMirror();
+        return;
+      }
       let nearest = null, distance = Infinity;
       for (const arm of this.armory) {
         const d = Math.hypot(p.x - arm.position.x, p.z - arm.position.z);
@@ -442,5 +498,6 @@ export class TitanBloodDrop extends NectarDrop {
 
 export const HOME_PORTAL_POS = PORTAL_POS;
 export const HOME_ALTAR_POS = ALTAR_POS;
+export const HOME_MIRROR_POS = MIRROR_POS;
 
 export default HomeBase;

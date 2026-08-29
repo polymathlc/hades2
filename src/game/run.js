@@ -97,7 +97,8 @@ export class RunState {
         this.enterHome({ initial: true });
         if (this.meta && this.meta.nectar < 6) this.meta.nectar = 6; // capture-only preview; never save
         if (this.meta && this.meta.titanBlood < 4) this.meta.titanBlood = 4; // capture-only preview; never save
-        ctx.ui?.setResources?.(0, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
+        if (this.meta && this.meta.darkness < 12) this.meta.darkness = 12; // capture-only preview; never save
+        ctx.ui?.setResources?.(0, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
         ctx.ui?.showHomeUpgrades?.(this.meta);
         if (args?.page) ctx.ui?.nectarUI?._setPage?.(args.page);
       }
@@ -150,11 +151,12 @@ export class RunState {
     this.obols = 0;
     this.nectar = this.meta?.nectar || 0;
     this.selectedWeapon = null;
-    ctx.ui?.setResources?.(0, this.nectar, this.meta?.titanBlood || 0);
+    ctx.ui?.setResources?.(0, this.nectar, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
 
     this._home = new HomeBase(ctx, {
       onPortal: () => this.startRun(),
       onAltar: () => ctx.ui?.showHomeUpgrades?.(this.meta),
+      onMirror: () => ctx.ui?.showHomeUpgrades?.(this.meta, 'mirror'),
       onWeapon: (id) => {
         const weapon = ctx.combat?.equip?.(id, { force: true, silent: true });
         if (!weapon) return false;
@@ -164,7 +166,8 @@ export class RunState {
         return true;
       },
     }).enter();
-    ctx.events.emit('home.entered', { nectar: this.nectar, titanBlood: this.meta?.titanBlood || 0, gods: this.meta?.snapshot?.().gods || {} });
+    ctx.events.emit('home.entered', { nectar: this.nectar, titanBlood: this.meta?.titanBlood || 0,
+      darkness: this.meta?.darkness || 0, gods: this.meta?.snapshot?.().gods || {} });
     return this;
   }
 
@@ -184,7 +187,7 @@ export class RunState {
     this._home = null;
     this.seed = this._rng ? this._rng.int(1, 1e9) : (this.seed + 7919);
     this.boons.length = 0;
-    this.obols = 0;
+    this.obols = this.meta?.startingObols?.() || 0;
     this.kills = 0;
     this.rooms = 0;
     this.exits.length = 0;
@@ -193,11 +196,11 @@ export class RunState {
     ctx.boons?.clear?.();
     ctx.player?.respawn?.();
     ctx.ui?.clearRunBoons?.();
-    ctx.ui?.setResources?.(0, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
+    ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
     this.biome = 'tartarus';
     this.enterRoom(0, 'tartarus');
     ctx.events.emit('run.started', {
-      seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0,
+      seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0, darkness: this.meta?.darkness || 0,
       weapon: this.selectedWeapon,
     });
     return true;
@@ -307,6 +310,10 @@ export class RunState {
       this.ctx.player.health = Math.min(this.ctx.player.maxHealth, this.ctx.player.health + heal);
       this.ctx.ui?.setHealth?.(this.ctx.player.health, this.ctx.player.maxHealth);
     }
+    if (!this.ctx.CAPTURE) {
+      const darkness = e?.boss ? 3 : 1;
+      this.meta?.awardDarkness?.(darkness, { source: e?.boss ? 'boss' : 'chamber' });
+    }
     this.ctx.events.emit('run.roomCleared', {
       depth: this.depth, biome: this.biome, exits: this.exits,
       next: this.biomeFor(this.depth + 1), boss: !!(e && e.boss),
@@ -351,7 +358,7 @@ export class RunState {
       ctx.ui?.toast?.('Centaur Heart', { color: '#de526f' });
     } else if (kind === 'gold') {
       this.obols += 75 + this.depth * 5;
-      ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
+      ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
       ctx.ui?.toast?.('Charon’s Obols', { color: '#f2c14e' });
     }
   }
@@ -377,7 +384,7 @@ export class RunState {
     const drop = new NectarDrop(this.ctx, nectarPos, amount, gained => {
       this.meta?.awardNectar?.(gained, { source: 'boss' });
       this.nectar = this.meta?.nectar || 0;
-      this.ctx.ui?.setResources?.(this.obols, this.nectar, this.meta?.titanBlood || 0);
+      this.ctx.ui?.setResources?.(this.obols, this.nectar, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
       this.ctx.ui?.toast?.(`NECTAR +${gained} · BANKED AT THE CROSSROADS`, { color: '#d8b6ff', dur: 3.2 });
       this.ctx.events.emit('boss.nectarCollected', { entity, amount: gained, total: this.nectar });
     });
@@ -386,7 +393,7 @@ export class RunState {
     if (bloodPos) bloodPos.x = (bloodPos.x || 0) + 0.8;
     const blood = new TitanBloodDrop(this.ctx, bloodPos, 1, gained => {
       this.meta?.awardTitanBlood?.(gained, { source: 'boss' });
-      this.ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0);
+      this.ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
       this.ctx.ui?.toast?.(`TITAN BLOOD +${gained} · FORGE UPGRADES UNLOCKED`, { color: '#ff756b', dur: 3.2 });
       this.ctx.events.emit('boss.titanBloodCollected', { entity, amount: gained, total: this.meta?.titanBlood || 0 });
     });

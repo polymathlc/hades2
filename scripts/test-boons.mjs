@@ -113,8 +113,30 @@ for (const boon of [...BOONS, ...DUOS]) {
   assert.equal(ctx.boons.list().filter((x) => x.slot === 'attack').length, 1);
   assert.equal(ctx.boons.mods.rider.attack.god, BOONS.filter((x) => x.slot === 'attack').at(-1).god);
   const final = ctx.boons.list().find(x => x.slot === 'attack');
-  assert.equal(ctx.boons.mods.rider.attack.stacks, final.values.chill, 'cross-god status stacks leaked into the replacement');
+  assert.equal(ctx.boons.mods.rider.attack.stacks, final.values.stacks ?? final.values.chill, 'cross-god status stacks leaked into the replacement');
 }
+
+// An Epic/Heroic action slot is protected from different boons in the same
+// category. The exact Epic boon may still be promoted to Heroic.
+{
+  const h = harness();
+  grant(h.ctx, 'zeus.attack', 'epic');
+  const rng = { f: () => 0.75, pick: list => list[0] };
+  const fresh = h.ctx.boons.roll(rng, { count: 3, god: 'zeus', allowDuo: false, upgradeChance: 0 });
+  assert.equal(fresh.length, 3);
+  assert.ok(fresh.every(o => o.slot !== 'attack'), 'Epic Attack allowed a different Attack replacement card');
+  const promoted = h.ctx.boons.roll(rng, { count: 3, god: 'zeus', allowDuo: false, preferUpgrade: true });
+  assert.ok(promoted.some(o => o.id === 'zeus.attack' && o.rarity === 'heroic'), 'Epic boon could not advance to Heroic');
+
+  const hh = harness();
+  grant(hh.ctx, 'zeus.attack', 'heroic');
+  const locked = hh.ctx.boons.roll(rng, { count: 3, god: 'zeus', allowDuo: false, preferUpgrade: true });
+  assert.ok(locked.every(o => o.slot !== 'attack'), 'Heroic Attack produced a redundant or weaker Attack offer');
+}
+
+assert.ok(BOONS.length >= 130, 'boon expansion is not substantial');
+assert.ok(DUOS.length >= 20, 'duo expansion is not substantial');
+assert.equal(new Set([...BOONS, ...DUOS].map(b => b.id)).size, BOONS.length + DUOS.length, 'duplicate boon ids entered the expanded pool');
 
 // Athena exposure affects subsequent damage and her action window deflects.
 {

@@ -14,6 +14,48 @@ export const META_WEAPONS = Object.freeze({
   blade: 'Stygian Blade', spear: 'Eternal Spear', bow: 'Heart-Seeking Bow', shield: 'Shield of Chaos',
 });
 
+// The Mirror of Night is a separate persistent tree paid for with Darkness
+// earned from clearing chambers. Its talents intentionally feed modifiers
+// that already have runtime consumers, plus offer rarity and starting wealth.
+export const MIRROR_TALENTS = Object.freeze({
+  thickSkin: {
+    name: 'Thick Skin', max: 10, baseCost: 1, step: 1,
+    text: r => `Begin each escape attempt with +${r * 5} maximum Life.`,
+    apply: (m, r) => { m.maxHealthAdd += r * 5; },
+  },
+  shadowPresence: {
+    name: 'Shadow Presence', max: 10, baseCost: 1, step: 1,
+    text: r => `Deal +${r * 2}% damage with every source.`,
+    apply: (m, r) => { m.dmgMul *= 1 + r * 0.02; },
+  },
+  chthonicVitality: {
+    name: 'Chthonic Vitality', max: 5, baseCost: 2, step: 2,
+    text: r => `Restore ${r * 2} Life after every chamber.`,
+    apply: (m, r) => { m.clearHeal += r * 2; },
+  },
+  greaterReflex: {
+    name: 'Greater Reflex', max: 5, baseCost: 3, step: 2,
+    text: r => `Extend Dash invulnerability by ${(r * 0.025).toFixed(3)}s.`,
+    apply: (m, r) => { m.iframeAdd += r * 0.025; },
+  },
+  infernalSoul: {
+    name: 'Infernal Soul', max: 5, baseCost: 2, step: 2,
+    text: r => `Begin with +${r * 10} maximum Magick.`,
+    apply: (m, r) => { m.maxManaAdd += r * 10; },
+  },
+  darkForesight: {
+    name: 'Dark Foresight', max: 5, baseCost: 3, step: 3,
+    text: r => `Improve Rare, Epic and Heroic boon odds by ${r * 5}%.`,
+    apply: () => {},
+  },
+  deepPockets: {
+    name: 'Deep Pockets', max: 5, baseCost: 2, step: 2,
+    text: r => `Begin each descent with ${r * 15} Charon’s Obols.`,
+    apply: () => {},
+  },
+});
+export const MIRROR_TRACKS = Object.freeze(Object.keys(MIRROR_TALENTS));
+
 export const GOD_LEGACIES = {
   zeus:      { name: 'Olympian Authority', text: r => `All damage +${r * 2}%`, apply: (m, r) => { m.dmgMul *= 1 + r * 0.02; } },
   poseidon:  { name: 'Ocean’s Force', text: r => `All knockback +${(r * 0.6).toFixed(1)}m`, apply: (m, r) => { m.knockback += r * 0.6; } },
@@ -40,6 +82,9 @@ function blankWeapons() {
   return Object.fromEntries(Object.keys(META_WEAPONS).map(id => [id, { attack: 0, special: 0, cast: 0 }]));
 }
 
+function blankMirror() { return Object.fromEntries(MIRROR_TRACKS.map(id => [id, 0])); }
+const cleanMirrorRank = (talent, value) => Math.max(0, Math.min(MIRROR_TALENTS[talent]?.max || 0, Math.floor(Number(value) || 0)));
+
 export class MetaProgression {
   constructor(ctx, storage) {
     this.ctx = ctx || null;
@@ -48,9 +93,11 @@ export class MetaProgression {
     })();
     this.nectar = 0;
     this.titanBlood = 0;
+    this.darkness = 0;
     this.gods = blankGods();
     this.weapons = blankWeapons();
-    this.version = 2;
+    this.mirror = blankMirror();
+    this.version = 3;
   }
 
   load() {
@@ -58,6 +105,7 @@ export class MetaProgression {
     try { data = JSON.parse(this.storage?.getItem?.(META_SAVE_KEY) || 'null'); } catch (e) { data = null; }
     this.nectar = Math.max(0, Math.floor(Number(data?.nectar) || 0));
     this.titanBlood = Math.max(0, Math.floor(Number(data?.titanBlood) || 0));
+    this.darkness = Math.max(0, Math.floor(Number(data?.darkness) || 0));
     this.gods = blankGods();
     for (const god of GOD_KEYS) {
       this.gods[god].boon = cleanRank(data?.gods?.[god]?.boon);
@@ -68,6 +116,8 @@ export class MetaProgression {
     for (const weapon of Object.keys(META_WEAPONS)) {
       for (const track of WEAPON_TRACKS) this.weapons[weapon][track] = cleanRank(data?.weapons?.[weapon]?.[track]);
     }
+    this.mirror = blankMirror();
+    for (const talent of MIRROR_TRACKS) this.mirror[talent] = cleanMirrorRank(talent, data?.mirror?.[talent]);
     this.ctx?.events?.emit?.('meta.loaded', this.snapshot());
     return this;
   }
@@ -82,7 +132,7 @@ export class MetaProgression {
     for (const god of GOD_KEYS) gods[god] = { ...this.gods[god] };
     const weapons = {};
     for (const weapon of Object.keys(META_WEAPONS)) weapons[weapon] = { ...this.weapons[weapon] };
-    return { version: this.version, nectar: this.nectar, titanBlood: this.titanBlood, gods, weapons };
+    return { version: this.version, nectar: this.nectar, titanBlood: this.titanBlood, darkness: this.darkness, gods, weapons, mirror: { ...this.mirror } };
   }
 
   rank(god, track = 'boon') { return cleanRank(this.gods[god]?.[track]); }
@@ -101,11 +151,12 @@ export class MetaProgression {
   /** Devotion moves offers out of Common without changing deterministic rolls. */
   rarityWeights(god) {
     const rank = this.rank(god, 'devotion');
+    const foresight = this.mirrorRank('darkForesight');
     return {
-      common: Math.max(12, 62 - rank * 8),
-      rare: 26 + rank * 4,
-      epic: 9 + rank * 2.5,
-      heroic: 3 + rank * 1.5,
+      common: Math.max(8, 62 - rank * 8 - foresight * 3),
+      rare: 26 + rank * 4 + foresight * 1.5,
+      epic: 9 + rank * 2.5 + foresight,
+      heroic: 3 + rank * 1.5 + foresight * 0.5,
     };
   }
   rareOrBetterChance(god) {
@@ -121,6 +172,15 @@ export class MetaProgression {
     return rank >= WEAPON_MAX_RANK ? 0 : rank + 1;
   }
   weaponMultiplier(weapon, track = 'attack') { return 1 + this.weaponRank(weapon, track) * 0.05; }
+
+  mirrorRank(talent) { return cleanMirrorRank(talent, this.mirror[talent]); }
+  mirrorCost(talent) {
+    const def = MIRROR_TALENTS[talent];
+    if (!def) return 0;
+    const rank = this.mirrorRank(talent);
+    return rank >= def.max ? 0 : def.baseCost + rank * def.step;
+  }
+  startingObols() { return this.mirrorRank('deepPockets') * 15; }
 
   awardNectar(amount = 1, o = {}) {
     const gained = Math.max(0, Math.floor(Number(amount) || 0));
@@ -141,6 +201,17 @@ export class MetaProgression {
     const payload = { amount: gained, total: this.titanBlood, source: o.source || 'boss' };
     this.ctx?.events?.emit?.('titanBlood.awarded', payload);
     this.ctx?.events?.emit?.('titanBlood.changed', payload);
+    return gained;
+  }
+
+  awardDarkness(amount = 1, o = {}) {
+    const gained = Math.max(0, Math.floor(Number(amount) || 0));
+    if (!gained) return 0;
+    this.darkness += gained;
+    this.save();
+    const payload = { amount: gained, total: this.darkness, source: o.source || 'chamber' };
+    this.ctx?.events?.emit?.('darkness.awarded', payload);
+    this.ctx?.events?.emit?.('darkness.changed', payload);
     return gained;
   }
 
@@ -178,7 +249,29 @@ export class MetaProgression {
     return result;
   }
 
+  upgradeMirror(talent) {
+    const def = MIRROR_TALENTS[talent];
+    if (!def) return { ok: false, reason: 'invalid' };
+    const rank = this.mirrorRank(talent);
+    if (rank >= def.max) return { ok: false, reason: 'max', rank, cost: 0 };
+    const cost = this.mirrorCost(talent);
+    if (this.darkness < cost) return { ok: false, reason: 'darkness', rank, cost, darkness: this.darkness };
+    this.darkness -= cost;
+    this.mirror[talent] = rank + 1;
+    this.save();
+    const result = { ok: true, talent, rank: rank + 1, cost, darkness: this.darkness };
+    this.ctx?.boons?.rebuild?.();
+    this.ctx?.boons?._syncPlayer?.();
+    this.ctx?.events?.emit?.('mirror.upgraded', result);
+    this.ctx?.events?.emit?.('darkness.changed', { amount: -cost, total: this.darkness, source: 'mirror' });
+    return result;
+  }
+
   applyPassives(mods) {
+    for (const talent of MIRROR_TRACKS) {
+      const rank = this.mirrorRank(talent);
+      if (rank) MIRROR_TALENTS[talent].apply(mods, rank);
+    }
     for (const god of GOD_KEYS) {
       const rank = this.rank(god, 'passive');
       if (rank) GOD_LEGACIES[god]?.apply?.(mods, rank);

@@ -12,6 +12,7 @@
 // ---------------------------------------------------------------------------
 
 import { GODS } from '../materials/palette.js';
+import { EXPANDED_BOONS, EXPANDED_DUOS } from './boon-expansion.js';
 
 export const SLOTS = {
   attack:  { name: 'Attack',  glyph: 'sword' },
@@ -31,6 +32,7 @@ export const RARITY_WEIGHT = { common: 62, rare: 26, epic: 9, heroic: 3 };
 
 const rarityRank = (rarity) => Math.max(0, RARITIES.indexOf(rarity));
 const nextRarity = (rarity) => RARITIES[Math.min(RARITIES.length - 1, rarityRank(rarity) + 1)];
+const CORE_SLOTS = Object.freeze(['attack', 'special', 'cast', 'dash']);
 
 export const GOD_INFO = {
   zeus:      { name: 'Zeus',      title: 'God of Thunder',        color: GODS.zeus,      status: 'shock', emblem: 'bolt' },
@@ -343,6 +345,7 @@ export const BOONS = [
     (m, v) => { m.forge.shield.castMul *= 1 + v.pct / 100; m.forge.shield.castBounces = Math.max(m.forge.shield.castBounces, v.bounces); },
     { weapon: 'shield', forgeAction: 'cast' }),
 ];
+BOONS.push(...EXPANDED_BOONS);
 
 // ═══════════════════════════════════════════════════════════ DUO BOONS ════
 // A duo requires a boon from BOTH gods already granted. They are rare, always
@@ -373,6 +376,7 @@ export const DUOS = [
     base: { spd: 18 }, text: v => `Knockback carries you: move ${v.spd}% faster after a slam.`,
     apply: (m, v) => { m.slamSpeed += v.spd / 100; m.knockback += 1.5; } },
 ];
+DUOS.push(...EXPANDED_DUOS);
 
 // ═══════════════════════════════════════════════════════ MODIFIER STATE ════
 export function emptyMods() {
@@ -450,7 +454,7 @@ export class BoonState {
     // familiar Hades loadout model. The surrendered boon also tempers its
     // successor: the replacement inherits the stronger tier and advances once.
     // Calls/passives remain freely stackable.
-    if (!prev && ['attack', 'special', 'cast', 'dash'].includes(incomingSlot)) {
+    if (!prev && CORE_SLOTS.includes(incomingSlot)) {
       const old = this.granted.find(r => !r.duo && r.slot === incomingSlot);
       if (old) {
         replaced = old;
@@ -610,12 +614,21 @@ export class BoonState {
       out.push(upgrade);
     }
     const gods = o.god ? [o.god] : GOD_KEYS;
-    const eligible = b => gods.includes(b.god) && (!b.weapon || !o.weapon || b.weapon === o.weapon);
+    // Epic and Heroic core slots are settled builds. Do not show a different
+    // boon for that action: even a rarity-preserving replacement reads as a
+    // downgrade and crowds out genuinely new choices. The exact owned boon
+    // can still advance Epic -> Heroic through the upgrade path above.
+    const protectedSlots = new Set(this.granted
+      .filter(rec => !rec.duo && CORE_SLOTS.includes(rec.slot) && rarityRank(rec.rarity) >= rarityRank('epic'))
+      .map(rec => rec.slot));
+    const eligible = b => gods.includes(b.god)
+      && (!b.weapon || !o.weapon || b.weapon === o.weapon)
+      && !(CORE_SLOTS.includes(b.slot) && protectedSlots.has(b.slot) && !this.byId.has(b.id));
     const pool = BOONS.filter(b => eligible(b) && !this.byId.has(b.id));
-    const src = pool.length >= count ? pool : BOONS.filter(eligible);
+    const src = pool;
     const used = new Set(out.map(x => x.boon.id));
     let guard = 0, seq = 0;
-    while (out.length < count && guard++ < 400) {
+    while (out.length < count && src.length && guard++ < 400) {
       // random draw first; after a few misses walk the pool so a small or
       // degenerate rng stream can never return fewer cards than asked for
       const b = (rng && guard < 40) ? rng.pick(src) : src[seq++ % src.length];
@@ -623,18 +636,29 @@ export class BoonState {
       used.add(b.id);
       out.push(this.offer(b, pickR(b.god)));
     }
+    // A late-run forced god can exhaust fresh passive/call choices. Fill only
+    // with real rarity promotions, never duplicate Heroic or lower cards.
+    for (const rec of upgradeable) {
+      if (out.length >= count || used.has(rec.boon.id)) continue;
+      const upgrade = this.offer(rec.boon, nextRarity(rec.rarity));
+      upgrade.upgrade = true;
+      used.add(rec.boon.id);
+      out.push(upgrade);
+    }
     return out;
   }
 
   /** Package a boon + rarity into the object the UI renders and grant() takes. */
   offer(boon, rarity = 'common') {
     const slot = boon.slot || 'passive';
+    const owned = this.byId.get(boon.id);
+    if (owned && rarityRank(owned.rarity) > rarityRank(rarity)) rarity = owned.rarity;
     let replacement = null;
     let replacementBoosted = false;
     // Preview replacement transmutation on the card itself. This keeps the
     // rarity label, description numbers and eventual runtime modifier in lock
     // step instead of surprising the player only after they choose it.
-    if (['attack', 'special', 'cast', 'dash'].includes(slot) && !this.byId.has(boon.id)) {
+    if (CORE_SLOTS.includes(slot) && !this.byId.has(boon.id)) {
       replacement = this.granted.find(r => !r.duo && r.slot === slot) || null;
       if (replacement) {
         const inherited = rarityRank(replacement.rarity) > rarityRank(rarity) ? replacement.rarity : rarity;

@@ -120,6 +120,7 @@ export class UI {
     E.on('boon.granted', (i) => { if (i) this.hud.addBoon(i.record || i); });
     E.on('nectar.changed', (i) => { if (i && i.total != null) this.setResources(null, i.total); });
     E.on('titanBlood.changed', (i) => { if (i && i.total != null) this.setResources(null, null, i.total); });
+    E.on('darkness.changed', (i) => { if (i && i.total != null) this.setResources(null, null, null, i.total); });
     E.on('weapon.equipped', (i) => this.hud.setWeapon(i));
     E.on('room.entered', (i) => { if (i && i.room) this.setRoom(i.room.depth, i.room.biome); });
     E.on('biome.changed', (i) => { if (i && i.name) this.setRoom(null, i.name); });
@@ -215,7 +216,7 @@ export class UI {
   setRoom(depth, biome) { this.hud.setRoom(depth, biome); }
   damageNumber(worldPos, amount, o) { this.labels.damageNumber(worldPos, amount, o); }
   showBoonChoice(options, o) { return this.boonUI.open(options, o); }
-  showHomeUpgrades(meta) { this.nectarUI.open(meta || this.ctx?.meta); }
+  showHomeUpgrades(meta, page) { this.nectarUI.open(meta || this.ctx?.meta, page); }
   toast(text, o = {}) {
     this.toasts.push({ text: String(text), color: o.color || PAL.gold, icon: o.icon || null, t0: this.t, dur: o.dur || 2.4 });
     if (this.toasts.length > 4) this.toasts.shift();
@@ -239,10 +240,11 @@ export class UI {
   clearPrompts() { this.labels.clearPrompts(); }
   sigil(pos, o) { this.labels.sigil(pos, o); }
   clearSigils() { this.labels.clearSigils(); }
-  setResources(obols, nectar, titanBlood) {
+  setResources(obols, nectar, titanBlood, darkness) {
     if (obols != null) this.hud.obols = obols;
     if (nectar != null) this.hud.nectar = nectar;
     if (titanBlood != null) this.hud.titanBlood = titanBlood;
+    if (darkness != null) this.hud.darkness = darkness;
     this.dirty = true;
   }
   setSummary(o) { Object.assign(this.menus.summary, o || {}); this.dirty = true; }

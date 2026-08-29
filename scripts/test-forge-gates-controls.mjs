@@ -5,7 +5,7 @@ import { WeaponRuntime } from '../src/entities/weapons.js';
 import { Player } from '../src/entities/player.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
-import { HomeBase, HOME_ALTAR_POS, TitanBloodDrop } from '../src/world/homebase.js';
+import { HomeBase, HOME_ALTAR_POS, HOME_MIRROR_POS, TitanBloodDrop } from '../src/world/homebase.js';
 import { RunState } from '../src/game/run.js';
 import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
@@ -24,6 +24,16 @@ class Bus {
   constructor() { this.map = new Map(); }
   on(name, fn) { const a = this.map.get(name) || []; a.push(fn); this.map.set(name, a); return () => {}; }
   emit(name, data) { for (const fn of this.map.get(name) || []) fn(data); }
+}
+
+// The physical Mirror of Night opens its own persistent Darkness page.
+{
+  let opened = 0, interact = false;
+  const player = { position: HOME_MIRROR_POS.clone(), radius: 0.45, velocity: new THREE.Vector3(), knock: new THREE.Vector3() };
+  const home = new HomeBase({ player, input: { pressed: a => a === 'interact' && interact } }, { onMirror: () => opened++ });
+  interact = true;
+  home.update(1 / 60);
+  assert.equal(opened, 1, 'Mirror of Night is not interactable at the Crossroads');
 }
 const noop = () => {};
 const rng = { f: () => 0.314159, pick: a => a[0] };
