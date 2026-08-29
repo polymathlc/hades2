@@ -8,6 +8,10 @@ import { WEAPONS, WEAPON_IDS } from '../entities/weapons.js';
 
 const PORTAL_POS = new THREE.Vector3(0, 0, -7.0);
 const ALTAR_POS = new THREE.Vector3(6.4, 0, 0.2);
+// The altar's widest plinth is 2.65m. Keep the hero capsule outside it while
+// leaving the interaction range comfortably reachable from the floor.
+const ALTAR_SAFE_RADIUS = 3.22;
+const ALTAR_INTERACT_RADIUS = 3.65;
 const ARMORY_POS = {
   blade:  new THREE.Vector3(-6.3, 0, 4.3),
   spear:  new THREE.Vector3(-2.25, 0, 6.75),
@@ -255,6 +259,29 @@ export class HomeBase {
     return true;
   }
 
+  _resolveAltar(p) {
+    let dx = p.x - ALTAR_POS.x, dz = p.z - ALTAR_POS.z;
+    let distance = Math.hypot(dx, dz);
+    if (distance >= ALTAR_SAFE_RADIUS) return distance;
+    // Exact-centre recovery points toward the arena, never farther into the
+    // perimeter. This also repairs saves/frames already trapped in the mesh.
+    if (distance < 1e-5) { dx = -1; dz = 0; distance = 1; }
+    const nx = dx / distance, nz = dz / distance;
+    p.x = ALTAR_POS.x + nx * ALTAR_SAFE_RADIUS;
+    p.z = ALTAR_POS.z + nz * ALTAR_SAFE_RADIUS;
+    const v = this.ctx.player?.velocity;
+    if (v) {
+      const inward = v.x * nx + v.z * nz;
+      if (inward < 0) { v.x -= nx * inward; v.z -= nz * inward; }
+    }
+    const knock = this.ctx.player?.knock;
+    if (knock) {
+      const inward = knock.x * nx + knock.z * nz;
+      if (inward < 0) { knock.x -= nx * inward; knock.z -= nz * inward; }
+    }
+    return ALTAR_SAFE_RADIUS;
+  }
+
   update(dt) {
     this.t += dt;
     if (this.portalCore?.material?.uniforms) this.portalCore.material.uniforms.uTime.value = this.t;
@@ -285,6 +312,7 @@ export class HomeBase {
 
     const p = this.ctx.player?.position;
     if (!p) return;
+    const ad = this._resolveAltar(p);
     const pd = Math.hypot(p.x - PORTAL_POS.x, p.z - PORTAL_POS.z);
     // The visible threshold is a 2.05m ring on a broad plinth. The old 1.18m
     // trigger sat behind the plinth approach, so a hero could visibly stand
@@ -306,8 +334,7 @@ export class HomeBase {
         return;
       }
     }
-    const ad = Math.hypot(p.x - ALTAR_POS.x, p.z - ALTAR_POS.z);
-    if (ad < 2.5 && this.ctx.input?.pressed?.('interact')) this.onAltar();
+    if (ad < ALTAR_INTERACT_RADIUS && this.ctx.input?.pressed?.('interact')) this.onAltar();
   }
 
   dispose() {

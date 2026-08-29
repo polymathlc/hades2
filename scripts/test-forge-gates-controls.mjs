@@ -4,7 +4,7 @@ import { BOONS, BoonState, GOD_INFO, GOD_KEYS } from '../src/game/boons.js';
 import { WeaponRuntime } from '../src/entities/weapons.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
-import { HomeBase } from '../src/world/homebase.js';
+import { HomeBase, HOME_ALTAR_POS } from '../src/world/homebase.js';
 import { RunState } from '../src/game/run.js';
 import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
@@ -18,6 +18,24 @@ class Bus {
 }
 const noop = () => {};
 const rng = { f: () => 0.314159, pick: a => a[0] };
+
+// The Nectar altar is solid home geometry: entering its footprint must rescue
+// the player to walkable floor, without making the altar impossible to use.
+{
+  let opened = 0, interact = false;
+  const player = {
+    position: HOME_ALTAR_POS.clone(), radius: 0.45,
+    velocity: new THREE.Vector3(-2, 0, 0), knock: new THREE.Vector3(-1, 0, 0),
+  };
+  const home = new HomeBase({ player, input: { pressed: a => a === 'interact' && interact } }, { onAltar: () => opened++ });
+  home.update(1 / 60);
+  assert.ok(Number.isFinite(player.position.x) && Number.isFinite(player.position.z));
+  assert.ok(Math.hypot(player.position.x - HOME_ALTAR_POS.x, player.position.z - HOME_ALTAR_POS.z) > 3.2);
+  player.position.copy(HOME_ALTAR_POS).add(new THREE.Vector3(-3.35, 0, 0));
+  interact = true;
+  home.update(1 / 60);
+  assert.equal(opened, 1, 'safe altar radius made Nectar interaction unreachable');
+}
 
 // A clear publishes one fresh set; choosing any gate removes that whole set
 // before the boon overlay/next chamber can show behind it.
