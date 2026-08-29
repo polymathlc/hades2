@@ -10,6 +10,9 @@ import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
 import { BIOMES } from '../src/world/biomes.js';
 import { Kit } from '../src/world/kit.js';
+import { Engine } from '../src/core/engine.js';
+import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
+import { TIERS } from '../src/render/renderer.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -18,6 +21,21 @@ class Bus {
 }
 const noop = () => {};
 const rng = { f: () => 0.314159, pick: a => a[0] };
+
+// Browser quality policy: explicit choices win, weak hardware starts low, and
+// only capable machines default to the full high-cost pipeline.
+assert.equal(chooseGraphicsTier({ capture: true, requested: 'low' }), 'ultra');
+assert.equal(chooseGraphicsTier({ requested: 'low', stored: 'high' }), 'low');
+assert.equal(chooseGraphicsTier({ stored: 'med', deviceMemory: 16, cores: 16 }), 'med');
+assert.equal(chooseGraphicsTier({ deviceMemory: 4, cores: 4, width: 1920, height: 1080 }), 'low');
+assert.equal(chooseGraphicsTier({ deviceMemory: 8, cores: 8, width: 1920, height: 1080 }), 'high');
+assert.equal(chooseGraphicsTier({}), 'med');
+assert.equal(graphicsDprCap('low'), 1);
+assert.equal(graphicsDprCap('med'), 1.25);
+assert.ok(TIERS.low.renderScale <= 0.7 && !TIERS.low.shadows && !TIERS.low.bloom && !TIERS.low.ao && TIERS.low.dustLayers === 0);
+assert.ok(TIERS.med.renderScale < TIERS.high.renderScale && !TIERS.med.godrays);
+assert.equal(new Engine({ quality: { tier: 'low' } }).fixedDt, 1 / 60);
+assert.equal(new Engine({ quality: { tier: 'high' } }).fixedDt, 1 / 120);
 
 // The Nectar altar is solid home geometry: entering its footprint must rescue
 // the player to walkable floor, without making the altar impossible to use.

@@ -106,7 +106,10 @@ export class MaterialLibrary {
     // chamber will ask for is baked here, in parallel, before the world builds;
     // whatever the pool cannot deliver falls through to the sync path in set().
     const t0 = now();
-    this._pool = new BakePool(8);
+    // Leave CPU capacity for the browser, input and operating system on weaker
+    // machines instead of occupying every core during procedural texture boot.
+    const workerLimit = tier === 'low' ? 2 : tier === 'med' ? 4 : tier === 'high' ? 6 : 8;
+    this._pool = new BakePool(workerLimit);
     // Decode the authored albedo atlases while the worker pool synthesises PBR
     // support maps. Neither job needs to wait on the other.
     const generated = this._loadGeneratedAlbedos();
@@ -135,7 +138,12 @@ export class MaterialLibrary {
       const renderer = this.ctx && this.ctx.renderer;
       const max = renderer && renderer.capabilities && renderer.capabilities.getMaxAnisotropy
         ? renderer.capabilities.getMaxAnisotropy() : 8;
-      this.generatedMaps = await loadGeneratedAlbedos(Math.min(16, Math.max(1, max)));
+      // Generated atlas cells are retained for lazy materials, so downscaling
+      // them is a large RAM/VRAM saving in addition to reducing seam-processing
+      // work. Procedural normals/ORM keep their normal tier-specific scale.
+      const generatedScale = this.ctx?.quality?.tier === 'low' ? 0.5
+        : this.ctx?.quality?.tier === 'med' ? 0.75 : 1;
+      this.generatedMaps = await loadGeneratedAlbedos(Math.min(16, Math.max(1, max)), generatedScale);
       this._applyGeneratedAlbedos();
     } catch (error) {
       // Procedural albedo remains a complete fallback for offline/file builds,

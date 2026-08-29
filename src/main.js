@@ -13,14 +13,40 @@ import { VFX } from './vfx/index.js';
 import { UI } from './ui/index.js';
 import { Audio } from './audio/index.js';
 import { RunState } from './game/run.js';
+import {
+  GRAPHICS_STORAGE_KEY, chooseGraphicsTier, graphicsChoiceSource,
+  graphicsDprCap, isGraphicsTier,
+} from './core/quality.js';
 
 const qs = new URLSearchParams(location.search);
 const CAPTURE = qs.has('capture');
 const SEED = +(qs.get('seed') ?? 1337);
 
 function detectQuality(){
-  const tier = qs.get('q') || (CAPTURE ? 'ultra' : 'high');
-  return { tier, dpr: CAPTURE ? 1 : Math.min(devicePixelRatio||1, 2), shadows:true, preserveDrawingBuffer: CAPTURE };
+  const requested = qs.get('q');
+  let stored = null;
+  try { stored = localStorage.getItem(GRAPHICS_STORAGE_KEY); } catch (_) { /* storage may be blocked */ }
+  const nav = navigator || {};
+  const rawDpr = devicePixelRatio || 1;
+  const tier = chooseGraphicsTier({
+    capture: CAPTURE,
+    requested,
+    stored,
+    deviceMemory: nav.deviceMemory,
+    cores: nav.hardwareConcurrency,
+    dpr: rawDpr,
+    width: screen?.width || innerWidth,
+    height: screen?.height || innerHeight,
+    mobile: !!(nav.maxTouchPoints > 0 && matchMedia?.('(pointer: coarse)').matches),
+    saveData: !!nav.connection?.saveData,
+  });
+  return {
+    tier,
+    source: graphicsChoiceSource({ capture: CAPTURE, requested, stored }),
+    dpr: CAPTURE ? 1 : Math.min(rawDpr, graphicsDprCap(tier)),
+    shadows: tier !== 'low',
+    preserveDrawingBuffer: CAPTURE,
+  };
 }
 
 async function boot(){
@@ -50,6 +76,24 @@ async function boot(){
   const tBoot = performance.now();
   await engine.initAll();
   ctx.input.attach(ctx.renderer.domElement);
+
+  // Settings can be changed before a descent. At home a short reload is safe
+  // and rebuilds textures, post effects and light pools at the selected cost.
+  // During a run we save the choice for the next visit rather than discard play.
+  ctx.events.on('quality.request', ({ tier } = {}) => {
+    if (tier !== 'auto' && !isGraphicsTier(tier)) return;
+    try {
+      if (tier === 'auto') localStorage.removeItem(GRAPHICS_STORAGE_KEY);
+      else localStorage.setItem(GRAPHICS_STORAGE_KEY, tier);
+    } catch (_) { /* private browsing may reject persistence */ }
+    const label = tier === 'auto' ? 'AUTO GRAPHICS' : `${tier.toUpperCase()} GRAPHICS`;
+    if (ctx.run?.state === 'home') {
+      ctx.ui?.toast?.(`${label} · APPLYING`);
+      setTimeout(() => location.reload(), 180);
+    } else {
+      ctx.ui?.toast?.(`${label} SAVED · APPLIES NEXT LAUNCH`);
+    }
+  });
 
   // One-line boot budget report. Texture synthesis is the expensive half of
   // init and it is lazy, so this number is "everything the first chamber

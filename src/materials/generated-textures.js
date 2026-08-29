@@ -185,26 +185,28 @@ function closeSeams(data, width, height, feather = 18) {
   }
 }
 
-function sliceTile(image, tile, anisotropy) {
+function sliceTile(image, tile, anisotropy, scale = 1) {
   const sourceWidth = image.naturalWidth || image.videoWidth || image.width;
   const sourceHeight = image.naturalHeight || image.videoHeight || image.height;
-  const tileWidth = Math.floor(sourceWidth / GRID_COLS);
-  const tileHeight = Math.floor(sourceHeight / GRID_ROWS);
-  if (!tileWidth || !tileHeight || tileWidth !== tileHeight) {
+  const sourceTileWidth = Math.floor(sourceWidth / GRID_COLS);
+  const sourceTileHeight = Math.floor(sourceHeight / GRID_ROWS);
+  if (!sourceTileWidth || !sourceTileHeight || sourceTileWidth !== sourceTileHeight) {
     throw new Error(`Generated atlas must contain square cells; received ${sourceWidth}x${sourceHeight}`);
   }
+  const tileWidth = Math.max(64, Math.round(sourceTileWidth * Math.max(0.25, Math.min(1, scale))));
+  const tileHeight = tileWidth;
   const canvas = document.createElement('canvas');
   canvas.width = tileWidth; canvas.height = tileHeight;
   const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: true });
   if (!ctx) throw new Error('Canvas 2D is unavailable for generated texture slicing');
   ctx.drawImage(
     image,
-    tile.col * tileWidth, tile.row * tileHeight, tileWidth, tileHeight,
+    tile.col * sourceTileWidth, tile.row * sourceTileHeight, sourceTileWidth, sourceTileHeight,
     0, 0, tileWidth, tileHeight,
   );
   const pixels = ctx.getImageData(0, 0, tileWidth, tileHeight);
   if (tile.modulator) neutralise(pixels.data, tile.modulator[0], tile.modulator[1]);
-  closeSeams(pixels.data, tileWidth, tileHeight);
+  closeSeams(pixels.data, tileWidth, tileHeight, Math.max(6, Math.round(18 * scale)));
   ctx.putImageData(pixels, 0, 0);
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -290,7 +292,7 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
 }
 
 /** Load and slice the project-bound atlases into recipe-addressable maps. */
-export async function loadGeneratedAlbedos(anisotropy = 8) {
+export async function loadGeneratedAlbedos(anisotropy = 8, scale = 1) {
   if (typeof document === 'undefined') return new Map();
   const loader = new THREE.TextureLoader();
   const sources = await Promise.all(ATLASES.map((atlas) => loader.loadAsync(atlas.url)));
@@ -298,7 +300,7 @@ export async function loadGeneratedAlbedos(anisotropy = 8) {
   for (let i = 0; i < ATLASES.length; i++) {
     const atlas = ATLASES[i], source = sources[i];
     for (const tile of atlas.tiles) {
-      const texture = sliceTile(source.image, tile, anisotropy);
+      const texture = sliceTile(source.image, tile, anisotropy, scale);
       for (const key of tile.keys) maps.set(key, texture);
     }
     source.dispose();

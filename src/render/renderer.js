@@ -21,24 +21,24 @@ import * as THREE from 'three';
  */
 export const TIERS = {
   low: {
-    renderScale: 0.85, hdr: true,
+    renderScale: 0.68, hdr: true,
     shadows: false, shadowMap: 1024, shadowRadius: 1.2,
     ao: false, aoScale: 0.5, aoDirs: 3, aoSteps: 3,
-    bloom: true, bloomMips: 4, bloomScale: 0.5,
+    bloom: false, bloomMips: 3, bloomScale: 0.5,
     godrays: false, godraysScale: 0.25, godraysSamples: 16,
     dof: false, dofScale: 0.5,
-    fog: true, aa: 'none', grain: true, chroma: true,
-    motes: 260, dustLayers: 1, practicalLights: 4,
+    fog: true, aa: 'none', grain: false, chroma: false, autoExposure: false,
+    motes: 120, dustLayers: 0, practicalLights: 2,
   },
   med: {
-    renderScale: 1.0, hdr: true,
+    renderScale: 0.82, hdr: true,
     shadows: true, shadowMap: 1024, shadowRadius: 1.3,
-    ao: true, aoScale: 0.5, aoDirs: 4, aoSteps: 4,
-    bloom: true, bloomMips: 5, bloomScale: 0.5,
-    godrays: true, godraysScale: 0.25, godraysSamples: 20,
+    ao: false, aoScale: 0.5, aoDirs: 4, aoSteps: 4,
+    bloom: true, bloomMips: 4, bloomScale: 0.5,
+    godrays: false, godraysScale: 0.25, godraysSamples: 20,
     dof: false, dofScale: 0.5,
-    fog: true, aa: 'fxaa', grain: true, chroma: true,
-    motes: 600, dustLayers: 2, practicalLights: 6,
+    fog: true, aa: 'fxaa', grain: false, chroma: false, autoExposure: false,
+    motes: 350, dustLayers: 1, practicalLights: 4,
   },
   high: {
     renderScale: 1.0, hdr: true,
@@ -97,7 +97,7 @@ export class RenderSystem {
       alpha: false,
       stencil: false,
       depth: true,
-      powerPreference: 'high-performance',
+      powerPreference: tier === 'low' ? 'low-power' : 'high-performance',
       // NON-NEGOTIABLE: the headless capture reads the drawing buffer directly.
       preserveDrawingBuffer: !!ctx.quality.preserveDrawingBuffer,
     });

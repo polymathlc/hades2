@@ -105,7 +105,7 @@ export class PostFX {
       // off the same chamber and the same rig, purely because the camera moved.
       // That is a feedback loop, not a grade. Near-flat weighting, +-0.03 stops,
       // and OFF entirely in the capture harness so A/B comparisons are valid.
-      autoExposure: { enabled: true, target: 0.085, min: 0.97, max: 1.03, speed: 2.2, centerWeight: 0.15 },
+      autoExposure: { enabled: q.autoExposure !== false, target: 0.085, min: 0.97, max: 1.03, speed: 2.2, centerWeight: 0.15 },
       aa:         { enabled: (q.aa ?? 'smaa') !== 'none', mode: q.aa ?? 'smaa' },
     };
 

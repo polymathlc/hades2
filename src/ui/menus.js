@@ -14,7 +14,7 @@ import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
 import { CONTROL_ROWS } from '../core/controls.js';
 
-const QUALITY = ['low', 'med', 'high', 'ultra'];
+const QUALITY = ['auto', 'low', 'med', 'high', 'ultra'];
 
 export class Menus {
   constructor(ui) {
@@ -26,7 +26,7 @@ export class Menus {
     this.hit = [];                 // [{x,y,w,h,act,i}]
     this.settingsOpen = false;
     this.controlsOpen = false;
-    this.settings = { quality: 'high', master: 0.8, music: 0.7, sfx: 0.9, shake: true };
+    this.settings = { quality: 'auto', master: 0.8, music: 0.7, sfx: 0.9, shake: true };
     this.summary = { depth: 1, biome: 'tartarus', kills: 0, damage: 0, time: 0, boons: [], killedBy: 'the Underworld' };
   }
 
@@ -297,7 +297,7 @@ export class Menus {
     const s = this.settings;
     const w = width || 420 * S, cx = W / 2, x = cx - w / 2;
     const rows = [
-      { key: 'quality', label: 'Quality', kind: 'cycle', value: s.quality.toUpperCase() },
+      { key: 'quality', label: 'Graphics Quality', kind: 'cycle', value: s.quality === 'auto' ? `AUTO (${(this.ui.ctx?.quality?.tier || 'med').toUpperCase()})` : s.quality.toUpperCase() },
       { key: 'master', label: 'Master Volume', kind: 'slider', value: s.master },
       { key: 'music', label: 'Music', kind: 'slider', value: s.music },
       { key: 'sfx', label: 'Effects', kind: 'slider', value: s.sfx },

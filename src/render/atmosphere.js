@@ -276,7 +276,9 @@ export class Atmosphere {
 
     // ── mote / ember / ash layers ──────────────────────────────────────────
     this.moteBudget = Math.max(120, q.motes ?? 1200);
-    this.layerCount = Math.max(1, Math.min(3, q.dustLayers ?? 3));
+    // Low quality intentionally permits zero particle layers; the painted
+    // backdrop remains, while an entire transparent draw pass disappears.
+    this.layerCount = Math.max(0, Math.min(3, q.dustLayers ?? 3));
     this._rng = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('atmosphere') : null;
     this._buildLayers(ctx);
 

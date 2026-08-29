@@ -59,6 +59,7 @@ export class UI {
 
   async init(ctx) {
     this.ctx = ctx;
+    this.menus.settings.quality = ctx.quality?.source === 'auto' ? 'auto' : (ctx.quality?.tier || 'med');
     this._rng = ctx.rng && ctx.rng.fork ? ctx.rng.fork('ui') : ctx.rng;
 
     // DOM host (kept: main.js's capture.hud() toggles #ui, and it hosts the

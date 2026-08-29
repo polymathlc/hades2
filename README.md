@@ -34,6 +34,14 @@ npm run standalone   # rebuild standalone/play.html
 First load bakes the procedural texture library on a worker pool. On a slow machine that takes a
 few seconds before the first chamber appears — this is a known rough edge, not a hang.
 
+The browser build now starts in **Auto** graphics mode. It uses available memory, CPU count, screen
+size, pixel density, mobile input, and data-saver preference to choose Low, Medium, or High. Low
+mode renders at a reduced resolution, disables shadows and the expensive cinematic passes, halves
+the simulation workload, uses fewer lights and particles, and leaves CPU cores free while textures
+are built. The pause-menu **Settings** screen can save Auto, Low, Medium, High, or Ultra; changing it
+at the home base reloads safely and applies the full tier. `?q=low` is also available as an immediate
+URL override for older computers.
+
 For a production build:
 
 ```bash
