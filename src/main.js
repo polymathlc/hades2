@@ -253,10 +253,13 @@ function setupCapture(engine, ctx, setBiome){
   };
   ctx.capture = drv;
   window.EREBUS.capture = drv;
-  const requestedState = new URLSearchParams(location.search).get('state');
+  const captureParams = new URLSearchParams(location.search);
+  const requestedState = captureParams.get('state');
+  const requestedBiome = captureParams.get('biome');
   // let one frame settle so async material/geometry work completes
   requestAnimationFrame(()=>{
     engine.skipRender=true; engine.step(DT); engine.skipRender=false;
+    if(requestedBiome) drv.biome(requestedBiome);
     if(requestedState){ drv.state(requestedState); drv.step(0.8); drv.render(); }
     resolveReady(); window.__EREBUS_READY = true;
   });

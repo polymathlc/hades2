@@ -67,9 +67,9 @@ export class HomeBase {
 
     // Crossroads lighting is subject-first: a broad cool fill preserves the
     // hero silhouette while a small warm forge bounce separates the altar.
-    const fill = new THREE.PointLight('#b9d7ff', 5.5, 28, 1.7);
+    const fill = new THREE.PointLight('#d4e5ff', 8.0, 32, 1.7);
     fill.position.set(-4.5, 7.5, 5.5); this.root.add(fill);
-    const forgeBounce = new THREE.PointLight('#ff9b42', 4.2, 17, 1.9);
+    const forgeBounce = new THREE.PointLight('#ffb46e', 6.0, 20, 1.9);
     forgeBounce.position.set(ALTAR_POS.x - 1.2, 3.2, ALTAR_POS.z + 1.8); this.root.add(forgeBounce);
 
     const p = ctx.player;

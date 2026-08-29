@@ -13,6 +13,7 @@ import { Kit } from '../src/world/kit.js';
 import { Engine } from '../src/core/engine.js';
 import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
 import { TIERS } from '../src/render/renderer.js';
+import { GRADES } from '../src/render/shaders/grades.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -36,6 +37,12 @@ assert.ok(TIERS.low.renderScale <= 0.7 && !TIERS.low.shadows && !TIERS.low.bloom
 assert.ok(TIERS.med.renderScale < TIERS.high.renderScale && !TIERS.med.godrays);
 assert.equal(new Engine({ quality: { tier: 'low' } }).fixedDt, 1 / 60);
 assert.equal(new Engine({ quality: { tier: 'high' } }).fixedDt, 1 / 120);
+for (const name of ['tartarus', 'asphodel', 'elysium']) {
+  const grade = GRADES[name];
+  assert.ok(grade.exposure >= (name === 'elysium' ? 0.95 : 1.2), `${name} exposure regressed into a gloomy range`);
+  assert.ok(grade.black <= 0.002, `${name} black point crushes texture detail`);
+  assert.ok(grade.vignette.amount <= 0.25 && grade.vignette.floor <= 0.2, `${name} vignette obscures the play area`);
+}
 
 // The Nectar altar is solid home geometry: entering its footprint must rescue
 // the player to walkable floor, without making the altar impossible to use.

@@ -114,7 +114,7 @@ const RIGS = {
     // toward a warm near-white lets each material show ITS colour and leaves hue variety to the
     // coloured practicals — the opposite of raising global saturation, which only amplifies
     // whatever single hue already dominates. See ART_DIRECTION §15.
-    key:    { color: '#ffe0ca', intensity: 16.0, dir: [0.646, -0.615, -0.452] },
+    key:    { color: '#ffe7d5', intensity: 18.0, dir: [0.646, -0.615, -0.452] },
     // ── THE SUBJECT LIGHT (§1.1, §9.2) ──────────────────────────────────────
     // The frame did not know who its subject was. Every light in this rig was
     // authored for the ROOM — a key for the architecture, practicals nailed to
@@ -147,7 +147,7 @@ const RIGS = {
     // channel, and a dead channel has stopped carrying form. A paler subject key
     // delivers the same luminance with the red channel ~15% lower, so the lit
     // side keeps a gradient instead of a plateau. Target: no hero pixel over 244.
-    subject: { color: '#ffe8d8', intensity: 7.0, distance: 6.2, decay: 2.0,
+    subject: { color: '#fff0e2', intensity: 8.5, distance: 6.8, decay: 2.0,
                offset: [0.80, 1.95, 1.20] },
     // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
     // saturated periwinkle sky this was the brightest thing landing on the
@@ -173,7 +173,7 @@ const RIGS = {
     // while lit stone stayed orange, and a single surface split that far across the colour
     // temperature axis is what reads as artificial rather than as stone. The ink ramp asks for
     // PLUM shadows (#241238), which is a warm violet, not a blue one.
-    hemi:   { sky: '#40303f', ground: '#332331', intensity: 0.48 },
+    hemi:   { sky: '#5b4d59', ground: '#4a3949', intensity: 0.64 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
     bounce: { color: '#8a3a34', intensity: 0.40, size: [11, 11], y: 1.6 },
@@ -189,7 +189,7 @@ const RIGS = {
     // black band under the washed cornice. Tinted with the FLOOR's own crimson
     // (§3 "tinted with the floor albedo") so it recedes toward the ink ramp
     // rather than greying anything.
-    bounce2:{ color: '#5a2430', intensity: 0.52, size: [34, 34], y: 0.12 },
+    bounce2:{ color: '#6f3540', intensity: 0.70, size: [34, 34], y: 0.12 },
     // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
     // The rim is now the second-strongest light in the frame by design: it is
     // what draws every vertical edge in the chamber.
@@ -220,7 +220,7 @@ const RIGS = {
     // hero. When painterly.js ships `vec3 rimC = uRimColor;` this goes back to
     // '#5fd0ff' and rig.js's RIM_HEX goes with it — the two must move together.
     rim:    { color: '#8fa4ff', dir: [-0.62, 0.36, 0.70], intensity: 2.8, power: 2.60, wrap: 0.22 },
-    ambient:{ color: '#2e242f', intensity: 0.22 },
+    ambient:{ color: '#554a58', intensity: 0.32 },
     godrayAnchor: [0.22, 1.06],
     // §9.3 + §9.5. With the bloom fog gone, bands.highlight measured 0.021
     // against a 0.04 floor — the frame's old top band was NOT ornament, it was
@@ -403,13 +403,13 @@ const RIGS = {
     ],
   },
   asphodel: {
-    key:    { color: '#ffe0bc', intensity: 12.4, dir: [0.586, -0.668, -0.459] },
-    hemi:   { sky: '#7777aa', ground: '#55362e', intensity: 0.42 },
+    key:    { color: '#ffead0', intensity: 15.0, dir: [0.586, -0.668, -0.459] },
+    hemi:   { sky: '#9296c2', ground: '#76564d', intensity: 0.62 },
     bounce: { color: '#ad664c', intensity: 0.20, size: [24, 24], y: 0.2 },
     bounce2:{ color: '#555d7c', intensity: 0.12, size: [36, 36], y: 0.16 },
     rim:    { color: '#7fe6df', dir: [-0.66, 0.32, 0.68], intensity: 3.1, power: 2.0, wrap: 0.40 },
-    ambient:{ color: '#565170', intensity: 0.16 },
-    subject:{ color: '#e7f5ff', intensity: 10.5, distance: 7.0, decay: 2.0, offset: [0.80, 2.05, 1.20] },
+    ambient:{ color: '#77748f', intensity: 0.28 },
+    subject:{ color: '#f1f9ff', intensity: 12.0, distance: 7.4, decay: 2.0, offset: [0.80, 2.05, 1.20] },
     // Kept on-screen for API compatibility, but the Asphodel grade disables
     // radial god rays entirely; the former below-frame anchor made sky beams.
     godrayAnchor: [0.26, 0.82],
@@ -422,11 +422,12 @@ const RIGS = {
     ],
   },
   elysium: {
-    key:    { color: '#fff0d0', intensity: 9.2, dir: [0.632, -0.630, -0.451] },
-    hemi:   { sky: '#9a90cc', ground: '#1c4c3a', intensity: 0.30 },
+    key:    { color: '#fff4df', intensity: 10.0, dir: [0.632, -0.630, -0.451] },
+    hemi:   { sky: '#aaa3cf', ground: '#3b6653', intensity: 0.38 },
     bounce: { color: '#c9bda4', intensity: 0.32, size: [30, 30], y: 0.25 },
     rim:    { color: '#ff5fa8', dir: [-0.58, 0.40, 0.71], intensity: 2.2, power: 2.3, wrap: 0.30 },
-    ambient:{ color: '#3d3560', intensity: 0.06 },
+    ambient:{ color: '#655d82', intensity: 0.12 },
+    subject:{ color: '#fff6e4', intensity: 9.5, distance: 7.0, decay: 2.0, offset: [0.80, 2.10, 1.20] },
     godrayAnchor: [0.24, 1.04],
     env:    { zenith: '#141c40', horizon: '#332f4c', nadir: '#13201c', keyGain: 20.0, keySharp: 220, keyWide: 0.07, rimGain: 1.5, rimSharp: 34, bounce: '#3fa86a', bounceGain: 0.05, intensity: 0.36 },
     practicals: [

@@ -59,7 +59,7 @@ export const GRADES = {
     // number in postfx.js `uExposure: { value: 1.06 }` is only an initialiser;
     // _syncUniforms overwrites it from THIS field every frame, so this is the
     // real exposure knob for Tartarus.
-    exposure: 1.24,
+    exposure: 1.36,
     agxSlope: [1.01, 1.0, 0.99],
     agxPower: [1.03, 1.03, 1.05],
     // §2 asks for crimson stone and molten gold; the close-ups measured
@@ -68,7 +68,7 @@ export const GRADES = {
     agxSat: 0.92,
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
-    contrast: 0.96,
+    contrast: 0.68,
     // PIVOT FOLLOWS THE FRAME. The S-curve is a power law about this point, so
     // a pivot ABOVE the frame's tonal centre can only push pixels down — and
     // once §9.1 put the ground plane where it belongs, 0.34 sat two stops over
@@ -83,10 +83,10 @@ export const GRADES = {
     // hard that gold ornament and brazier cores shared one value with lit
     // stone. §9.3 wants real content in the top band; the roll still preserves
     // hue, it just starts later.
-    black: 0.003, white: 0.94, shoulder: 0.18, hiRoll: 0.92,
+    black: 0.001, white: 0.96, shoulder: 0.16, hiRoll: 0.94,
     // §2: the ink ramp bottoms at #07060f — a VIOLET black, not a neutral zero.
     // A negative blue lift clipped the column bases to dead #000.
-    lift:  [ 0.010,  0.008,  0.016 ],
+    lift:  [ 0.022,  0.020,  0.028 ],
     gamma: [ 1.00,  1.00,  1.01 ],
     // The warm gain was rotating every gold surface toward orange before the
     // hue lobes ever saw it. Keep the grade close to neutral and let the
@@ -141,7 +141,7 @@ export const GRADES = {
     // foreground floor, and a repoussoir is supposed to be dark.
     // `floor` is extra vignette weight BELOW frame centre — the foreground
     // repoussoir (§1.8) and the third value band (§9.4).
-    vignette: { amount: 0.44, radius: 0.66, softness: 0.90, depth: 0.12, floor: 0.58, color: H('#120d18') },
+    vignette: { amount: 0.24, radius: 0.80, softness: 0.94, depth: 0.07, floor: 0.20, color: H('#1c1726') },
     grain:    { amount: 0.0070, size: 1.0, darkBoost: 1.8 },
     chroma:   0.45,
     // §1.7 "bloom is a paint layer over a core that has ALREADY gone bright" —
@@ -210,7 +210,7 @@ export const GRADES = {
     // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
     // the ink goes several stops darker so the base of a column reads planted
     // instead of floating in a lilac smudge.
-    ao:       { intensity: 1.18, radius: 1.25, power: 2.1, bias: 0.035, ink: H('#180c22') },
+    ao:       { intensity: 0.82, radius: 1.10, power: 1.75, bias: 0.04, ink: H('#24182d') },
         // Godrays are ADDITIVE over the whole frame, so at 0.34 they were a second
     // bloom pedestal sitting on the ground plane. 0.12 keeps the shafts.
     // No screen-space sky shaft in Tartarus. At the fixed gameplay camera the
@@ -275,14 +275,14 @@ export const GRADES = {
   // obsidian isles on a lava sea. Blazing orange key, teal rim, blue-black ink.
   asphodel: {
     name: 'asphodel',
-    exposure: 1.05,
+    exposure: 1.28,
     agxSlope: [1.02, 1.01, 1.00],
     agxPower: [1.05, 1.06, 1.08],
     agxSat: 1.04,
-    contrast: 0.84,
-    pivot: 0.34,
-    black: 0.006, white: 0.88, shoulder: 0.28,
-    lift:  [0.008, 0.008, 0.014],
+    contrast: 0.62,
+    pivot: 0.30,
+    black: 0.001, white: 0.94, shoulder: 0.20,
+    lift:  [0.020, 0.019, 0.026],
     gamma: [1.00, 1.00, 1.02],
     gain:  [1.02, 1.00, 1.02],
     curveR: 0.94, curveG: 1.03, curveB: 1.10,
@@ -298,13 +298,13 @@ export const GRADES = {
       [0.62, 0.060, 0.020],     // blues   -> indigo (narrow: the teal rim must survive)
       [0.48, 0.100, 0.030],     // cyans   -> teal (rim colour)
     ],
-    vignette: { amount: 0.28, radius: 0.74, softness: 0.92, depth: 0.10, floor: 0.65, color: H('#171526') },
+    vignette: { amount: 0.16, radius: 0.84, softness: 0.95, depth: 0.05, floor: 0.18, color: H('#211f31') },
     grain:    { amount: 0.0075, size: 1.0, darkBoost: 1.9 },
     chroma:   1.7,
     bloom:    { threshold: 1.58, knee: 0.44, intensity: 0.34, tint: H('#d98d60'), radius: 0.46, clamp: 2.0 },
-    ao:       { intensity: 0.72, radius: 1.45, power: 1.72, bias: 0.05, ink: H('#252943') },
+    ao:       { intensity: 0.56, radius: 1.25, power: 1.55, bias: 0.055, ink: H('#30354d') },
     godrays:  { intensity: 0.0, color: H('#ff8c1a'), decay: 0.962, density: 0.0, weight: 0.0 },
-    fog:      { color: H('#40323c'), far: H('#1d1b2d'), density: 0.010, height: 0.14, haze: H('#24243b'), hazeStart: 42, hazeEnd: 138, hazeDesat: 0.28, hazeR0: 1.20, hazeR1: 2.5, hazeRadial: 0.75 },
+    fog:      { color: H('#4a3b46'), far: H('#29283b'), density: 0.007, height: 0.14, haze: H('#303149'), hazeStart: 46, hazeEnd: 145, hazeDesat: 0.22, hazeR0: 1.24, hazeR1: 2.6, hazeRadial: 0.62 },
     dof:      { range: 50.0, nearRange: 16.0, maxBlur: 0.38, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 
@@ -312,14 +312,14 @@ export const GRADES = {
   // marble, laurel, gold. Pale gold key, rose rim, cool violet-grey ink.
   elysium: {
     name: 'elysium',
-    exposure: 0.82,
+    exposure: 0.98,
     agxSlope: [1.02, 1.02, 1.0],
-    agxPower: [1.14, 1.14, 1.18],
+    agxPower: [1.05, 1.05, 1.08],
     agxSat: 1.10,
-    contrast: 0.76,
-    pivot: 0.38,
-    black: 0.020, white: 0.78, shoulder: 0.15,
-    lift:  [-0.008, -0.008, -0.002],
+    contrast: 0.55,
+    pivot: 0.32,
+    black: 0.001, white: 0.90, shoulder: 0.22,
+    lift:  [0.012, 0.012, 0.018],
     gamma: [ 1.00,  1.00,  1.03 ],
     gain:  [ 1.04,  1.02,  0.97 ],
     curveR: 0.99, curveG: 1.00, curveB: 1.05,
@@ -327,21 +327,21 @@ export const GRADES = {
     midTint:    H('#ffe0b8'),
     highTint:   H('#fff4d0'),
     satShadow: 1.08,
-    satMid:    1.22,
+    satMid:    1.08,
     satHigh:   1.06,
-    shadowMix: 0.44, highMix: 0.28, tintStrength: 1.0,
+    shadowMix: 0.30, highMix: 0.22, tintStrength: 0.78,
     hueLobes: [
       [0.72, 0.12, 0.040],      // violets -> rose (rim)
       [0.30, 0.12, -0.030],     // greens  -> verdant/olive
       [0.11, 0.09, -0.014],
     ],
-    vignette: { amount: 0.48, radius: 0.68, softness: 0.88, depth: 0.24, floor: 0.40, color: H('#241a3a') },
+    vignette: { amount: 0.18, radius: 0.84, softness: 0.95, depth: 0.06, floor: 0.16, color: H('#302943') },
     grain:    { amount: 0.0060, size: 1.0, darkBoost: 1.5 },
     chroma:   1.1,
-    bloom:    { threshold: 1.05, knee: 0.45, intensity: 0.62, tint: H('#ffe6a3'), radius: 0.58, clamp: 3.2 },
-    ao:       { intensity: 0.88, radius: 1.85, power: 1.9, bias: 0.04, ink: H('#3d3560') },
-    godrays:  { intensity: 0.28, color: H('#ffe6a3'), decay: 0.958, density: 0.76, weight: 0.52 },
-    fog:      { color: H('#3c3a56'), far: H('#191a2e'), density: 0.020, height: 0.13, haze: H('#3a3654'), hazeStart: 38, hazeEnd: 145, hazeDesat: 0.60, hazeR0: 1.12, hazeR1: 2.3, hazeRadial: 1.0 },
+    bloom:    { threshold: 1.35, knee: 0.45, intensity: 0.40, tint: H('#fff0bc'), radius: 0.42, clamp: 2.2 },
+    ao:       { intensity: 0.60, radius: 1.40, power: 1.60, bias: 0.05, ink: H('#514a70') },
+    godrays:  { intensity: 0.14, color: H('#fff0bc'), decay: 0.958, density: 0.62, weight: 0.42 },
+    fog:      { color: H('#514f69'), far: H('#292d45'), density: 0.010, height: 0.13, haze: H('#4a4865'), hazeStart: 46, hazeEnd: 155, hazeDesat: 0.38, hazeR0: 1.20, hazeR1: 2.5, hazeRadial: 0.75 },
     dof:      { range: 56.0, nearRange: 17.0, maxBlur: 0.34, nearMax: 0.13, tilt: 0.08, tiltCenter: 0.60, focusRange: 15.0 },
   },
 };
