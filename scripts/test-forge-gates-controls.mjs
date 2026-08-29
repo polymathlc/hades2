@@ -5,6 +5,8 @@ import { WeaponRuntime } from '../src/entities/weapons.js';
 import { planDoorChoices } from '../src/world/doors.js';
 import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
+import { BIOMES } from '../src/world/biomes.js';
+import { Kit } from '../src/world/kit.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -13,6 +15,20 @@ class Bus {
 }
 const noop = () => {};
 const rng = { f: () => 0.314159, pick: a => a[0] };
+
+// Each biome owns exactly one distinct divine landmark. The chained shade and
+// repeated perimeter statues must never return through biome configuration.
+const landmarks = { tartarus: 'hades', asphodel: 'poseidon', elysium: 'zeus' };
+const statueKit = Object.create(Kit.prototype);
+for (const [biome, god] of Object.entries(landmarks)) {
+  assert.deepEqual(BIOMES[biome].props.statues, []);
+  assert.equal(BIOMES[biome].props.focalStatue, god);
+  const body = statueKit[`_${god}Geo`]();
+  const trim = statueKit[`_${god}TrimGeo`]();
+  assert.ok(body.attributes.position.count > 500, `${god} statue body is missing`);
+  assert.ok(trim.attributes.position.count > 100, `${god} divine attribute is missing`);
+  body.dispose(); trim.dispose();
+}
 
 // Every gate has a stable, distinct deity and keeps a build-defining boon exit.
 const planA = planDoorChoices(3, () => 0.314159);

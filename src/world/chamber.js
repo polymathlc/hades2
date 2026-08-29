@@ -2085,8 +2085,11 @@ export class World {
     // metal (marble.elysium: metal = gMask * 0.8). §9.5 wants the highlight on
     // ornament, and this statue HAS ornament: `statue.trim` is a separate mesh
     // on gold.leaf and it keeps its lobe. The stone body does not need one.
-    const statueMat = { mat: 'marble.elysium', matOpts: { tint: '#6a5f73', litGain: 0.22, ambGain: 0.34,
-      specGain: 0.80, envMapIntensity: 0.20, variation: 0.14, variationTint: '#5a2331', triScale: 0.42 } };
+    const deity = B.props.focalStatue;
+    const statueTint = ({ hades: '#5d5268', poseidon: '#675d67', zeus: '#746c7d' })[deity] || '#6a5f73';
+    const statueVein = ({ hades: '#482138', poseidon: '#285365', zeus: '#6a522c' })[deity] || '#5a2331';
+    const statueMat = { mat: 'marble.elysium', matOpts: { tint: statueTint, litGain: 0.22, ambGain: 0.34,
+      specGain: 0.80, envMapIntensity: 0.20, variation: 0.14, variationTint: statueVein, triScale: 0.42 } };
 
     // Statues stand on the wall arc between the doors, facing the arena.
     const kinds = B.props.statues;
@@ -2117,7 +2120,7 @@ export class World {
 
     // The focal statue: bigger, standing in the WIDEST bay of the back wall.
     const fa = G.focalAngle;
-    if (A.focal === 'throne' && this.dais) {
+    if (A.focal === 'throne' && this.dais && !deity) {
       const d = this.dais;
       const th = kit.geo('throne', () => {
         const p = new Parts();
@@ -2138,7 +2141,7 @@ export class World {
       this.colliders.push({ kind: 'circle', x: d.x, z: d.z, r: 1.8 });
     } else {
       const rr = this.radiusAt(fa) - 5.6;
-      const st = kit.statue(B.props.focalStatue, { scale: 1.42, plinth: true, plinthH: 1.05, plinthW: 3.0, ...statueMat });
+      const st = kit.statue(deity, { scale: 1.34, plinth: true, plinthH: 1.05, plinthW: 3.0, ...statueMat });
       qq.setFromEuler(new THREE.Euler(0, faceIn(fa), 0));
       const x = Math.cos(fa) * rr, z = Math.sin(fa) * rr;
       m.compose(new THREE.Vector3(x, 0, z), qq, one);
