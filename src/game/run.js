@@ -34,6 +34,8 @@
 // critic loop reproducible.
 // ---------------------------------------------------------------------------
 
+import { GOD_KEYS } from './boons.js';
+
 // The descent. Three biomes, four chambers each, a boss on the last of each —
 // spawner.js already treats depth % 5 === 0 as a boss room, so the biome
 // lengths line up with its own cadence.
@@ -191,19 +193,19 @@ export class RunState {
 
   _onDoor(d) {
     if (this.state !== 'cleared' || this._pending) return;
-    if (d?.kind === 'boon') {
-      this.state = 'choosing';
-      this._claimBoon(d).catch(() => this._queueTransition(d));
-      return;
-    }
-    this._applyReward(d?.kind);
-    this._queueTransition(d);
+    // Crossing any gate earns an audience with one deity. The sigil reward
+    // still resolves (health, obols or a weapon), then the run pauses before
+    // rebuilding the next chamber until one of that god's three boons is chosen.
+    if (d?.kind !== 'boon') this._applyReward(d?.kind);
+    this.state = 'choosing';
+    this._claimBoon(d).catch(() => this._queueTransition(d));
   }
 
   async _claimBoon(d) {
     const state = this.ctx.boons;
     const rng = this._rng?.fork ? this._rng.fork(`boon:${this.depth}:${d?.index || 0}`) : this._rng;
-    const offers = state?.roll?.(rng, { count: 3, upgradeChance: 0.58 }) || [];
+    const god = rng?.pick ? rng.pick(GOD_KEYS) : GOD_KEYS[(this.depth + (d?.index || 0)) % GOD_KEYS.length];
+    const offers = state?.roll?.(rng, { count: 3, god, upgradeChance: 0.58 }) || [];
     const choice = this.ctx.ui?.showBoonChoice?.(offers, { upgradeChance: 0.58 });
     if (choice && typeof choice.then === 'function') await choice;
     else if (offers[0]) state?.grant?.(offers[0]);

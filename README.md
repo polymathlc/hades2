@@ -44,8 +44,8 @@ npm run build && npm run preview
 | Input | Action |
 |---|---|
 | **W A S D** / arrows | Move (camera-relative, 8-direction) |
-| **Left mouse** | Attack — combos, with input buffering and cancel windows |
-| **Right mouse** / **E** | Special (weapon-dependent: spin, throw, power shot, bash) |
+| **Left mouse** | Attack toward cursor — melee combos or the bow’s charged shot |
+| **Right mouse** / **E** | Cursor-aimed special (weapon-dependent: sweep, spear throw, kick, guard) |
 | **Q** | Cast |
 | **Space** / **Shift** | Dash — i-frames during the active window, cancels attack recovery |
 | **1 2 3 4** | Equip blade / spear / bow / shield |
@@ -79,7 +79,7 @@ authored as data in `src/entities/weapons.js`.
 - Six enemy families designed to pass a black-shape silhouette test, plus a three-phase boss
 - Attack-token AI so only N enemies commit at once — the mechanism that keeps fights readable
 - Drawn-shape VFX atlas, ribbon trails, pooled instanced particles
-- Ornate HUD and god-coloured boon cards with rarity upgrades and god-specific combat VFX
+- Ornate HUD and god-coloured boon cards with generated deity portraits, rarity upgrades, and god-specific combat VFX
 - Synthesised adaptive score: Karplus-Strong plucked strings, procedural impulse responses per
   biome, stems that layer with combat intensity
 

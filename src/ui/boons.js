@@ -14,6 +14,40 @@ import {
   displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
 } from './ornament.js';
 import { GOD_INFO, SLOTS, RARITY_LABEL, BoonState } from '../game/boons.js';
+import godPortraitsUrl from '../assets/ui/generated/god-portraits-v1.jpg';
+
+const PORTRAIT_GRID = { cols: 5, rows: 2 };
+const PORTRAIT_CELL = {
+  zeus: [0, 0], poseidon: [1, 0], athena: [2, 0], aphrodite: [3, 0], ares: [4, 0],
+  artemis: [0, 1], dionysus: [1, 1], hermes: [2, 1], hecate: [3, 1], selene: [4, 1],
+};
+const godPortraits = typeof Image !== 'undefined' ? new Image() : null;
+if (godPortraits) godPortraits.src = godPortraitsUrl;
+
+function drawGodPortrait(g, cx, cy, r, god) {
+  const cell = PORTRAIT_CELL[god];
+  if (!cell || !godPortraits?.complete || !godPortraits.naturalWidth) return false;
+  const sw = godPortraits.naturalWidth / PORTRAIT_GRID.cols;
+  const sh = godPortraits.naturalHeight / PORTRAIT_GRID.rows;
+  const inset = 1.5;
+  // The generated cells are vertical busts. A square crop from the upper cell
+  // keeps the face, crown/helmet and shoulder silhouette inside the medallion.
+  const sx = cell[0] * sw + inset;
+  const sy = cell[1] * sh + inset;
+  const ss = sw - inset * 2;
+  g.save();
+  g.beginPath(); g.arc(cx, cy, r, 0, 6.2832); g.clip();
+  g.filter = 'saturate(0.92) contrast(1.06)';
+  g.drawImage(godPortraits, sx, sy, ss, ss, cx - r, cy - r, r * 2, r * 2);
+  g.filter = 'none';
+  const veil = g.createLinearGradient(cx, cy - r, cx, cy + r);
+  veil.addColorStop(0, 'rgba(8,4,14,0.02)');
+  veil.addColorStop(0.64, 'rgba(8,4,14,0.04)');
+  veil.addColorStop(1, 'rgba(8,4,14,0.48)');
+  g.fillStyle = veil; g.fillRect(cx - r, cy - r, r * 2, r * 2);
+  g.restore();
+  return true;
+}
 
 // ═══════════════════════════════════════════════════════ GOD EMBLEMS ══════
 // Each emblem is authored in a unit circle and scaled by r. Every one draws
@@ -407,14 +441,25 @@ export class BoonOverlay {
 
     const cx = x + w / 2;
     // ── medallion ──
-    const mr = 46 * S, my = y + 102 * S;
+    const mr = 49 * S, my = y + 102 * S;
     g.save();
     g.beginPath(); g.arc(cx, my, mr, 0, 6.2832);
     const mg = g.createRadialGradient(cx - mr * 0.3, my - mr * 0.4, mr * 0.05, cx, my, mr);
     mg.addColorStop(0, mix('#2e1a4a', col, 0.30)); mg.addColorStop(0.7, '#180f28'); mg.addColorStop(1, '#0b0715');
     g.fillStyle = mg; g.fill();
     g.restore();
-    godEmblem(g, cx, my, mr * 0.64, o.god, { color: col, glowA: st.hovered ? 0.72 : 0.60, glowR: 2.4 });
+    const hasPortrait = drawGodPortrait(g, cx, my, mr * 0.94, o.god);
+    if (!hasPortrait) {
+      godEmblem(g, cx, my, mr * 0.64, o.god, { color: col, glowA: st.hovered ? 0.72 : 0.60, glowR: 2.4 });
+    } else {
+      // Preserve the fast-read emblem as a small seal without covering the
+      // generated portrait that gives the divine audience its identity.
+      const er = 15 * S, ex = cx + mr * 0.70, ey = my + mr * 0.66;
+      g.save(); g.beginPath(); g.arc(ex, ey, er, 0, 6.2832);
+      g.fillStyle = '#0b0715'; g.fill();
+      g.strokeStyle = rgba(PAL.goldHi, 0.88); g.lineWidth = 1.5 * S; g.stroke(); g.restore();
+      godEmblem(g, ex, ey, er * 0.58, o.god, { color: col, glowA: 0.48, glowR: 1.5 });
+    }
     rarityRing(g, cx, my, mr, o.rarity, { w: 4.6 * S, phase: t * 0.5 + (st.index || 0) });
 
     // duo badge

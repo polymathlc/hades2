@@ -390,11 +390,10 @@ export class UI {
   setupCaptureBoons(ctx) {
     this.setupCaptureHUD(ctx, { quiet: true });
     const bs = this.boonState;
-    // Hand-picked rather than rolled: a legal random roll can produce three
-    // Commons from one god, which would under-sell the whole card system in
-    // the only frame anyone ever sees of it. Three gods, three slots, three
-    // rarities — including a Heroic so the prismatic ring is on screen.
-    const want = [['zeus.attack', 'epic'], ['aphrodite.special', 'rare'], ['hecate.cast', 'heroic']];
+    // Hand-picked from one deity to mirror the live post-gate audience. Three
+    // slots and three rarities keep the upgrade language readable while the
+    // repeated portrait makes it unmistakable that Zeus owns this offer.
+    const want = [['zeus.attack', 'epic'], ['zeus.special', 'rare'], ['zeus.cast', 'heroic']];
     const opts = [];
     for (const [id, rarity] of want) {
       const b = BOONS.find(x => x.id === id);

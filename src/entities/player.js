@@ -342,15 +342,15 @@ export class Player {
     const W = this.weapon = ctx.combat?.runtimeFor
       ? ctx.combat.runtimeFor(this, ctx.combat.weaponId) : null;
     if (W && this.alive && this.state !== 'dead' && this.state !== 'hurt') {
-      if (inp.pressed('attack')) W.press('attack');
-      if (inp.pressed('special')) W.press('special');
+      if (inp.pressed('attack')) { this._faceCursor(); W.press('attack'); }
+      if (inp.pressed('special')) { this._faceCursor(); W.press('special'); }
       // WeaponRuntime.release() does not look at WHICH button was let go — it
       // just ends whatever hold is live. Forwarding both edges would therefore
       // let the ATTACK button drop a raised shield. Only the button that can
       // start a hold on this arm is allowed to end one, which is a property of
       // the weapon table (block.action / charge.action), not of this file.
       const hold = W.weapon.block ? 'special' : (W.weapon.charge && W.weapon.charge.action);
-      if (hold && inp.released(hold)) W.release(hold);
+      if (hold && inp.released(hold)) { this._faceCursor(); W.release(hold); }
     }
     if (inp.pressed('swap')) { ctx.combat?.cycleWeapon?.(); this._animKey = null; }
     // A committed step can run longer than a normal buffer, and eating the
@@ -547,14 +547,24 @@ export class Player {
 
   /** damp the facing toward the move stick, or the aim if there is no stick. */
   _steer(dt, ctx, lambda) {
-    const w = this._wish(ctx, _v);
     let a;
-    if (w > 0.2) a = Math.atan2(_v.x, _v.z);
-    else if (this._mouseSeen) a = Math.atan2(this.aimDir.x, this.aimDir.y);
-    else return;
+    // Weapon commitment is cursor-authoritative. Movement may keep carrying
+    // the hero sideways, but it must never rotate a drawn bow, held spear or
+    // melee wind-up away from the reticle.
+    if (this._mouseSeen) a = Math.atan2(this.aimDir.x, this.aimDir.y);
+    else {
+      const w = this._wish(ctx, _v);
+      if (w <= 0.2) return;
+      a = Math.atan2(_v.x, _v.z);
+    }
     const cur = Math.atan2(this.facing.x, this.facing.y);
     const na = dampAngle(cur, a, lambda, dt);
     this.facing.set(Math.sin(na), Math.cos(na));
+  }
+
+  /** Snap the damage direction to the current world-space cursor ray. */
+  _faceCursor() {
+    if (this._mouseSeen && this.aimDir.lengthSq() > 0.01) this.facing.copy(this.aimDir).normalize();
   }
 
   /**
@@ -619,9 +629,11 @@ export class Player {
     this.act = { name: 'cast', t: 0, dur: T.castDur / castSpeed, release: T.castRelease / castSpeed, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
     this._animKey = null;
     this.animator.play('cast', { fade: 0.06, restart: true });
-    const w = this._wish(ctx, _v);
-    if (w > 0.15) this.facing.set(_v.x, _v.z).normalize();
-    else if (this._mouseSeen) this.facing.copy(this.aimDir);
+    if (this._mouseSeen) this._faceCursor();
+    else {
+      const w = this._wish(ctx, _v);
+      if (w > 0.15) this.facing.set(_v.x, _v.z).normalize();
+    }
     this.combatHeat = Math.min(1.5, this.combatHeat + 0.5);
     ctx.events.emit('camera.shake', { amp: 0.035, dur: 0.12, freq: 30 });
   }
