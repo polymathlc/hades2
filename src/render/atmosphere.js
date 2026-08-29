@@ -210,13 +210,13 @@ const AIR = {
     ],
   },
   asphodel: {
-    zenith: '#04030e', horizon: '#0f0503', nadir: '#030208',
-    glow: '#301205', glowY: -0.20, glowSharp: 2.8, cloud: 0.74,
-    ember: '#ffc064', emberAmt: 0.6,
+    zenith: '#17182e', horizon: '#33232a', nadir: '#131421',
+    glow: '#4a241e', glowY: -0.22, glowSharp: 3.2, cloud: 0.52,
+    ember: '#d07a45', emberAmt: 0.26,
     motes: [
-      { tint: '#ff9426', count: 0.22, size: 0.30, rise: 0.90, span: 16, intensity: 1.9 },
-      { tint: '#fff0b0', count: 0.18, size: 0.11, rise: 0.58, span: 21, intensity: 0.75 },
-      { tint: '#3fc0b8', count: 0.60, size: 0.32, rise: 0.13, span: 13, intensity: 0.07, shape: 1.0 },
+      { tint: '#c86b3d', count: 0.14, size: 0.24, rise: 0.62, span: 16, intensity: 0.62 },
+      { tint: '#e8c59d', count: 0.10, size: 0.09, rise: 0.42, span: 21, intensity: 0.30 },
+      { tint: '#6e8791', count: 0.42, size: 0.26, rise: 0.10, span: 13, intensity: 0.045, shape: 1.0 },
     ],
   },
   elysium: {

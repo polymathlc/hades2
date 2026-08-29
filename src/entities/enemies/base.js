@@ -123,6 +123,17 @@ const FAMILY_LOOK = {
   bloat: { rim: '#8ef06a', mul: 1.16 },   // -> green, the detonator
   warden: { rim: '#3aa8ff', mul: 1.12 },  // -> ICE. the boss opposes its own room
 };
+const ASPHODEL_FAMILY_LOOK = {
+  shade:  { rim: '#7fe6df', mul: 1.18 },
+  brute:  { rim: '#9dbdff', mul: 1.18 },
+  hexer:  { rim: '#b9a4ff', mul: 1.18 },
+  herald: { rim: '#8fdcff', mul: 1.18 },
+  hound:  { rim: '#7fd2ff', mul: 1.20 },
+  bloat:  { rim: '#b7f0df', mul: 1.18 },
+  warden: { rim: '#d6f4ff', mul: 1.18 },
+};
+let _familyBiome = 'tartarus';
+const familyLook = (kind) => (_familyBiome === 'asphodel' ? ASPHODEL_FAMILY_LOOK : FAMILY_LOOK)[kind];
 const FAMILY_KINDS = Object.keys(FAMILY_LOOK);
 
 /** 'wardenblade' -> 'warden', 'hexerwood' -> 'hexer'. */
@@ -144,7 +155,7 @@ const _familyMats = [];
  * after a biome change can never compound.
  */
 export function familyRim(mat, kind, slot) {
-  const F = FAMILY_LOOK[kind];
+  const F = familyLook(kind);
   const U = mat && paintParams(mat);
   if (!F || !U) return mat;
   let tgt = mat.userData.familyRim;
@@ -169,10 +180,15 @@ export function familyRim(mat, kind, slot) {
 }
 
 /** Re-stamp every family rim (after a biome swap has trampled them). */
-export function refreshFamilyRims() {
+export function refreshFamilyRims(biome = _familyBiome) {
+  _familyBiome = biome || _familyBiome;
   for (let i = 0; i < _familyMats.length; i++) {
     const m = _familyMats[i], t = m.userData.familyRim;
-    if (t) setPaint(m, { rimColor: t.rimColor, rimStrength: t.rimStrength, contourStrength: t.contourStrength });
+    if (!t) continue;
+    const F = familyLook(t.kind);
+    t.rimColor = F?.rim || t.rimColor;
+    setPaint(m, { rimColor: t.rimColor, rimStrength: t.rimStrength, contourStrength: t.contourStrength });
+    m.userData.paintOverrides = { ...(m.userData.paintOverrides || {}), rimColor: t.rimColor };
   }
 }
 
@@ -498,8 +514,9 @@ export class Enemy {
   /** Integrate the steering result with acceleration, collision and facing. */
   move(dt, ctx, out, o = {}) {
     const accel = o.accel ?? this.def.accel ?? 26;
-    const vx = damp(this.velocity.x, out.x, accel * 0.34, dt);
-    const vz = damp(this.velocity.z, out.z, accel * 0.34, dt);
+    const slow = ctx.combat?.slowOf?.(this) ?? 1;
+    const vx = damp(this.velocity.x, out.x * slow, accel * 0.34, dt);
+    const vz = damp(this.velocity.z, out.z * slow, accel * 0.34, dt);
     this.velocity.x = vx; this.velocity.z = vz;
     this.position.x += (vx + this._knock.x) * dt;
     this.position.z += (vz + this._knock.z) * dt;

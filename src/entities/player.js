@@ -327,6 +327,7 @@ export class Player {
 
     // ── timers & input buffers ────────────────────────────────────────────
     this.iframes = Math.max(0, this.iframes - dt);
+    this._boonSlamT = Math.max(0, (this._boonSlamT || 0) - dt);
     this._animLock = Math.max(0, (this._animLock || 0) - dt);
     if (this._retuneIn > 0) { this._retuneIn -= dt; if (this._retuneIn <= 0) this.rig.retune?.(); }
     this.dash.cd = Math.max(0, this.dash.cd - dt);
@@ -460,7 +461,10 @@ export class Player {
     this.act = { name: 'dash', t: 0, dur: T.dashTime, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
     this.animator.play('dash', { fade: 0.04, restart: true });
     this.velocity.multiplyScalar(0.25);
-    this.iframes = Math.max(this.iframes, T.dashIFrames[1] + (mods?.iframeAdd || 0) + Math.min(0.25, (mods?.deflect || 0) * 0.25));
+    this.iframes = Math.max(this.iframes, T.dashIFrames[1] + (mods?.iframeAdd || 0));
+    if (rider?.deflect) ctx.combat?.activateDeflect?.(this, rider.deflect, boonColor);
+    const attackRider = mods?.rider?.attack;
+    if (attackRider?.postDashBonus) this._boonPostDash = true;
     this.squash = -0.085;
     this._ghostQueue = [0.0, 0.055, 0.11];
     ctx.events.emit('player.dashed', { pos: this.position.clone(), dir: new THREE.Vector3(this.dash.dir.x, 0, this.dash.dir.y) });
@@ -470,17 +474,30 @@ export class Player {
       count: rider ? 14 + (rider.tier || 1) * 4 : 14, color: boonColor, speed: rider ? 9 : 6.5, spread: 0.8,
       kind: ({ zeus: 'sparkFine', poseidon: 'wisp', athena: 'shard', aphrodite: 'mote', ares: 'rune', artemis: 'chev', dionysus: 'wisp', hermes: 'chev', hecate: 'rune', selene: 'star' })[rider?.god] || 'wisp',
     });
-    if (rider) {
-      const radius = 1.45 + (mods?.dashRadius || 0);
-      ctx.hitboxes?.spawn?.({
-        shape: 'circle', owner: this, source: this, follow: false,
-        x: this.position.x, z: this.position.z, radius,
-        t0: 0, t1: 0.10, life: 0.12, maxTargets: 8,
-        damage: rider.bonus || 0, type: rider.type || 'arcane',
-        knockback: 4 + (mods?.knockback || 0), status: rider.status, statusStacks: rider.stacks || 1,
-        color: boonColor, tag: `boon:dash:${rider.god || 'divine'}`,
+    this._dashBoon = rider ? { rider, mods, color: boonColor } : null;
+    if (rider && rider.god !== 'poseidon') this._dashBoonBlast(ctx, rider, mods, boonColor);
+  }
+  _dashBoonBlast(ctx, rider, mods, boonColor) {
+    const radius = 1.45 + (mods?.dashRadius || 0);
+    ctx.hitboxes?.spawn?.({
+      shape: 'circle', owner: this, source: this, follow: false,
+      x: this.position.x, z: this.position.z, radius,
+      t0: 0, t1: 0.10, life: 0.12, maxTargets: 8,
+      damage: rider.bonus || 0, type: rider.type || 'arcane',
+      knockback: 4 + (rider.knockback || 0) + (mods?.knockback || 0),
+      status: rider.status, statusStacks: rider.stacks || 1, statusPower: rider.statusPower || 0,
+      crit: rider.critChance || 0, expose: rider.expose || 0, critMark: rider.critMark || 0,
+      boonGod: rider.god, boonSlot: 'dash', color: boonColor,
+      tag: `boon:dash:${rider.god || 'divine'}`,
+    });
+    ctx.vfx?.shockwave?.(this.position.clone().setY(0.06), { radius, color: boonColor, life: 0.36 });
+    if (['ares', 'dionysus'].includes(rider.god) && ctx.combat?._boonPulses) {
+      ctx.combat._boonPulses.push({
+        kind: rider.god === 'ares' ? 'cuts' : 'fog', t: 0.20, interval: 0.30, left: 3,
+        source: this, x: this.position.x, z: this.position.z, radius,
+        damage: (rider.bonus || 0) * 0.30, type: rider.type || 'arcane', color: boonColor,
+        status: rider.status, statusStacks: rider.stacks || 1, statusPower: rider.statusPower || 0,
       });
-      ctx.vfx?.shockwave?.(this.position.clone().setY(0.06), { radius, color: boonColor, life: 0.36 });
     }
   }
   _dashStep(dt, ctx) {
@@ -502,6 +519,10 @@ export class Player {
       g.life = T.dashGhostLife; g.group.visible = true;
     }
     if (this.dash.t >= T.dashTime) {
+      if (this._dashBoon?.rider?.god === 'poseidon') {
+        this._dashBoonBlast(ctx, this._dashBoon.rider, this._dashBoon.mods, this._dashBoon.color);
+      }
+      this._dashBoon = null;
       this.state = 'move';
       this._animLock = 0.14;
       this.squash = 0.13;
@@ -663,7 +684,8 @@ export class Player {
     if (this.state !== 'dash') {
       const w = this._wish(ctx, _v);
       const has = w > 0.15 && wishScale > 0.001 && this.alive;
-      const boonMove = ctx.boons?.mods?.moveMul || 1;
+      const mods = ctx.boons?.mods;
+      const boonMove = (mods?.moveMul || 1) * (this._boonSlamT > 0 ? 1 + (mods?.slamSpeed || 0) : 1);
       const moveSpeed = this.speed * boonMove;
       const tx = has ? _v.x * moveSpeed * wishScale : 0;
       const tz = has ? _v.z * moveSpeed * wishScale : 0;

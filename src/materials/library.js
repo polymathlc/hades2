@@ -63,7 +63,8 @@ const BIOME_SETS = {
   tartarus: ['floor.tartarus', 'stone.tartarus', 'stone.tartarus.bay',
     'stone.tartarus.column', 'stone.tartarus.arch', 'rubble.tartarus',
     'stone.tartarus.rim', 'bone.tartarus', 'bronze.tartarus', 'iron.tartarus', 'ceramic.tartarus', 'wood.tartarus'],
-  asphodel: ['floor.asphodel', 'stone.asphodel'],
+  asphodel: ['floor.asphodel', 'stone.asphodel', 'obsidian.asphodel',
+    'lava.asphodel', 'rubble.asphodel', 'bone.asphodel', 'bronze.asphodel', 'iron.asphodel'],
   elysium: ['floor.elysium', 'marble.elysium'],
 };
 

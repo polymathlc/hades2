@@ -81,7 +81,7 @@ export class EnemyManager {
     // MaterialLibrary.setBiome() republishes the palette rim over every
     // painterly material without consulting userData.paintOverrides, so the
     // per-family rims are trampled on the first chamber change. Re-stamp.
-    ctx.events.on('biome.changed', () => refreshFamilyRims());
+    ctx.events.on('biome.changed', ({ name } = {}) => refreshFamilyRims(name || ctx.run?.biome));
     return this;
   }
 

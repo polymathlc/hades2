@@ -3,7 +3,7 @@
 An isometric 3/4 rogue-lite action game in Three.js, in the Hades genre: chamber-to-chamber runs,
 god boons, four distinct weapons, a painterly Greek-underworld art direction.
 
-The game uses a **hybrid painterly material pipeline**: seven image-generated albedo atlases provide
+The game uses a **hybrid painterly material pipeline**: eight image-generated albedo atlases provide
 authored colour and brushwork for every named surface, while code generates the matching normals,
 roughness, metalness, ambient occlusion, emissive masks, anti-tiling projection, meshes, animation,
 and sound at runtime. No downloaded stock textures, models, audio, or fonts. ~40k lines.

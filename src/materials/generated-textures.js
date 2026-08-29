@@ -1,4 +1,4 @@
-// Seven image-generated atlases supply the authored colour and brushwork for every
+// Eight image-generated atlases supply the authored colour and brushwork for every
 // named material recipe. The procedural baker still owns height-derived normals,
 // roughness, metalness, AO, emissive masks, and the stochastic anti-tiling pass.
 // Keeping those jobs separate gives the game hand-painted source art without
@@ -12,6 +12,7 @@ import charactersUrl from '../assets/textures/generated/characters-atlas.jpg';
 import tartarusV2Url from '../assets/textures/generated/tartarus-materials-v2-atlas.jpg';
 import creaturesPropsV3Url from '../assets/textures/generated/creatures-props-v3-atlas.jpg';
 import arenaBoonsV4Url from '../assets/textures/generated/arena-boons-v4-atlas.jpg';
+import asphodelVisibilityV5Url from '../assets/textures/generated/asphodel-visibility-v5-atlas.jpg';
 
 const GRID_COLS = 3;
 const GRID_ROWS = 2;
@@ -113,6 +114,19 @@ const ATLASES = [
       { col: 0, row: 1, name: 'divine-door-gold-v4', keys: ['gold.divine'], composite: { detail: 0.30, chroma: 0.08, sourceMix: 0.18 } },
       { col: 1, row: 1, name: 'expanded-asphodel-floor-v4', keys: ['floor.asphodel'], composite: { detail: 0.32, chroma: 0.07, sourceMix: 0.17 } },
       { col: 2, row: 1, name: 'expanded-elysium-floor-v4', keys: ['floor.elysium'], composite: { detail: 0.30, chroma: 0.07, sourceMix: 0.17 } },
+    ],
+  },
+  {
+    // Visibility-first Asphodel pass. These are biome-specific recipe keys so
+    // the pale ash, cooled lava and lifted metal cannot leak into Tartarus.
+    name: 'asphodel-visibility-v5', url: asphodelVisibilityV5Url,
+    tiles: [
+      { col: 0, row: 0, name: 'readable-basalt-floor-v5', keys: ['floor.asphodel'], composite: { detail: 0.38, chroma: 0.055, sourceMix: 0.30 } },
+      { col: 1, row: 0, name: 'slate-plum-wall-v5', keys: ['stone.asphodel'], composite: { detail: 0.36, chroma: 0.055, sourceMix: 0.27 } },
+      { col: 2, row: 0, name: 'cooled-obsidian-v5', keys: ['obsidian.asphodel'], composite: { detail: 0.36, chroma: 0.045, sourceMix: 0.25 } },
+      { col: 0, row: 1, name: 'controlled-lava-v5', keys: ['lava.asphodel'], composite: { detail: 0.28, chroma: 0.055, sourceMix: 0.32 } },
+      { col: 1, row: 1, name: 'pale-ash-rubble-v5', keys: ['rubble.asphodel', 'bone.asphodel'], composite: { detail: 0.34, chroma: 0.035, sourceMix: 0.29 } },
+      { col: 2, row: 1, name: 'blackened-asphodel-metal-v5', keys: ['bronze.asphodel', 'iron.asphodel'], composite: { detail: 0.32, chroma: 0.045, sourceMix: 0.25 } },
     ],
   },
 ];

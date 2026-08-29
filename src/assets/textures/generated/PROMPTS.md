@@ -1,6 +1,6 @@
 # Generated texture atlas prompts
 
-These seven project-bound atlases were produced with the built-in OpenAI image-generation tool.
+These eight project-bound atlases were produced with the built-in OpenAI image-generation tool.
 Every prompt requested an exact 3-column by 2-row, 1536×1024 atlas. At runtime, the game slices
 the 512×512 cells, closes opposite seams, and maps them to the named material recipes.
 
@@ -129,4 +129,22 @@ Lighting/mood: neutral material-reference lighting only and even exposure; no ba
 Color palette: ink #08070d, charcoal plum #18121f, oxblood #4b202a, dark crimson #6d2935, restrained bronze #80663c, worn gold #c3a25b, Asphodel ember #8f2f1d, Elysium ivory #cfc5af, lavender #70657f, laurel #456c55.
 Constraints: flat material surfaces only; exact 3-by-2 grid; every cell square; seamless edges; no text, UI, borders, separator lines, watermark, logos, isolated objects, cast shadows, scene perspective, characters, gods, faces, doors, columns, lightning bolts, waves, or large focal symbols.
 Avoid: fluorescent orange or violet fields, near-white highlights, glossy plastic, generic noisy grunge, obvious repetition, baked directional lighting, photoreal rubble, large motifs.
+```
+
+## Asphodel visibility v5 atlas
+
+```text
+Create one production-ready seamless material texture atlas for a stylized isometric Greek-underworld action game, EXACTLY a 3-column by 2-row grid of six equal rectangular cells, 1536x1024 landscape. Every cell is a flat orthographic square material swatch, edge-to-edge, no perspective, no objects, no lighting direction, no cast shadows, no text, no borders, no gutters, no frames, no labels. Hand-painted dark-fantasy gouache brushwork with restrained detail at gameplay scale, strong material readability, and seamless/tileable opposite edges.
+
+The full palette is visibility-first Asphodel: mid-value charcoal blue-gray and muted slate-plum bases, warm ash-gray joints, sparse ember red and antique gold accents, restrained cool turquoise-gray mineral edges. Avoid near-black large fields and avoid saturated orange covering the surface. Maintain broad quiet midtone areas so white/gold player characters and enemy silhouettes read clearly.
+
+Exact cell order:
+Top-left: readable cooled basalt arena flagstones, broad irregular slabs in charcoal blue-gray, pale warm ash mortar, sparse hairline ember-red cracks, no glowing flood.
+Top-center: carved Asphodel basalt wall masonry, muted slate-plum stone blocks with broad midtone faces, soot-dark recesses, faint Greek meander chisel wear, subtle warm edges.
+Top-right: cooled obsidian architecture and rock, blue-black glassy mineral planes lifted into dark steel midtones, restrained desaturated cyan-gray edge fractures, mostly matte, no mirror reflections.
+Bottom-left: controlled lava surface, deep burgundy and ember-red crust fields with sparse thin molten antique-gold veins, mostly dark calm surface, no white-hot yellow, no bloom.
+Bottom-center: pale volcanic ash, pumice and bone-dust rubble ground, warm gray, taupe and desaturated lavender fragments, broad quiet field, subtle soot, readable against dark floors.
+Bottom-right: blackened Asphodel bronze and forged iron, dark warm-gray metal with hammered brush marks, muted copper wear, restrained cool edge highlights, no bright reflections.
+
+Consistent painterly scale across all cells. Cells must be visually distinct. No creatures, people, faces, skulls, weapons, architecture silhouettes, UI, logos, watermark, letters or numbers. No photorealism, no glossy 3D render, no neon, no purple/orange posterization, no black crush, no overexposure.
 ```

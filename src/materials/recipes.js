@@ -1524,7 +1524,7 @@ const RECIPES = {
     }
 
     const rough = TG.artisticRoughness(n, { base: 0.34, height: h, cavity: cav, edge, polish: 0.26, dry: 0.42, variation: 0.16, seed: seed + 9, min: 0.06, max: 0.92 });
-    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 1.05, normalScale: 1.25,
+    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 0.16, normalScale: 1.25,
       params: { envMapIntensity: 0.7 },
       paint: { triplanar: true, triScale: 0.24, macroTint: ASPHODEL.obsidianLight, variation: 0.12, variationTint: ASPHODEL.obsidianLight } };
   } },
@@ -1561,7 +1561,7 @@ const RECIPES = {
 
     const rough = TG.artisticRoughness(n, { base: 0.56, height: h, cavity: cav, edge, polish: 0.22, dry: 0.34, variation: 0.16, seed: seed + 8, min: 0.24, max: 0.96 });
     for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] + ashM[i] * 0.35);
-    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 0.72, normalScale: 1.05,
+    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 0.18, normalScale: 1.05,
       paint: { projection: 'planarY', triScale: 0.13, stochastic: 0.6, macroStrength: 0.45, macroTint: '#6a6688', detailStrength: 0.45, detailScale: 9 } };
   } },
 
@@ -1874,8 +1874,8 @@ const RECIPES = {
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.01), 5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6);
     const rough = TG.artisticRoughness(n, { base: 0.62, height: h, cavity: cav, edge, polish: 0.2, dry: 0.3, variation: 0.2, seed: seed + 5, min: 0.18, max: 0.95 });
-    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 8.0, normalScale: 0.9,
-      animate: { scroll: [0.010, 0.006], pulse: 0.22 },
+    return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 2.0, normalScale: 0.9,
+      animate: { scroll: [0.010, 0.006], pulse: 0.08 },
       paint: { triplanar: false, rimStrength: 0.12 } };
   } },
 
@@ -2063,6 +2063,15 @@ RECIPES['characterrig.hound.keratin'] = RECIPES['characterrig.hair'];
 RECIPES['stone.tartarus.rim'] = RECIPES['stone.tartarus'];
 RECIPES['shrine.divine'] = RECIPES['stone.tartarus'];
 RECIPES['gold.divine'] = RECIPES['gold.filigree'];
+
+// Asphodel-only aliases receive their own generated albedo tiles while keeping
+// the proven procedural normal/roughness/emissive support maps underneath.
+RECIPES['obsidian.asphodel'] = RECIPES.obsidian;
+RECIPES['lava.asphodel'] = RECIPES.lava;
+RECIPES['rubble.asphodel'] = RECIPES.bone;
+RECIPES['bone.asphodel'] = RECIPES.bone;
+RECIPES['bronze.asphodel'] = RECIPES['bronze.verdigris'];
+RECIPES['iron.asphodel'] = RECIPES['iron.dark'];
 
 // aliases the world/props might reasonably ask for
 const ALIASES = {

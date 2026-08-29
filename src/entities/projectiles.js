@@ -213,10 +213,12 @@ export class ProjectileSystem {
       speed: 18, gravity: 0, drag: 0,
       radius: 0.28, life: 3, t: 0,
       damage: 10, type: 'physical', knockback: 3, hitstop: 0, shake: 0,
-      poiseDamage: 5, status: null, statusStacks: 1,
+      poiseDamage: 5, status: null, statusStacks: 1, statusPower: 0,
       team: TEAM.ENEMY, mask: TEAM.PLAYER, source: null,
       pierce: 1, hits: 0, bounces: 0, solid: true, reflectable: true,
       blastRadius: 0, crit: 0, follow: false,
+      forks: 0, castTicks: 0, tickDamage: 0, castBeam: 0,
+      expose: 0, boonGod: null, boonSlot: null, boonProc: false,
       homing: 0, target: null,
       orbX: 0, orbZ: 0, orbR: 3, orbW: 2.2, orbA: 0,
       cr: 1, cg: 0.7, cb: 0.3, size: 1, coreSize: 1,
@@ -265,6 +267,7 @@ export class ProjectileSystem {
     p.poiseDamage = d.poiseDamage ?? p.damage * 0.4;
     p.status = d.status || null;
     p.statusStacks = d.statusStacks ?? 1;
+    p.statusPower = d.statusPower ?? 0;
 
     p.source = d.source || null;
     p.team = d.team ?? (p.source ? (this.combat ? this.combat.hitboxes.teamOf(p.source) : TEAM.ENEMY) : TEAM.ENEMY);
@@ -272,6 +275,8 @@ export class ProjectileSystem {
 
     p.pierce = d.pierce ?? 1; p.hits = 0;
     p.blastRadius = d.blastRadius ?? 0; p.crit = d.crit ?? 0;
+    p.forks = d.forks ?? 0; p.castTicks = d.castTicks ?? 0; p.tickDamage = d.tickDamage ?? 0; p.castBeam = d.castBeam ?? 0;
+    p.expose = d.expose ?? 0; p.boonGod = d.boonGod || null; p.boonSlot = d.boonSlot || null; p.boonProc = !!d.boonProc;
     p.bounces = d.bounces ?? (p.kind === 3 ? 3 : 0);
     p.solid = d.solid !== false;
     p.reflectable = d.reflectable !== false;

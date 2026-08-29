@@ -403,18 +403,22 @@ const RIGS = {
     ],
   },
   asphodel: {
-    key:    { color: '#ffc884', intensity: 8.8, dir: [0.586, -0.668, -0.459] },
-    hemi:   { sky: '#4e4a94', ground: '#5a1c06', intensity: 0.24 },
-    bounce: { color: '#e0600f', intensity: 0.30, size: [30, 30], y: 0.2 },
-    rim:    { color: '#33e0c0', dir: [-0.66, 0.32, 0.68], intensity: 2.4, power: 2.2, wrap: 0.34 },
-    ambient:{ color: '#231b46', intensity: 0.05 },
-    godrayAnchor: [0.26, -0.08],
-    env:    { zenith: '#0e0c26', horizon: '#3a1c0e', nadir: '#4a1605', keyGain: 16.0, keySharp: 220, keyWide: 0.06, rimGain: 1.9, rimSharp: 34, bounce: '#ff6a12', bounceGain: 0.07, intensity: 0.32 },
+    key:    { color: '#ffe0bc', intensity: 12.4, dir: [0.586, -0.668, -0.459] },
+    hemi:   { sky: '#7777aa', ground: '#55362e', intensity: 0.42 },
+    bounce: { color: '#ad664c', intensity: 0.20, size: [24, 24], y: 0.2 },
+    bounce2:{ color: '#555d7c', intensity: 0.12, size: [36, 36], y: 0.16 },
+    rim:    { color: '#7fe6df', dir: [-0.66, 0.32, 0.68], intensity: 3.1, power: 2.0, wrap: 0.40 },
+    ambient:{ color: '#565170', intensity: 0.16 },
+    subject:{ color: '#e7f5ff', intensity: 10.5, distance: 7.0, decay: 2.0, offset: [0.80, 2.05, 1.20] },
+    // Kept on-screen for API compatibility, but the Asphodel grade disables
+    // radial god rays entirely; the former below-frame anchor made sky beams.
+    godrayAnchor: [0.26, 0.82],
+    env:    { zenith: '#242640', horizon: '#46322d', nadir: '#302025', keyGain: 12.0, keySharp: 190, keyWide: 0.08, rimGain: 2.2, rimSharp: 30, bounce: '#b65d3c', bounceGain: 0.04, intensity: 0.44 },
     practicals: [
-      { pos: [ 12.0, 0.6,  -4.0], color: '#ff8c1a', intensity: 120, distance: 13, speed: 0.9 },
-      { pos: [-10.0, 0.6,   9.0], color: '#ff8c1a', intensity: 120, distance: 13, speed: 1.15 },
-      { pos: [  2.0, 0.5,  13.0], color: '#fff0b0', intensity: 80, distance: 11, speed: 1.4 },
-      { pos: [ -7.0, 0.5, -12.0], color: '#c22a06', intensity: 60, distance: 12, speed: 0.62 },
+      { pos: [ 12.0, 1.2,  -4.0], color: '#ff9d55', intensity: 72, distance: 12, speed: 0.9 },
+      { pos: [-10.0, 1.2,   9.0], color: '#ff9d55', intensity: 72, distance: 12, speed: 1.15 },
+      { pos: [  2.0, 1.2,  13.0], color: '#ffe0b0', intensity: 54, distance: 10, speed: 1.4 },
+      { pos: [ -7.0, 1.2, -12.0], color: '#70c9cc', intensity: 44, distance: 11, speed: 0.62 },
     ],
   },
   elysium: {

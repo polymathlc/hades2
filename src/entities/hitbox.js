@@ -92,7 +92,8 @@ export class HitboxSystem {
       pierce: 255, maxTargets: 255, hitCount: 0,
       // payload — copied verbatim into applyDamage()
       damage: 0, type: 'physical', knockback: 0, hitstop: 0, shake: 0,
-      poiseDamage: 0, statusKind: null, statusStacks: 0, critBonus: 0,
+      poiseDamage: 0, statusKind: null, statusStacks: 0, statusPower: 0, critBonus: 0,
+      expose: 0, critMark: 0, boonGod: null, boonSlot: null,
       tag: '', color: null, on: null, source: null,
       // memory
       hits: new Array(MAX_HIT_MEMORY).fill(null), nHits: 0,
@@ -180,7 +181,12 @@ export class HitboxSystem {
     h.poiseDamage = d.poiseDamage ?? (d.damage ?? 0) * 0.5;
     h.statusKind = d.status || null;
     h.statusStacks = d.statusStacks ?? 1;
+    h.statusPower = d.statusPower ?? 0;
     h.critBonus = d.crit ?? 0;
+    h.expose = d.expose ?? 0;
+    h.critMark = d.critMark ?? 0;
+    h.boonGod = d.boonGod || null;
+    h.boonSlot = d.boonSlot || null;
     h.tag = d.tag || '';
     h.color = d.color || null;
     h.on = d.on || null;
