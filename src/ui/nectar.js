@@ -155,7 +155,8 @@ export class NectarOverlay {
       godEmblem(g, listX + 24 * S, y + (rowH - 5 * S) / 2, 12.5 * S, god, { glowA: on ? 0.42 : 0.18, glowR: 1.65 });
       tracked(g, info.name.toUpperCase(), listX + 51 * S, y + 20 * S, { size: 13 * S, track: 0.18, weight: 700, align: 'left', color: on ? '#fff0c6' : rgba(PAL.parch, 0.76) });
       const br = this.meta.rank(god, 'boon'), pr = this.meta.rank(god, 'passive');
-      tracked(g, `BOON ${br}/${META_MAX_RANK}  ·  LEGACY ${pr}/${META_MAX_RANK}`, listX + 51 * S, y + 36 * S, { size: 8.4 * S, track: 0.16, weight: 600, align: 'left', color: rgba(info.color, 0.86), font: bodyFont() });
+      const favor = Math.round((this.meta.appearanceBonus?.(god) || 0) * 100);
+      tracked(g, `BOON ${br}/${META_MAX_RANK}  ·  LEGACY ${pr}/${META_MAX_RANK}  ·  FAVOR +${favor}%`, listX + 51 * S, y + 36 * S, { size: 7.7 * S, track: 0.13, weight: 600, align: 'left', color: rgba(info.color, 0.86), font: bodyFont() });
       this.hit.push({ x: listX, y, w: listW, h: rowH - 5 * S, god: i });
     }
 
@@ -164,6 +165,7 @@ export class NectarOverlay {
     godEmblem(g, dx + 52 * S, listY + 48 * S, 31 * S, god, { glowA: 0.50, glowR: 2.1 });
     tracked(g, info.name.toUpperCase(), dx + 105 * S, listY + 36 * S, { size: 24 * S, track: 0.22, weight: 700, align: 'left', color: '#fff0c6', shadow: '#050209', shadowDy: 2 * S });
     tracked(g, info.title.toUpperCase(), dx + 105 * S, listY + 59 * S, { size: 10 * S, track: 0.30, weight: 600, align: 'left', color: rgba(info.color, 0.9) });
+    tracked(g, `GATE FAVOR  +${Math.round((this.meta.appearanceBonus?.(god) || 0) * 100)}% APPEARANCE WEIGHT`, dx + 105 * S, listY + 82 * S, { size: 9 * S, track: 0.18, weight: 700, align: 'left', color: '#ffe9a8', font: bodyFont() });
 
     const cardY = listY + 104 * S, gap = 18 * S, cardW = (dw - gap) / 2, cardH = 286 * S;
     this._trackCard(g, { x: dx, y: cardY, w: cardW, h: cardH, god, track: 'boon', S, t });
@@ -187,9 +189,10 @@ export class NectarOverlay {
     const title = track === 'boon' ? 'BOON MASTERY' : GOD_LEGACIES[god].name.toUpperCase();
     tracked(g, title, x + w / 2, y + 42 * S, { size: 15 * S, track: 0.22, weight: 700, align: 'center', color: on ? '#ffe9a8' : rgba(PAL.parch, 0.82) });
     tracked(g, `${rank} / ${META_MAX_RANK}`, x + w / 2, y + 78 * S, { size: 29 * S, track: 0.10, weight: 700, align: 'center', color: info.color, shadow: '#050209', shadowDy: 2 * S });
+    const favorText = `Each rank also adds +20% weight to ${info.name}'s chance of appearing at a gate.`;
     const desc = track === 'boon'
-      ? `All numerical effects on ${info.name}'s boons gain +10% power per rank. Current power: +${rank * 10}%.`
-      : `${GOD_LEGACIES[god].text(rank)}. This passive is active at the start of every descent.`;
+      ? `All numerical effects on ${info.name}'s boons gain +10% power per rank. Current power: +${rank * 10}%. ${favorText}`
+      : `${GOD_LEGACIES[god].text(rank)}. This passive is active at the start of every descent. ${favorText}`;
     const lines = wrap(g, desc, w - 38 * S, { size: 12 * S, weight: 500, font: bodyFont() });
     g.font = `500 ${12 * S}px ${bodyFont()}`; g.fillStyle = rgba(PAL.parch, 0.78); g.textAlign = 'center';
     for (let i = 0; i < lines.length; i++) g.fillText(lines[i], x + w / 2, y + 118 * S + i * 18 * S);

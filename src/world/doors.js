@@ -33,8 +33,24 @@ export const REWARDS = {
 };
 export const REWARD_KINDS = Object.keys(REWARDS);
 
+function weightedGodOrder(random, weights) {
+  const pool = GOD_KEYS.slice(), order = [];
+  while (pool.length) {
+    let total = 0;
+    for (const god of pool) total += Math.max(0.001, Number(weights?.[god]) || 1);
+    let roll = Math.max(0, Math.min(0.999999999, Number(random()) || 0)) * total;
+    let index = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) {
+      roll -= Math.max(0.001, Number(weights?.[pool[i]]) || 1);
+      if (roll < 0) { index = i; break; }
+    }
+    order.push(pool.splice(index, 1)[0]);
+  }
+  return order;
+}
+
 /** Pure, deterministic gate contract used by world construction and tests. */
-export function planDoorChoices(count, random = () => 0.5) {
+export function planDoorChoices(count, random = () => 0.5, godWeights = null) {
   const n = Math.max(0, count | 0);
   const rest = ['gold', 'health'];
   for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); const t = rest[i]; rest[i] = rest[j]; rest[j] = t; }
@@ -43,8 +59,10 @@ export function planDoorChoices(count, random = () => 0.5) {
   const rewards = ['boon', ...rest];
   const bi = Math.floor(random() * Math.max(1, Math.min(n, rewards.length)));
   if (bi > 0) { const t = rewards[0]; rewards[0] = rewards[bi]; rewards[bi] = t; }
-  const gods = GOD_KEYS.slice();
-  for (let i = gods.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); const t = gods[i]; gods[i] = gods[j]; gods[j] = t; }
+  // Nectar investment raises a god's selection weight. Sampling is without
+  // replacement so a chamber still presents three different divine choices.
+  const gods = godWeights ? weightedGodOrder(random, godWeights) : GOD_KEYS.slice();
+  if (!godWeights) for (let i = gods.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); const t = gods[i]; gods[i] = gods[j]; gods[j] = t; }
   return Array.from({ length: n }, (_, i) => ({ kind: rewards[i % rewards.length], god: gods[i % gods.length] }));
 }
 
@@ -327,7 +345,7 @@ export class Doors {
     // the room to put the biome's COMPLEMENT at real scale. `weapon` is the
     // cool one (#7ee0ff), so a chamber is guaranteed to advertise it alongside
     // the boon rather than leaving the whole gate arc salmon-on-plum.
-    const plan = planDoorChoices(anchors.length, f);
+    const plan = planDoorChoices(anchors.length, f, ctx.meta?.appearanceWeights?.());
 
     const stone = kit.mat('shrine');
     // §9.5 relief pass: the jamb fret is the ornament closest to camera in the

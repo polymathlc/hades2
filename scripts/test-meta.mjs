@@ -35,6 +35,10 @@ assert.equal(result.ok, true);
 assert.equal(result.cost, 2);
 assert.equal(meta.rank('zeus', 'passive'), 1);
 assert.equal(meta.nectar, 2);
+assert.equal(meta.investment('zeus'), 2);
+assert.equal(meta.appearanceBonus('zeus'), 0.4, 'each invested level must add divine gate favor');
+assert.equal(meta.appearanceWeight('zeus'), 1.4);
+assert.equal(meta.appearanceWeights().poseidon, 1);
 
 const strike = BOONS.find(boon => boon.id === 'zeus.attack');
 const offer = ctx.boons.offer(strike, 'common');

@@ -6,6 +6,7 @@ import { GOD_KEYS } from './boons.js';
 
 export const META_SAVE_KEY = 'erebus.meta.v1';
 export const META_MAX_RANK = 5;
+export const GOD_FAVOR_PER_RANK = 0.20;
 
 export const GOD_LEGACIES = {
   zeus:      { name: 'Olympian Authority', text: r => `All damage +${r * 2}%`, apply: (m, r) => { m.dmgMul *= 1 + r * 0.02; } },
@@ -71,6 +72,12 @@ export class MetaProgression {
     return rank + (track === 'passive' ? 2 : 1);
   }
   boonMultiplier(god) { return 1 + this.rank(god, 'boon') * 0.10; }
+  investment(god) { return this.rank(god, 'boon') + this.rank(god, 'passive'); }
+  appearanceBonus(god) { return this.investment(god) * GOD_FAVOR_PER_RANK; }
+  appearanceWeight(god) { return 1 + this.appearanceBonus(god); }
+  appearanceWeights() {
+    return Object.fromEntries(GOD_KEYS.map(god => [god, this.appearanceWeight(god)]));
+  }
 
   awardNectar(amount = 1, o = {}) {
     const gained = Math.max(0, Math.floor(Number(amount) || 0));

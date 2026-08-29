@@ -195,6 +195,24 @@ assert.ok(planA.some(x => x.kind === 'boon'));
 assert.ok(planA.every(x => GOD_INFO[x.god]));
 assert.ok(planA.every(x => x.kind !== 'weapon'), 'a chamber gate can replace the run-bound weapon');
 
+// Permanent investment biases divine gate appearances without allowing the
+// same god to occupy multiple exits in one chamber.
+{
+  const simulate = weights => {
+    let seed = 0x91e10da5, seen = 0;
+    const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    for (let i = 0; i < 2400; i++) {
+      const plan = planDoorChoices(3, random, weights);
+      if (plan.some(choice => choice.god === 'zeus')) seen++;
+      assert.equal(new Set(plan.map(choice => choice.god)).size, 3);
+    }
+    return seen;
+  };
+  const base = simulate(Object.fromEntries(GOD_KEYS.map(god => [god, 1])));
+  const favored = simulate(Object.fromEntries(GOD_KEYS.map(god => [god, god === 'zeus' ? 3 : 1])));
+  assert.ok(favored > base * 1.55, `invested god did not appear more often (${base} -> ${favored})`);
+}
+
 // The Crossroads owns four physical, hovering arms and reports the selected
 // one through its interaction callback.
 {
