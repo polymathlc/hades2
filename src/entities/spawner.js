@@ -68,6 +68,14 @@ export const ENCOUNTER_POOLS = {
 // mechanic
 const PACK = { hound: 3, shade: 2 };
 
+// Boss cadence is every five depths. The first encounter remains the Warden;
+// the second and third are distinct mythic opponents instead of repeats.
+export const BOSS_SEQUENCE = ['warden', 'minotaur', 'heracles'];
+export function bossForDepth(depth) {
+  const encounter = Math.max(1, Math.floor((depth | 0) / 5));
+  return BOSS_SEQUENCE[Math.min(BOSS_SEQUENCE.length, encounter) - 1];
+}
+
 const _v = new THREE.Vector3();
 
 export class Spawner {
@@ -161,8 +169,9 @@ export class Spawner {
   }
 
   _bossWaves() {
+    const boss = bossForDepth(this.depth);
     return [
-      { list: ['warden'], delay: 1.1, stagger: 0, trigger: 'immediate' },
+      { list: [boss], delay: 1.1, stagger: 0, trigger: 'immediate' },
       { list: ['shade', 'shade'], delay: 8.0, stagger: 0.3, trigger: 'timed' },
     ];
   }

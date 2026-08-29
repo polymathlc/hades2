@@ -256,11 +256,19 @@ function setupCapture(engine, ctx, setBiome){
   const captureParams = new URLSearchParams(location.search);
   const requestedState = captureParams.get('state');
   const requestedBiome = captureParams.get('biome');
+  const requestedBoss = captureParams.get('boss');
+  const requestedDepthRaw = captureParams.get('depth');
+  const requestedDepth = requestedDepthRaw == null ? NaN : Number(requestedDepthRaw);
   // let one frame settle so async material/geometry work completes
   requestAnimationFrame(()=>{
     engine.skipRender=true; engine.step(DT); engine.skipRender=false;
     if(requestedBiome) drv.biome(requestedBiome);
-    if(requestedState){ drv.state(requestedState); drv.step(0.8); drv.render(); }
+    if(requestedState){
+      const args = requestedState === 'boss' && (requestedBoss || Number.isFinite(requestedDepth))
+        ? { kind: requestedBoss || undefined, depth: Number.isFinite(requestedDepth) ? requestedDepth : undefined }
+        : undefined;
+      drv.state(requestedState, args); drv.step(0.8); drv.render();
+    }
     resolveReady(); window.__EREBUS_READY = true;
   });
 }

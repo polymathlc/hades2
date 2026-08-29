@@ -15,7 +15,7 @@ import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
 import { TIERS } from '../src/render/renderer.js';
 import { GRADES } from '../src/render/shaders/grades.js';
 import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
-import { ENCOUNTER_POOLS } from '../src/entities/spawner.js';
+import { ENCOUNTER_POOLS, BOSS_SEQUENCE, bossForDepth, Spawner } from '../src/entities/spawner.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -27,7 +27,7 @@ const rng = { f: () => 0.314159, pick: a => a[0] };
 
 // Specialist enemies must be real combat roles, registered in every biome,
 // and expose the state transitions that make their counterplay distinct.
-assert.equal(ROSTER_IDS.length, 10);
+assert.equal(ROSTER_IDS.length, 12);
 const specialistStates = {
   lancer: ['aim', 'charge'],
   siren: ['mark', 'blink', 'slash'],
@@ -43,6 +43,31 @@ for (const [kind, states] of Object.entries(specialistStates)) {
     assert.ok(entry, `${kind} is absent from ${biome}`);
     assert.ok(entry.w(8) > 0, `${kind} can never spawn in ${biome}`);
   }
+}
+
+// Boss rooms advance from the Warden to two unique mythic fights. Later depths
+// retain Heracles instead of wrapping back to an earlier boss.
+assert.deepEqual(BOSS_SEQUENCE, ['warden', 'minotaur', 'heracles']);
+assert.equal(bossForDepth(5), 'warden');
+assert.equal(bossForDepth(10), 'minotaur');
+assert.equal(bossForDepth(15), 'heracles');
+assert.equal(bossForDepth(20), 'heracles');
+for (const [kind, states] of Object.entries({
+  minotaur: ['sweepTell', 'chargeTell', 'chargeGo', 'stompTell', 'exposed'],
+  heracles: ['clubTell', 'boulderTell', 'leapTell', 'leapHit', 'exposed'],
+})) {
+  const def = ROSTER[kind];
+  assert.equal(def.boss, true);
+  assert.equal(def.phases, 3);
+  assert.ok(def.hp >= 1000 && def.spec && def.title);
+  for (const state of states) assert.ok(def.brain.states[state], `${kind} is missing ${state}`);
+}
+{
+  const director = new Spawner();
+  director.depth = 10;
+  assert.deepEqual(director._bossWaves()[0].list, ['minotaur']);
+  director.depth = 15;
+  assert.deepEqual(director._bossWaves()[0].list, ['heracles']);
 }
 
 // The Oracle's release is not a cosmetic cast: it heals and wards nearby
@@ -312,4 +337,4 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 }
 
 assert.equal(GOD_KEYS.length, 11);
-console.log('features ok: 10 enemies, 11 gods, god-locked gates, 12 live forges, audio bridge');
+console.log('features ok: 12 enemies, 3 unique bosses, 11 gods, god-locked gates, 12 live forges, audio bridge');

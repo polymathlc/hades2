@@ -113,6 +113,7 @@ const P = (a) => PHASES[a.mem.phase | 0];
 export const WARDEN = {
   kind: 'warden',
   label: 'The Warden of the Ninth Gate',
+  title: 'The Warden of the Ninth Gate', phases: 3, captureState: 'cleave',
   role: 'BOSS — three phases, four telegraphed attacks, a real vulnerability window',
   identity: '#ff5a3c', deathColor: '#ff5a3c', tellColor: '#ff5a3c',
   hp: 1150, radius: 1.25, speed: 3.4, accel: 15, turn: 3.4,

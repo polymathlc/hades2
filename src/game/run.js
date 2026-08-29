@@ -376,7 +376,8 @@ export class RunState {
       this.ctx.events.emit('boss.nectarCollected', { entity, amount: gained, total: this.nectar });
     });
     this._drops.push(drop);
-    this.ctx.ui?.toast?.('THE WARDEN DROPPED NECTAR', { color: '#b884ff', dur: 2.5 });
+    const bossName = entity.def?.label || i?.name || 'THE BOSS';
+    this.ctx.ui?.toast?.(`${bossName.toUpperCase()} DROPPED NECTAR`, { color: '#b884ff', dur: 2.5 });
   }
 
   _clearDrops() {

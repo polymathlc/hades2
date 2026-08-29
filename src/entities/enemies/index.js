@@ -13,6 +13,8 @@
 //   siren   wide feathered wings                          blink flank assassin
 //   oracle  halo above a tall robed figure                healer/ward, interrupt
 //   warden  a monolith with a horned crown + greatsword   BOSS, three phases
+//   minotaur bull horns + a double-headed labrys           BOSS 2, wall charger
+//   heracles lion pelt + a huge knotted club               BOSS 3, champion
 //
 // The manager owns: pooling (an enemy is built once and reused forever), the
 // attack-token pool, the telegraph renderer, the hard separation relax that
@@ -30,12 +32,13 @@ import { HEXER, HERALD } from './casters.js';
 import { HOUND, BLOAT } from './swarm.js';
 import { LANCER, SIREN, ORACLE } from './variants.js';
 import { WARDEN } from './boss.js';
-import { Spawner } from '../spawner.js';
+import { MINOTAUR, HERACLES } from './champions.js';
+import { Spawner, bossForDepth } from '../spawner.js';
 
 export const ROSTER = {
   shade: SHADE, brute: BRUTE, hexer: HEXER, herald: HERALD,
   hound: HOUND, bloat: BLOAT, lancer: LANCER, siren: SIREN,
-  oracle: ORACLE, warden: WARDEN,
+  oracle: ORACLE, warden: WARDEN, minotaur: MINOTAUR, heracles: HERACLES,
 };
 export const ROSTER_IDS = Object.keys(ROSTER);
 
@@ -391,11 +394,16 @@ export class EnemyManager {
     return this.list;
   }
 
-  /** §5 boss: the Warden on screen, mid-telegraph. */
+  /** §5 boss: any run boss on screen, mid-telegraph. */
   setupCaptureBoss(ctx, args) {
     this.clear();
     const p = ctx.player ? ctx.player.position : new THREE.Vector3();
-    const b = this.spawn('warden', { x: p.x + 5.2, z: p.z + 4.4 }, { depth: 6, minPlayerDist: 5.0 });
+    const depth = args?.depth ?? 5;
+    const kind = ROSTER[args?.kind] ? args.kind : bossForDepth(depth);
+    // Negative arena diagonal is the far/upper side of the live isometric
+    // camera, keeping a three-metre boss above the hero instead of cropped by
+    // the HUD along the lower edge.
+    const b = this.spawn(kind, { x: p.x - 4.2, z: p.z - 3.8 }, { depth, minPlayerDist: 5.0 });
     if (b) {
       b.spawnGrace = 0; b.root.scale.setScalar(1);
       b.perc.aware = true; b.perc._init = true; b.perc.aimX = p.x; b.perc.aimZ = p.z;
@@ -403,11 +411,13 @@ export class EnemyManager {
       b.mem.phase = 1; b.mem.pendingPhase = false;
       for (let i = 0; i < 40; i++) this.update(1 / 60, ctx);
       b.attackCd = 0;
-      b.brain.set('cleave', ctx);
+      b.brain.set(b.def.captureState || 'cleave', ctx);
       b.tell.t = b.tell.dur * 0.68; b.tell.k = 0.68;
       if (b._tellHandle) { b._tellHandle.t = b._tellHandle.dur * 0.68; b._tellHandle.u.uK.value = 0.68; }
-      this.summonFor(b, 'hound', 2);
-      for (const e of this.list) if (e !== b) { e.spawnGrace = 0; e.root.scale.setScalar(1); e.perc.aware = true; }
+      if (kind === 'warden') {
+        this.summonFor(b, 'hound', 2);
+        for (const e of this.list) if (e !== b) { e.spawnGrace = 0; e.root.scale.setScalar(1); e.perc.aware = true; }
+      }
     }
     return b;
   }

@@ -125,6 +125,8 @@ const FAMILY_LOOK = {
   siren: { rim: '#ff74ba', mul: 1.16 },   // -> rose, the blink assassin
   oracle: { rim: '#c9b8ff', mul: 1.14 },  // -> lavender, the ward support
   warden: { rim: '#3aa8ff', mul: 1.12 },  // -> ICE. the boss opposes its own room
+  minotaur: { rim: '#ff8a3d', mul: 1.14 },// -> hot amber, the charging boss
+  heracles: { rim: '#ffd56a', mul: 1.12 },// -> heroic gold, the final champion
 };
 const ASPHODEL_FAMILY_LOOK = {
   shade:  { rim: '#7fe6df', mul: 1.18 },
@@ -137,6 +139,8 @@ const ASPHODEL_FAMILY_LOOK = {
   siren:  { rim: '#ffc2e3', mul: 1.20 },
   oracle: { rim: '#ddd3ff', mul: 1.18 },
   warden: { rim: '#d6f4ff', mul: 1.18 },
+  minotaur: { rim: '#ffd0a6', mul: 1.18 },
+  heracles: { rim: '#fff0aa', mul: 1.16 },
 };
 let _familyBiome = 'tartarus';
 const familyLook = (kind) => (_familyBiome === 'asphodel' ? ASPHODEL_FAMILY_LOOK : FAMILY_LOOK)[kind];
