@@ -26,6 +26,7 @@
 import * as THREE from 'three';
 import { clamp, clamp01, lerp, damp, dampAngle, shortAngle, smoothstep, ease, TAU } from '../core/math.js';
 import { buildHumanoid, HERO_SPEC, SLOT_PAINT } from './rig.js';
+import { createAvatarWeapons } from './player-weapons.js';
 import { Animator } from './anim.js';
 
 export const TUNING = {
@@ -145,6 +146,10 @@ export class Player {
     // player.rig.retune() to re-publish it over every character material.
     this.slotPaint = SLOT_PAINT;
     this.root.add(this.rig.root);
+    this.weaponVisual = createAvatarWeapons(this.rig, ctx.combat?.weaponId || 'blade');
+    this._offWeaponVisual = ctx.events.on('weapon.equipped', (info) => {
+      if (info?.actor === this) this.weaponVisual?.equip(info.id);
+    });
     this.animator = new Animator(this.rig);
     this.animator.play('idle', { fade: 0 });
     this.height = this.rig.height;
@@ -883,6 +888,8 @@ export class Player {
 
   dispose() {
     if (this._onKey) { removeEventListener('keydown', this._onKey); this._onKey = null; }
+    this._offWeaponVisual?.(); this._offWeaponVisual = null;
+    this.weaponVisual?.dispose?.(); this.weaponVisual = null;
     this.rig?.dispose?.();
     this.readyRing?.geometry?.dispose?.();
     this.readyMat?.dispose?.();

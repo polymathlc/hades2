@@ -228,7 +228,9 @@ export const HERO_SPEC = {
     harness: true,
     hair: 'swept',         // 'swept' | 'short' | 'none'
     eyes: true,
-    weapon: 'xiphos',      // 'xiphos' | 'none'  (AGENT-COMBAT: rig.socket('handR'))
+    // Player weapons are separate hand-mounted models (player-weapons.js),
+    // allowing the equipped arm to change silhouette at runtime.
+    weapon: 'none',        // 'xiphos' | 'none'
   },
   // The eyes and the harness sigil are the only emissive on the character. At
   // 0.85 they clipped to white ping-pong balls instead of reading as the

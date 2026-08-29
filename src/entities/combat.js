@@ -114,7 +114,7 @@ export class CombatSystem {
     ctx.weapons = this;
 
     this._cap = { on: false, t: 0, i: 0 };
-    ctx.events.on('capture.state', ({ name }) => this._captureState(name, ctx));
+    ctx.events.on('capture.state', ({ name, args }) => this._captureState(name, ctx, args));
     ctx.events.on('room.built', () => { this.hitboxes.clear(); this.projectiles.clear(); this._status.clear(); this._expose.clear(); this._critMark.clear(); this._knock.length = 0; this._boonPulses.length = 0; });
     return this;
   }
@@ -778,8 +778,9 @@ export class CombatSystem {
   // have expired by the time the shutter opens. This is a scripted timeline
   // instead, authored backwards from t=2.0: every entry below is placed so that
   // it is at its most readable moment in the captured frame.
-  _captureState(name, ctx) {
-    if (name === 'combat') { this._cap.on = true; this._cap.t = 0; this._cap.i = 0; this.equip('blade'); }
+  _captureState(name, ctx, args = {}) {
+    if (args?.weapon && WEAPONS[args.weapon]) this.equip(args.weapon);
+    if (name === 'combat') { this._cap.on = true; this._cap.t = 0; this._cap.i = 0; if (!args?.weapon) this.equip('blade'); }
     else if (name) {
       // leaving the combat frame: this harness runs every shot on ONE page, so
       // without an explicit teardown the bolts and telegraphs bleed into the

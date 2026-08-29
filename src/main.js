@@ -257,6 +257,7 @@ function setupCapture(engine, ctx, setBiome){
   const requestedState = captureParams.get('state');
   const requestedBiome = captureParams.get('biome');
   const requestedBoss = captureParams.get('boss');
+  const requestedWeapon = captureParams.get('weapon');
   const requestedPage = captureParams.get('page');
   const requestedDepthRaw = captureParams.get('depth');
   const requestedDepth = requestedDepthRaw == null ? NaN : Number(requestedDepthRaw);
@@ -265,9 +266,10 @@ function setupCapture(engine, ctx, setBiome){
     engine.skipRender=true; engine.step(DT); engine.skipRender=false;
     if(requestedBiome) drv.biome(requestedBiome);
     if(requestedState){
-      const args = requestedState === 'boss' && (requestedBoss || Number.isFinite(requestedDepth))
+      let args = requestedState === 'boss' && (requestedBoss || Number.isFinite(requestedDepth))
         ? { kind: requestedBoss || undefined, depth: Number.isFinite(requestedDepth) ? requestedDepth : undefined }
         : requestedState === 'altar' && requestedPage ? { page: requestedPage } : undefined;
+      if (requestedWeapon) args = { ...(args || {}), weapon: requestedWeapon };
       drv.state(requestedState, args); drv.step(0.8); drv.render();
     }
     resolveReady(); window.__EREBUS_READY = true;
