@@ -299,6 +299,9 @@ export class WeaponRuntime {
     }
     if (action === 'special') {
       this.actionSlot = 'special';
+      // A second Special press recalls the thrown spear. This must precede
+      // charge/busy handling or the input simply starts another throw charge.
+      if (this.weaponId === 'spear' && this.stuck) { this.recall(); return; }
       if (w.block) { this._beginBlock(); return; }
       if (w.charge && w.charge.action === 'special') { this.holding = true; if (!this.busy) this._beginCharge(); return; }
       if (w.special && !this.busy) this._beginStep(w.special, -1);
@@ -574,7 +577,15 @@ export class WeaponRuntime {
       }
       this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'spread' });
     }
-    if (P.stick) this.stuck = id;
+    if (P.stick) {
+      // Keep a deterministic landing fallback because the outbound projectile
+      // may have expired or struck scenery before the player asks for recall.
+      this.stuck = {
+        id, charge: k,
+        x: spec.x + spec.dx * 7.5,
+        z: spec.z + spec.dz * 7.5,
+      };
+    }
     const sh = full && c.shakeFull ? c.shakeFull : c.shake;
     if (sh) this.ctx.events.emit('camera.shake', sh);
     this.ctx.audio?.sfx?.(full && c.sfxFull ? c.sfxFull : c.sfx, { pos: A.position });
@@ -716,21 +727,35 @@ export class WeaponRuntime {
   /** Recall the stuck spear — it flies home through everything in the way. */
   recall() {
     const c = this.weapon.charge;
-    if (!c || !c.recall) return false;
+    if (!c || !c.recall || !this.stuck) return false;
     const P = this.combat.projectiles;
     const A = this.actor;
-    // fire the return leg from wherever the throw ended up (or from max range)
-    const ox = A.position.x + A.facing.x * 7.5, oz = A.position.z + A.facing.y * 7.5;
+    // Recall from the live outbound spear when possible, otherwise from its
+    // predicted landing point after it has hit scenery or expired.
+    const outbound = P.get?.(this.stuck.id);
+    const ox = outbound?.x ?? this.stuck.x;
+    const oz = outbound?.z ?? this.stuck.z;
+    if (outbound) P.kill?.(outbound, 'silent');
     const dx = A.position.x - ox, dz = A.position.z - oz;
     const forge = this._forge();
-    const forgeMul = this.ctx.boons?.mods?.forgeMul || 1;
+    const { mods, rider } = this._boon('special');
+    const forgeMul = mods?.forgeMul || 1;
+    const charge = this.stuck.charge ?? 0;
+    const returnDamage = c.recall.damage + ((c.recall.damageFull ?? c.recall.damage) - c.recall.damage) * charge;
+    const distance = Math.hypot(dx, dz);
     P.fire({
-      x: ox, y: 1.1, z: oz, dx, dz, kind: 'straight',
-      speed: c.recall.speed, radius: c.recall.radius, life: 1.1,
-      damage: c.recall.damage, pierce: c.recall.pierce, knockback: c.recall.knockback,
+      x: ox, y: 1.1, z: oz, dx, dz,
+      kind: 'homing', homing: 12 + (forge?.homing || 0), target: A,
+      returnTarget: A, returnRadius: (A.radius || 0.5) + 0.48,
+      speed: c.recall.speed, radius: c.recall.radius, life: Math.max(0.45, distance / c.recall.speed + 0.45),
+      damage: returnDamage * (mods?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0),
+      pierce: c.recall.pierce, knockback: c.recall.knockback + (rider?.knockback || 0) + (mods?.knockback || 0),
       hitstop: c.recall.hitstop, color: c.recall.color, source: A, hero: true, size: 1.2,
-      kind: forge?.homing ? 'homing' : 'straight', homing: forge?.homing || 0,
-      blastRadius: (forge?.recallBlast || 0) * forgeMul, type: forge?.recallBlast ? 'fire' : 'physical',
+      blastRadius: (forge?.recallBlast || 0) * forgeMul,
+      type: rider?.type || (forge?.recallBlast ? 'fire' : 'physical'),
+      status: rider?.status, statusStacks: rider?.stacks || 1, statusPower: rider?.statusPower || 0,
+      crit: (this.weapon.critChance || 0) + (rider?.critChance || 0),
+      expose: rider?.expose || 0, boonGod: rider?.god, boonSlot: 'special',
     });
     if (forge?.recallBlast || forge?.homing) this.ctx.events.emit('forge.triggered', { weapon: 'spear', effect: 'recall' });
     this.stuck = null;

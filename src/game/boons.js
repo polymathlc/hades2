@@ -292,7 +292,7 @@ export const BOONS = [
     v => `The returning Spear erupts in a ${v.radius}m blast when it strikes.`,
     (m, v) => { m.forge.spear.recallBlast = Math.max(m.forge.spear.recallBlast, v.radius); }, { weapon: 'spear' }),
   B('hephaestus.spear.seek', 'hephaestus', 'forge', 'Magnetic Harpoon', { turn: 5 },
-    v => `Thrown and recalled Spears bend toward nearby foes with ${v.turn} homing force.`,
+    v => `Thrown Spears bend toward foes; recalled Spears pull home with +${v.turn} tracking force.`,
     (m, v) => { m.forge.spear.homing = Math.max(m.forge.spear.homing, v.turn); }, { weapon: 'spear' }),
 
   B('hephaestus.bow.triple', 'hephaestus', 'forge', 'Triple-Forged String', {},

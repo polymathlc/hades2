@@ -313,7 +313,17 @@ for (const weapon of ['spear', 'bow']) {
   assert.equal(fired.length, 3, `${weapon} full shot did not split three ways`);
   assert.ok(fired.every(x => x.kind === 'homing'), `${weapon} homing forge was not consumed`);
   if (weapon === 'bow') assert.ok(fired.every(x => x.blastRadius > 0), 'bow blast forge was not consumed');
-  else { runtime.recall(); assert.ok(fired.at(-1).blastRadius > 0, 'spear recall blast was not consumed'); }
+  else {
+    runtime.press('special');
+    const returning = fired.at(-1);
+    assert.equal(runtime.stuck, null, 'second Special press did not recall the thrown spear');
+    assert.equal(returning.kind, 'homing');
+    assert.equal(returning.target, runtime.actor);
+    assert.equal(returning.returnTarget, runtime.actor);
+    assert.ok(returning.returnRadius > runtime.actor.radius);
+    assert.ok(returning.damage >= runtime.weapon.charge.recall.damageFull, 'full-charge recall damage was discarded');
+    assert.ok(returning.blastRadius > 0, 'spear recall blast was not consumed');
+  }
 }
 
 {

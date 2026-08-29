@@ -220,6 +220,7 @@ export class ProjectileSystem {
       forks: 0, castTicks: 0, tickDamage: 0, castBeam: 0,
       expose: 0, boonGod: null, boonSlot: null, boonProc: false,
       homing: 0, target: null,
+      returnTarget: null, returnRadius: 0,
       orbX: 0, orbZ: 0, orbR: 3, orbW: 2.2, orbA: 0,
       cr: 1, cg: 0.7, cb: 0.3, size: 1, coreSize: 1,
       hx: new Float32Array(TRAIL), hy: new Float32Array(TRAIL), hz: new Float32Array(TRAIL),
@@ -282,6 +283,8 @@ export class ProjectileSystem {
     p.reflectable = d.reflectable !== false;
     p.homing = d.homing ?? (p.kind === 2 ? 4.5 : 0);
     p.target = d.target || null;
+    p.returnTarget = d.returnTarget || null;
+    p.returnRadius = d.returnRadius ?? 0;
 
     p.orbX = d.orbitX ?? p.x; p.orbZ = d.orbitZ ?? p.z;
     p.orbR = d.orbitRadius ?? 3; p.orbW = d.orbitSpeed ?? 2.2;
@@ -309,6 +312,16 @@ export class ProjectileSystem {
     this.count = this.live.length;
     this.ctx.events.emit('projectile.fired', { id: p.id, pos: _v.set(p.x, p.y, p.z), type: p.type, source: p.source });
     return p.id;
+  }
+
+  /** Live pooled record for a stable projectile id, used by spear recall. */
+  get(id) {
+    if (!id) return null;
+    for (let i = 0; i < this.live.length; i++) {
+      const p = this.pool[this.live[i]];
+      if (p.alive && p.id === id) return p;
+    }
+    return null;
   }
 
   /** Reflect a bolt back at its owner — the SHIELD's whole reason to exist. */
@@ -399,6 +412,17 @@ export class ProjectileSystem {
         if (p.hn < TRAIL) p.hn++;
       }
       if (p.carrier) { p.carrier.position.set(p.x, p.y, p.z); p.carrier.updateMatrixWorld(true); }
+
+      // Returning weapons are caught instead of flying through their owner and
+      // continuing off-screen. They can still damage enemies on the way home.
+      if (p.returnTarget?.position && p.returnRadius > 0) {
+        const rx = p.returnTarget.position.x - p.x, rz = p.returnTarget.position.z - p.z;
+        if (rx * rx + rz * rz <= p.returnRadius * p.returnRadius) {
+          this.ctx.events.emit('projectile.returned', { id: p.id, source: p.source, target: p.returnTarget });
+          this.kill(p, 'silent');
+          continue;
+        }
+      }
 
       // ── expiry ─────────────────────────────────────────────────────────
       if (p.t >= p.life) { this.kill(p, 'expire'); continue; }

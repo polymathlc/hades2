@@ -54,7 +54,7 @@ npm run build && npm run preview
 |---|---|
 | **W A S D** / arrows | Move (camera-relative, 8-direction) |
 | **Left mouse** | Attack toward cursor — melee combos or the bow’s charged shot |
-| **Right mouse** | Cursor-aimed special (weapon-dependent: sweep, spear throw, kick, guard) |
+| **Right mouse** | Cursor-aimed special (weapon-dependent: sweep, spear throw/press again to recall, kick, guard) |
 | **Q** | Cast |
 | **Space** / **Shift** | Dash — i-frames during the active window, cancels attack recovery |
 | **R** | God Call / Summon |
