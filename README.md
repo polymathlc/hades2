@@ -1,7 +1,8 @@
 # EREBUS — Descent
 
-An isometric 3/4 rogue-lite action game in Three.js, in the Hades genre: chamber-to-chamber runs,
-god boons, four distinct weapons, a painterly Greek-underworld art direction.
+An isometric 3/4 rogue-lite action game in Three.js, in the Hades genre: a persistent Crossroads
+home base, chamber-to-chamber runs, god boons, four distinct weapons, and a painterly
+Greek-underworld art direction.
 
 The game uses a **hybrid painterly material pipeline**: eight image-generated albedo atlases provide
 authored colour and brushwork for every named surface, while code generates the matching normals,
@@ -51,7 +52,7 @@ npm run build && npm run preview
 | **1 2 3 4** | Equip blade / spear / bow / shield |
 | **X** or **C** | Cycle weapon |
 | **R** | Summon |
-| **F** | Interact (doors, rewards) |
+| **F** | Interact (home altar, doors, rewards) |
 | **Esc** | Pause |
 
 Gamepad is supported: left stick moves, right stick aims, face buttons map to attack/special/dash.
@@ -77,6 +78,7 @@ authored as data in `src/entities/weapons.js`.
 - Ornate architecture with real carved relief — chamfered profiles, baked contact occlusion that
   survives instancing
 - Six enemy families designed to pass a black-shape silhouette test, plus a three-phase boss
+- Crossroads home base with a run portal, boss-dropped Nectar, persistent saves, and two permanent upgrade tracks for every god
 - Attack-token AI so only N enemies commit at once — the mechanism that keeps fights readable
 - Drawn-shape VFX atlas, ribbon trails, pooled instanced particles
 - Ornate HUD and god-coloured boon cards with generated deity portraits, rarity upgrades, and god-specific combat VFX

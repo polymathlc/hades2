@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "test:boons": "node scripts/test-boons.mjs",
+    "test:meta": "node scripts/test-meta.mjs",
     "preview": "vite preview --port 4173 --strictPort",
     "shot": "node tools/capture.mjs",
     "desktop": "npm run build && node scripts/stage-desktop.mjs && electron desktop/main.cjs",

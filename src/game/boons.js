@@ -344,6 +344,23 @@ export class BoonState {
   /** The rider a slot's hit should carry, or null. Zero-alloc read. */
   rider(slot) { return this.mods.rider[slot]; }
 
+  /** Rarity values after permanent Crossroads mastery for the owning god(s). */
+  values(boon, rarity) {
+    const out = valuesFor(boon, rarity);
+    const meta = this.ctx?.meta;
+    if (!meta) return out;
+    const gods = boon.gods || [boon.god];
+    const mul = gods.reduce((sum, god) => sum + (meta.boonMultiplier?.(god) || 1), 0) / Math.max(1, gods.length);
+    if (mul <= 1) return out;
+    const discrete = new Set(['stacks', 'ticks', 'arcs', 'weak', 'chill']);
+    for (const key in out) {
+      if (typeof out[key] !== 'number') continue;
+      const v = out[key] * mul;
+      out[key] = discrete.has(key) ? Math.max(1, Math.round(v)) : (Math.abs(out[key]) >= 5 ? Math.round(v) : Math.round(v * 10) / 10);
+    }
+    return out;
+  }
+
   grant(entry) {
     if (!entry || !entry.boon) return null;
     const prev = this.byId.get(entry.boon.id);
@@ -367,7 +384,7 @@ export class BoonState {
     const rarity = prev && rarityRank(prev.rarity) > rarityRank(requested) ? prev.rarity : requested;
     const rec = {
       boon: entry.boon, rarity,
-      values: valuesFor(entry.boon, rarity),
+      values: this.values(entry.boon, rarity),
       god: entry.boon.god || (entry.boon.gods && entry.boon.gods[0]),
       slot: entry.boon.slot || 'passive',
       duo: !!entry.boon.gods,
@@ -388,6 +405,7 @@ export class BoonState {
 
   rebuild() {
     const m = emptyMods();
+    this.ctx?.meta?.applyPassives?.(m);
     for (const rec of this.granted) {
       try { rec.boon.apply(m, rec.values, this.ctx); } catch (e) { /* a bad boon must never kill the run */ }
     }
@@ -428,7 +446,7 @@ export class BoonState {
     this.granted.length = 0;
     this.byId.clear();
     this.godCount = {};
-    this.mods = emptyMods();
+    this.rebuild();
     this._syncPlayer();
   }
 
@@ -487,7 +505,7 @@ export class BoonState {
 
   /** Package a boon + rarity into the object the UI renders and grant() takes. */
   offer(boon, rarity = 'common') {
-    const values = valuesFor(boon, rarity);
+    const values = this.values(boon, rarity);
     const god = boon.god || (boon.gods && boon.gods[0]);
     return {
       id: boon.id, boon, rarity, values,

@@ -5,7 +5,7 @@
 // Ink and gold. A bronze cradle at bottom-left holding the life bar with a
 // damage-lag ghost fill, the magick bar under it, cast pips and dash chevrons,
 // the weapon emblem with its cooldown sweep; a boon rail up the left edge; the
-// depth/biome plaque top-left; obols and darkness top-right.
+// depth/biome plaque top-left; obols and persistent Nectar top-right.
 //
 // §9 discipline: the HUD sits over a dark frame and must never become the
 // brightest thing on screen. Gold here is a MID value with thin highlights —
@@ -64,7 +64,7 @@ export class HUD {
     this.roomLabel = '';
     this.roomT = -9;
 
-    this.obols = 0; this.darkness = 0;
+    this.obols = 0; this.nectar = 0;
     this.boons = [];                      // [{god, rarity, slot, name}]
     this.boonPop = new Map();
 
@@ -464,11 +464,11 @@ export class HUD {
     }
   }
 
-  // ═══════════════════════════════════════════════ obols / darkness ═══════
+  // ══════════════════════════════════════════════════ obols / Nectar ═══════
   _resources(g, W, H, S, t) {
     const items = [
       { v: this.obols, c: PAL.gold, glyph: 'obol', label: 'OBOLS' },
-      { v: this.darkness, c: '#a05fe0', glyph: 'dark', label: 'DARKNESS' },
+      { v: this.nectar, c: '#b884ff', glyph: 'nectar', label: 'NECTAR' },
     ];
     let x = W - 26 * S;
     for (let i = items.length - 1; i >= 0; i--) {
@@ -488,11 +488,12 @@ export class HUD {
         g.beginPath(); g.arc(gcx, gcy, 7.4 * S, 0, 6.2832); g.fillStyle = cg; g.fill();
         g.beginPath(); g.arc(gcx, gcy, 4 * S, 0, 6.2832); g.strokeStyle = 'rgba(60,34,8,0.7)'; g.lineWidth = 1.1 * S; g.stroke();
       } else {
-        g.save(); g.translate(gcx, gcy); g.rotate(Math.PI / 4);
-        const cg = g.createLinearGradient(-7 * S, -7 * S, 7 * S, 7 * S);
-        cg.addColorStop(0, '#d8b6ff'); cg.addColorStop(0.5, '#a05fe0'); cg.addColorStop(1, '#3a1d52');
-        g.fillStyle = cg; g.fillRect(-5.4 * S, -5.4 * S, 10.8 * S, 10.8 * S);
-        g.strokeStyle = 'rgba(220,200,255,0.45)'; g.lineWidth = 1 * S; g.strokeRect(-5.4 * S, -5.4 * S, 10.8 * S, 10.8 * S);
+        g.save(); g.translate(gcx, gcy);
+        const cg = g.createLinearGradient(-7 * S, -8 * S, 7 * S, 8 * S);
+        cg.addColorStop(0, '#f0dcff'); cg.addColorStop(0.48, '#b884ff'); cg.addColorStop(1, '#56218f');
+        plaqueRect(g, -5.5 * S, -5.2 * S, 11 * S, 13 * S, 3 * S); g.fillStyle = cg; g.fill();
+        g.fillStyle = '#f2c14e'; g.fillRect(-3.2 * S, -8.0 * S, 6.4 * S, 3.1 * S);
+        g.strokeStyle = 'rgba(242,222,255,0.55)'; g.lineWidth = 0.9 * S; g.stroke();
         g.restore();
       }
       tracked(g, txt, bx + w - 10 * S, y + h * 0.68, {

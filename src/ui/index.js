@@ -20,6 +20,7 @@ import * as THREE from 'three';
 import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette } from './ornament.js';
 import { HUD } from './hud.js';
 import { BoonOverlay } from './boons.js';
+import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
 import { WorldLabels } from './worldlabels.js';
 import { BoonState, BOONS, GOD_INFO } from '../game/boons.js';
@@ -41,6 +42,7 @@ export class UI {
     // setter must be safe from the moment the object exists.
     this.hud = new HUD(this);
     this.boonUI = new BoonOverlay(this);
+    this.nectarUI = new NectarOverlay(this);
     this.menus = new Menus(this);
     this.labels = new WorldLabels(this);
     this.boonState = new BoonState(null);
@@ -114,6 +116,7 @@ export class UI {
     });
     E.on('entity.died', (i) => { if (i && i.entity) { this.labels.removeEnemy(i.entity); if (i.entity.def && i.entity.def.boss) this.labels.setBoss(null); } });
     E.on('boon.granted', (i) => { if (i) this.hud.addBoon(i.record || i); });
+    E.on('nectar.changed', (i) => { if (i && i.total != null) this.setResources(null, i.total); });
     E.on('weapon.equipped', (i) => this.hud.setWeapon(i));
     E.on('room.entered', (i) => { if (i && i.room) this.setRoom(i.room.depth, i.room.biome); });
     E.on('biome.changed', (i) => { if (i && i.name) this.setRoom(null, i.name); });
@@ -126,7 +129,8 @@ export class UI {
       const r = this.canvas.getBoundingClientRect ? this.canvas.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
-      if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i !== this.boonUI.hover) { this.boonUI.hover = i; this.dirty = true; } }
+      if (this.nectarUI.active) this.nectarUI.move(x, y);
+      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i !== this.boonUI.hover) { this.boonUI.hover = i; this.dirty = true; } }
       else this.menus.move(x, y);
     };
     this._onDown = (e) => {
@@ -134,10 +138,12 @@ export class UI {
       const r = this.canvas.getBoundingClientRect ? this.canvas.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
-      if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); } }
+      if (this.nectarUI.active) { if (this.nectarUI.click(x, y)) e.preventDefault(); }
+      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); } }
       else if (this.menus.click(x, y)) e.preventDefault();
     };
     this._onKey = (e) => {
+      if (this.nectarUI.active) { this.nectarUI.key(e); return; }
       if (this.boonUI.active) {
         if (e.key === '1' || e.key === '2' || e.key === '3') this.boonUI.choose(+e.key - 1);
         else if (e.key === 'ArrowLeft') { this.boonUI.hover = Math.max(0, this.boonUI.hover - 1); this.dirty = true; }
@@ -167,7 +173,7 @@ export class UI {
     this.draw();
   }
 
-  _modal() { return this.boonUI.active || this.menus.modal; }
+  _modal() { return this.nectarUI.active || this.boonUI.active || this.menus.modal; }
 
   _sizeTo(ctx) {
     const r = ctx.renderer;
@@ -197,6 +203,7 @@ export class UI {
   setRoom(depth, biome) { this.hud.setRoom(depth, biome); }
   damageNumber(worldPos, amount, o) { this.labels.damageNumber(worldPos, amount, o); }
   showBoonChoice(options, o) { return this.boonUI.open(options, o); }
+  showHomeUpgrades(meta) { this.nectarUI.open(meta || this.ctx?.meta); }
   toast(text, o = {}) {
     this.toasts.push({ text: String(text), color: o.color || PAL.gold, icon: o.icon || null, t0: this.t, dur: o.dur || 2.4 });
     if (this.toasts.length > 4) this.toasts.shift();
@@ -211,10 +218,11 @@ export class UI {
   setDash(n, max) { this.hud.setDash(n, max); }
   setWeapon(w) { this.hud.setWeapon(w); }
   setBoss(o) { this.labels.setBoss(o); }
+  clearRunBoons() { this.hud.boons.length = 0; this.hud.boonPop.clear(); this.dirty = true; }
   prompt(pos, text, o) { this.labels.prompt(pos, text, o); }
   clearPrompts() { this.labels.clearPrompts(); }
   sigil(pos, o) { this.labels.sigil(pos, o); }
-  setResources(obols, darkness) { if (obols != null) this.hud.obols = obols; if (darkness != null) this.hud.darkness = darkness; this.dirty = true; }
+  setResources(obols, nectar) { if (obols != null) this.hud.obols = obols; if (nectar != null) this.hud.nectar = nectar; this.dirty = true; }
   setSummary(o) { Object.assign(this.menus.summary, o || {}); this.dirty = true; }
 
   // ═══════════════════════════════════════════════════════════ LOOP ═══════
@@ -242,7 +250,7 @@ export class UI {
         if (d !== this.hud.dash) this.hud.setDash(d);
       }
     }
-    if (this.boonUI.active || this.menus.modal) this.dirty = true;
+    if (this.nectarUI.active || this.boonUI.active || this.menus.modal) this.dirty = true;
   }
 
   lateUpdate(alpha, ctx) {
@@ -300,6 +308,7 @@ export class UI {
     }
     this.menus.draw(g, W, H, S, t);
     this.boonUI.draw(g, W, H, S, t);
+    this.nectarUI.draw(g, W, H, S, t);
     this.dirty = false;
   }
 
@@ -351,7 +360,7 @@ export class UI {
     h.setCast(2, 3); h.setDash(1, 2);
     h.setWeapon({ id: 'blade', name: 'Stygian Blade' });
     h.weaponCd = 0.34;
-    h.obols = 137; h.darkness = 42;
+    h.obols = 137; h.nectar = 4;
     h.depth = 7; h.biome = (ctx.run && ctx.run.biome) || 'tartarus';
     h.roomT = -99;                                  // the plaque already says it; no banner
     h.boons.length = 0; h.boonPop.clear();

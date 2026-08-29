@@ -19,8 +19,8 @@
 //            the exits on the bus so UI/audio can react.
 //   choose   doors.js fires 'door.entered' when the hero walks a threshold ->
 //            depth++, pick the next biome, rebuild, repeat.
-//   die      'player.died' ends the run; after a beat the descent restarts at
-//            depth 0 in Tartarus with a fresh seed.
+//   die      'player.died' ends the run; after a beat the hero returns to the
+//            Crossroads, where banked Nectar can be spent before the portal.
 //
 // WHY THE TRANSITION IS DEFERRED: world.build() disposes and rebuilds every
 // geometry and material in the chamber. Doing that inside the door's own
@@ -35,6 +35,8 @@
 // ---------------------------------------------------------------------------
 
 import { GOD_KEYS } from './boons.js';
+import { MetaProgression } from './meta.js';
+import { HomeBase, NectarDrop } from '../world/homebase.js';
 
 // The descent. Three biomes, four chambers each, a boss on the last of each —
 // spawner.js already treats depth % 5 === 0 as a boss room, so the biome
@@ -48,9 +50,9 @@ export class RunState {
     this.biome = 'tartarus';
     this.boons = [];
     this.obols = 0;
-    this.darkness = 0;
+    this.nectar = 0;
     this.seed = 1337;
-    this.state = 'playing';       // playing | cleared | choosing | transition | dead
+    this.state = 'home';          // home | playing | cleared | choosing | transition | dead
     this.roomCleared = false;
     this.exits = [];
     this.kills = 0;
@@ -59,6 +61,9 @@ export class RunState {
     this._pending = null;         // queued transition
     this._deathT = 0;
     this._bound = false;
+    this._home = null;
+    this._drops = [];
+    this._rewardedBosses = new Set();
   }
 
   async init(ctx) {
@@ -70,11 +75,29 @@ export class RunState {
     this.biome = (ctx.world && ctx.world.biome) || 'tartarus';
     this.startedAt = ctx.time ? ctx.time.t : 0;
 
+    this.meta = new MetaProgression(ctx).load();
+    ctx.meta = this.meta;
+    this.nectar = this.meta.nectar;
+    ctx.boons?.rebuild?.();
+    ctx.boons?._syncPlayer?.();
+
     // ── the four events that are the whole loop ──────────────────────────
     ctx.events.on('room.cleared', (e) => this._onCleared(e));
     ctx.events.on('player.died', () => this._onDeath());
     ctx.events.on('entity.died', (i) => { if (i && i.entity && i.entity !== ctx.player) this.kills++; });
     ctx.events.on('boon.granted', () => { this.boons = ctx.boons?.list?.().slice() || []; });
+    ctx.events.on('boss.defeated', (i) => this._onBossDefeated(i));
+    ctx.events.on('run.start', () => { if (this.state === 'home') this.startRun(); });
+    ctx.events.on('run.abandon', () => this.enterHome());
+    ctx.events.on('capture.state', ({ name }) => {
+      if (name === 'home') this.enterHome({ initial: true });
+      else if (name === 'altar') {
+        this.enterHome({ initial: true });
+        if (this.meta && this.meta.nectar < 6) this.meta.nectar = 6; // capture-only preview; never save
+        ctx.ui?.setResources?.(0, this.meta?.nectar || 0);
+        ctx.ui?.showHomeUpgrades?.(this.meta);
+      }
+    });
     // A door can be entered from doors.js' own update; queue, never rebuild
     // underneath the iterator that called us.
     ctx.world?.doors?.onEnter?.((d) => this._onDoor(d));
@@ -82,7 +105,7 @@ export class RunState {
 
     // The capture harness drives chambers itself (capture.state / room:*), so
     // the run must not also be advancing depth under it.
-    if (!ctx.CAPTURE) this.enterRoom(0, this.biome, { first: true });
+    if (!ctx.CAPTURE) this.enterHome({ initial: true });
     return this;
   }
 
@@ -94,6 +117,68 @@ export class RunState {
   /** Pure function of (runSeed, depth) — the same run replays identically. */
   seedFor(depth) { return (this.seed * 2654435761 + depth * 40503) >>> 0; }
 
+  // ══════════════════════════════════════════════════════════ Crossroads ═══
+  /** Return to the persistent home base. No encounter begins until the portal is crossed. */
+  enterHome(o = {}) {
+    const ctx = this.ctx;
+    this._clearDrops();
+    this._home?.dispose?.();
+    this._home = null;
+
+    if (!o.initial) {
+      if (ctx.world?.biome !== 'tartarus' && ctx.world?.setBiome) ctx.world.setBiome('tartarus', ctx);
+      else ctx.world?.build?.('tartarus', 'rotunda', 424242);
+    }
+    ctx.spawner?.stop?.();
+    ctx.enemies?.clear?.();
+    ctx.boons?.clear?.();
+    ctx.player?.respawn?.();
+    ctx.ui?.clearRunBoons?.();
+    ctx.ui?.screen?.('game');
+
+    this.depth = 0;
+    this.biome = 'tartarus';
+    this.state = 'home';
+    this.roomCleared = false;
+    this._pending = null;
+    this._deathT = 0;
+    this.obols = 0;
+    this.nectar = this.meta?.nectar || 0;
+    ctx.ui?.setResources?.(0, this.nectar);
+
+    this._home = new HomeBase(ctx, {
+      onPortal: () => this.startRun(),
+      onAltar: () => ctx.ui?.showHomeUpgrades?.(this.meta),
+    }).enter();
+    ctx.events.emit('home.entered', { nectar: this.nectar, gods: this.meta?.snapshot?.().gods || {} });
+    return this;
+  }
+
+  /** Begin a fresh descent only after the hero physically crosses the home portal. */
+  startRun() {
+    if (this.state !== 'home') return false;
+    const ctx = this.ctx;
+    ctx.ui?.nectarUI?.close?.();
+    this._home?.dispose?.();
+    this._home = null;
+    this.seed = this._rng ? this._rng.int(1, 1e9) : (this.seed + 7919);
+    this.boons.length = 0;
+    this.obols = 0;
+    this.kills = 0;
+    this.rooms = 0;
+    this.exits.length = 0;
+    this._rewardedBosses.clear();
+    this.startedAt = ctx.time ? ctx.time.t : 0;
+    ctx.boons?.clear?.();
+    ctx.player?.respawn?.();
+    ctx.ui?.clearRunBoons?.();
+    ctx.ui?.setResources?.(0, this.meta?.nectar || 0);
+    this.biome = 'tartarus';
+    this.enterRoom(0, 'tartarus');
+    ctx.events.emit('run.started', { seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0 });
+    return true;
+  }
+
   /**
    * enterRoom(depth, biome, o) — build the chamber and open the encounter.
    *
@@ -103,6 +188,7 @@ export class RunState {
    */
   enterRoom(depth, biome, o = {}) {
     const ctx = this.ctx;
+    this._clearDrops();
     this.depth = depth;
     this.rooms++;
     this.roomCleared = false;
@@ -172,7 +258,7 @@ export class RunState {
 
   // ═════════════════════════════════════════════════════════════ events ═══
   _onCleared(e) {
-    if (this.state === 'dead' || this.roomCleared) return;
+    if (this.state === 'home' || this.state === 'dead' || this.roomCleared) return;
     this.roomCleared = true;
     this.state = 'cleared';
     // THE DOORS ARE THE REWARD. Unsealing is the only thing that happens on a
@@ -222,7 +308,7 @@ export class RunState {
       ctx.ui?.toast?.('Centaur Heart', { color: '#de526f' });
     } else if (kind === 'gold') {
       this.obols += 75 + this.depth * 5;
-      ctx.ui?.setResources?.(this.obols, this.darkness);
+      ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0);
       ctx.ui?.toast?.('Charon’s Obols', { color: '#f2c14e' });
     } else if (kind === 'weapon') {
       ctx.combat?.cycleWeapon?.();
@@ -238,6 +324,28 @@ export class RunState {
     this.ctx.events.emit('camera.shake', { amp: 0.05, dur: 0.22, freq: 22 });
   }
 
+  _onBossDefeated(i) {
+    const entity = i?.entity;
+    const rewardKey = `${this.seed}:${this.depth}`;
+    if (!entity || this.state === 'home' || this._rewardedBosses.has(rewardKey)) return;
+    this._rewardedBosses.add(rewardKey);
+    const amount = 2;
+    const drop = new NectarDrop(this.ctx, i.pos || entity.position, amount, gained => {
+      this.meta?.awardNectar?.(gained, { source: 'boss' });
+      this.nectar = this.meta?.nectar || 0;
+      this.ctx.ui?.setResources?.(this.obols, this.nectar);
+      this.ctx.ui?.toast?.(`NECTAR +${gained} · BANKED AT THE CROSSROADS`, { color: '#d8b6ff', dur: 3.2 });
+      this.ctx.events.emit('boss.nectarCollected', { entity, amount: gained, total: this.nectar });
+    });
+    this._drops.push(drop);
+    this.ctx.ui?.toast?.('THE WARDEN DROPPED NECTAR', { color: '#b884ff', dur: 2.5 });
+  }
+
+  _clearDrops() {
+    for (const drop of this._drops) drop?.dispose?.();
+    this._drops.length = 0;
+  }
+
   _onDeath() {
     if (this.state === 'dead') return;
     this.state = 'dead';
@@ -251,24 +359,20 @@ export class RunState {
     this.ctx.ui?.toast?.('You have died', { color: '#c81d3c' });
   }
 
-  /** Start over. Called by UI, or automatically a few seconds after death. */
+  /** Death and abandon always return to the Crossroads before another run. */
   restart() {
-    const ctx = this.ctx;
-    this.seed = this._rng ? this._rng.int(1, 1e9) : (this.seed + 7919);
-    this.boons.length = 0;
-    this.obols = 0; this.darkness = 0;
-    this.kills = 0; this.rooms = 0;
-    this.startedAt = ctx.time ? ctx.time.t : 0;
-    ctx.boons?.clear?.();
-    ctx.player?.respawn?.();
-    ctx.ui?.setResources?.(0, 0);
-    this.enterRoom(0, BIOMES[0]);
-    ctx.events.emit('run.started', { seed: this.seed, biome: this.biome });
-    return this;
+    return this.enterHome();
   }
 
   // ══════════════════════════════════════════════════════════════ frame ═══
   update(dt, ctx) {
+    if (this.state === 'home') {
+      this._home?.update?.(dt);
+      return;
+    }
+    for (let i = this._drops.length - 1; i >= 0; i--) {
+      if (this._drops[i]?.update?.(dt)) this._drops.splice(i, 1);
+    }
     if (this._pending) {
       const t = this._pending;
       this._pending = null;
