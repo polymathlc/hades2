@@ -14,6 +14,7 @@ export class NectarOverlay {
     this.track = 'boon';
     this.t0 = 0;
     this.hit = [];
+    this._inputWasEnabled = true;
   }
 
   open(meta) {
@@ -24,7 +25,7 @@ export class NectarOverlay {
     this.track = 'boon';
     this.t0 = this.ui.now();
     this.ui.hud?.alpha?.set?.(0.2);
-    if (this.ui.ctx?.input) this.ui.ctx.input.enabled = false;
+    if (this.ui.ctx?.input) { this._inputWasEnabled = this.ui.ctx.input.enabled !== false; this.ui.ctx.input.enabled = false; }
     this.ui.dirty = true;
   }
 
@@ -32,7 +33,7 @@ export class NectarOverlay {
     if (!this.active) return;
     this.active = false;
     this.ui.hud?.alpha?.set?.(1);
-    if (this.ui.ctx?.input) this.ui.ctx.input.enabled = true;
+    if (this.ui.ctx?.input) this.ui.ctx.input.enabled = this._inputWasEnabled && this.ui.menus?.screen === 'game' && !this.ui.boonUI?.active;
     this.ui.ctx?.events?.emit?.('home.altarClosed', {});
     this.ui.dirty = true;
   }

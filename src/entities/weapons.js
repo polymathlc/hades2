@@ -384,6 +384,8 @@ export class WeaponRuntime {
     const dashBonus = slot === 'attack' && A._boonPostDash && rider?.postDashBonus ? rider.postDashBonus : 0;
     if (dashBonus) A._boonPostDash = false;
     const damage = s.damage * slotMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus;
+    const forge = this._forge();
+    const forgeMul = mods?.forgeMul || 1;
     const color = rider?.color || (s.vfx && s.vfx.color) || this.weapon.palette.body;
     if (hb) {
       this.hbId = C.hitboxes.spawn({
@@ -394,14 +396,50 @@ export class WeaponRuntime {
         t0: 0, t1: s.t1 - s.t0, life: s.t1 - s.t0 + 0.02,
         damage, type: rider?.type || s.type || 'physical', knockback: s.knockback + (rider?.knockback || 0) + (mods?.knockback || 0),
         poiseDamage: s.poise, hitstop: s.hitstop, shake: s.shake ? s.shake.amp : 0,
-        status: rider?.status || s.status, statusStacks: rider?.stacks || 1, statusPower: rider?.statusPower || 0,
+        status: rider?.status || (this.weaponId === 'blade' && forge?.ember ? 'burn' : s.status),
+        statusStacks: rider?.stacks || (this.weaponId === 'blade' && forge?.ember ? Math.round(forge.ember * forgeMul) : 1), statusPower: rider?.statusPower || 0,
         crit: (s.crit || 0) + (this.weapon.critChance || 0) + (rider?.critChance || 0),
         expose: rider?.expose || 0, boonGod: rider?.god, boonSlot: slot,
         color,
         tag: this.weaponId + ':' + s.name,
       });
+      // Olympian riders own the primary hit's status. Emberbrand is a second
+      // forge proc so it remains live beside Shock, Weak, Doom, Chill or an
+      // existing Burn rider instead of silently losing to `rider.status`.
+      if (this.weaponId === 'blade' && forge?.ember && rider?.status) {
+        C.hitboxes.spawn({
+          shape: hb.shape, owner: A, source: A,
+          radius: hb.radius, innerRadius: hb.innerRadius, arcDeg: hb.arcDeg,
+          length: hb.length, halfWidth: hb.halfWidth, halfLength: hb.halfLength,
+          offset: hb.offset, maxTargets: hb.maxTargets ?? 6, pierce: hb.pierce ?? 255,
+          t0: 0, t1: s.t1 - s.t0, life: s.t1 - s.t0 + 0.02,
+          damage: 0.01, type: 'fire', knockback: 0, poiseDamage: 0, hitstop: 0,
+          status: 'burn', statusStacks: Math.max(1, Math.round(forge.ember * forgeMul)),
+          color: '#ff9b42', tag: 'forge:blade-ember',
+        });
+      }
     }
     this._playVfx(s, rider, slot);
+    const bladeFinisher = this.weaponId === 'blade' && slot === 'attack' && this.weapon.combo && this.stepIndex === this.weapon.combo.length - 1;
+    if (bladeFinisher && forge?.wave) {
+      C.projectiles.fire({
+        x: A.position.x + A.facing.x * 1.0, y: 0.85, z: A.position.z + A.facing.y * 1.0,
+        dx: A.facing.x, dz: A.facing.y, kind: 'straight', speed: 12, radius: 0.52, life: 0.85,
+        damage: forge.wave * forgeMul, type: 'fire', pierce: 4, knockback: 3.2, hitstop: 0.06,
+        color: '#ff9b42', size: 1.25, coreSize: 0.42, status: 'burn', statusStacks: 2,
+        source: A, hero: true, onExpire: 'burst', tag: 'forge:blade-wave',
+      });
+      this.ctx.vfx?.beam?.(this.combat._v3a.set(A.position.x, 0.18, A.position.z), this.combat._v3b.set(A.position.x + A.facing.x * 4.8, 0.18, A.position.z + A.facing.y * 4.8), { color: '#ff9b42', width: 0.5, life: 0.24 });
+      this.ctx.events.emit('forge.triggered', { weapon: 'blade', effect: 'wave' });
+    }
+    if (bladeFinisher && forge?.echo) {
+      C.hitboxes.spawn({ shape: 'circle', owner: A, source: A, follow: false,
+        x: A.position.x, z: A.position.z, radius: 3.2, t0: 0, t1: 0.10, life: 0.12,
+        maxTargets: 12, damage: forge.echo * forgeMul, type: 'fire', knockback: 4.0,
+        status: 'burn', statusStacks: 1, color: '#ffb15c', tag: 'forge:blade-echo' });
+      this.ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x, 0.07, A.position.z), { radius: 3.2, color: '#ff9b42', life: 0.38 });
+      this.ctx.events.emit('forge.triggered', { weapon: 'blade', effect: 'echo' });
+    }
     if (slot === 'special' && rider?.deflect) C.activateDeflect(A, rider.deflect, rider.color);
     if (slot === 'special' && rider?.god === 'zeus') {
       C.hitboxes.spawn({ shape: 'circle', owner: A, source: A, follow: false,
@@ -418,6 +456,11 @@ export class WeaponRuntime {
     if (this.actor !== this.ctx.player) return { mods: null, rider: null };
     const mods = this.ctx.boons?.mods || null;
     return { mods, rider: mods?.rider?.[slot] || null };
+  }
+
+  _forge() {
+    if (this.actor !== this.ctx.player) return null;
+    return this.ctx.boons?.mods?.forge?.[this.weaponId] || null;
   }
 
   _playVfx(s, rider = null, slot = 'attack') {
@@ -499,10 +542,15 @@ export class WeaponRuntime {
     const col = rider?.color || (full && P.colorFull ? P.colorFull : P.color);
     const dashBonus = slot === 'attack' && A._boonPostDash && rider?.postDashBonus ? rider.postDashBonus : 0;
     if (dashBonus) A._boonPostDash = false;
-    const id = this.combat.projectiles.fire({
+    const forge = this._forge();
+    const forgeMul = mods?.forgeMul || 1;
+    const homing = full && ((this.weaponId === 'spear' ? forge?.homing : 0) || (this.weaponId === 'bow' ? forge?.homing : 0));
+    const blastRadius = full && this.weaponId === 'bow' ? (forge?.blast || 0) : 0;
+    const spec = {
       x: A.position.x + A.facing.x * 0.7, y: 1.12, z: A.position.z + A.facing.y * 0.7,
       dx: A.facing.x, dz: A.facing.y,
-      kind: P.kind, speed: lerp(P.speed, P.speedFull), radius: P.radius, life: P.life,
+      kind: homing ? 'homing' : P.kind, homing: homing || 0,
+      speed: lerp(P.speed, P.speedFull), radius: P.radius, life: P.life,
       damage: lerp(P.damage, P.damageFull) * slotMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus,
       type: rider?.type || P.type,
       pierce: Math.round(lerp(P.pierce, P.pierceFull)),
@@ -512,8 +560,20 @@ export class WeaponRuntime {
       status: rider?.status || P.status, statusStacks: rider?.stacks || P.statusStacks || 1, statusPower: rider?.statusPower || 0,
       expose: rider?.expose || 0, boonGod: rider?.god, boonSlot: slot,
       source: A, hero: true, onExpire: P.onExpire || 'burst',
+      blastRadius: blastRadius * forgeMul,
       shake: full ? 0.2 : 0.08,
-    });
+    };
+    const id = this.combat.projectiles.fire(spec);
+    const spread = full && ((this.weaponId === 'spear' && forge?.trident) || (this.weaponId === 'bow' && forge?.triple));
+    if (spread) {
+      for (const angle of [-0.16, 0.16]) {
+        const ca = Math.cos(angle), sa = Math.sin(angle);
+        const dx = A.facing.x * ca - A.facing.y * sa;
+        const dz = A.facing.x * sa + A.facing.y * ca;
+        this.combat.projectiles.fire({ ...spec, dx, dz, damage: spec.damage * 0.72, shake: 0.04, tag: `forge:${this.weaponId}-spread` });
+      }
+      this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'spread' });
+    }
     if (P.stick) this.stuck = id;
     const sh = full && c.shakeFull ? c.shakeFull : c.shake;
     if (sh) this.ctx.events.emit('camera.shake', sh);
@@ -530,6 +590,10 @@ export class WeaponRuntime {
   _beginRush(full) {
     const c = this.weapon.charge;
     const { mods, rider } = this._boon('special');
+    const forge = this._forge();
+    const forgeMul = mods?.forgeMul || 1;
+    const banked = this._forgeBank || 0;
+    this._forgeBank = 0;
     this.state = 'rush'; this.t = 0; this.rootDone = 0; this._rushFull = full;
     this._rushDist = full ? c.dash.distanceFull : c.dash.distance;
     this._rushTime = full ? c.dash.timeFull : c.dash.time;
@@ -538,7 +602,7 @@ export class WeaponRuntime {
       shape: c.hitbox.shape, owner: this.actor, source: this.actor,
       radius: c.hitbox.radius, maxTargets: c.hitbox.maxTargets, pierce: c.hitbox.pierce,
       t0: 0, t1: this._rushTime, life: this._rushTime + 0.02,
-      damage: (full ? c.damageFull : c.damage) * (mods?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0),
+      damage: (full ? c.damageFull : c.damage) * (mods?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0) + banked,
       type: rider?.type || c.type || 'physical',
       knockback: (full ? c.knockbackFull : c.knockback) + (rider?.knockback || 0) + (mods?.knockback || 0),
       poiseDamage: c.poise, hitstop: full ? c.hitstopFull : c.hitstop,
@@ -548,6 +612,13 @@ export class WeaponRuntime {
       shake: (full ? c.shakeFull : c.shake).amp, color: rider?.color || c.color, tag: 'shield:rush',
     });
     this.ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.06, this.actor.position.z), { radius: full ? 2.6 : 1.8, color: rider?.color || c.color, life: 0.3 });
+    if (full && forge?.ram) {
+      this.combat.hitboxes.spawn({ shape: 'circle', owner: this.actor, source: this.actor, follow: true,
+        radius: 3.35, t0: 0, t1: Math.min(0.18, this._rushTime), life: Math.min(0.20, this._rushTime + 0.02),
+        maxTargets: 12, damage: forge.ram * forgeMul, type: 'fire', knockback: 5.5,
+        status: 'burn', statusStacks: 2, color: '#ff9b42', tag: 'forge:shield-ram' });
+      this.ctx.events.emit('forge.triggered', { weapon: 'shield', effect: 'ram' });
+    }
     if (rider) this._playBoonFx(rider, this.combat._v3a.set(this.actor.position.x, 1.0, this.actor.position.z), this.combat._v3b.set(this.actor.facing.x, 0, this.actor.facing.y), 'special');
     if (rider?.deflect) this.combat.activateDeflect(this.actor, rider.deflect, rider.color);
     this.ctx.events.emit('camera.shake', full ? c.shakeFull : c.shake);
@@ -589,6 +660,16 @@ export class WeaponRuntime {
           this.ctx.audio?.sfx?.(b.sfxReflect, { pos: A.position });
           this.ctx.events.emit('camera.shake', { amp: 0.09, dur: 0.16, freq: 33 });
           this.combat.hitstop(52);
+          const forge = this._forge();
+          if (forge?.reflect) {
+            const forgeMul = this.ctx.boons?.mods?.forgeMul || 1;
+            this.combat.hitboxes.spawn({ shape: 'circle', owner: A, source: A, follow: false,
+              x: p.x, z: p.z, radius: 2.5, t0: 0, t1: 0.08, life: 0.10,
+              maxTargets: 10, damage: forge.reflect * forgeMul, type: 'fire', knockback: 3.5,
+              status: 'burn', statusStacks: 1, color: '#ff9b42', tag: 'forge:shield-reflect' });
+            this.ctx.vfx?.shockwave?.(this.combat._v3a.set(p.x, 0.07, p.z), { radius: 2.5, color: '#ff9b42', life: 0.28 });
+            this.ctx.events.emit('forge.triggered', { weapon: 'shield', effect: 'reflect' });
+          }
         }
       });
     }
@@ -619,6 +700,11 @@ export class WeaponRuntime {
       this.combat._v3b.set(-A.facing.x, 0, -A.facing.y), { type: 'arcane', scale: perfect ? 1.2 : 0.7, color: b.color });
     this.ctx.events.emit('weapon.blocked', { actor: A, perfect, amount: info.amount });
     if (perfect) {
+      const bank = this._forge()?.bank || 0;
+      if (bank) {
+        this._forgeBank = bank * (this.ctx.boons?.mods?.forgeMul || 1);
+        this.ctx.events.emit('forge.triggered', { weapon: 'shield', effect: 'bank', damage: this._forgeBank });
+      }
       this.combat.hitstop(b.perfectHitstop);
       this.ctx.engine?.slowmo?.(b.perfectSlowmo[0], b.perfectSlowmo[1]);
       return 0;
@@ -636,12 +722,17 @@ export class WeaponRuntime {
     // fire the return leg from wherever the throw ended up (or from max range)
     const ox = A.position.x + A.facing.x * 7.5, oz = A.position.z + A.facing.y * 7.5;
     const dx = A.position.x - ox, dz = A.position.z - oz;
+    const forge = this._forge();
+    const forgeMul = this.ctx.boons?.mods?.forgeMul || 1;
     P.fire({
       x: ox, y: 1.1, z: oz, dx, dz, kind: 'straight',
       speed: c.recall.speed, radius: c.recall.radius, life: 1.1,
       damage: c.recall.damage, pierce: c.recall.pierce, knockback: c.recall.knockback,
       hitstop: c.recall.hitstop, color: c.recall.color, source: A, hero: true, size: 1.2,
+      kind: forge?.homing ? 'homing' : 'straight', homing: forge?.homing || 0,
+      blastRadius: (forge?.recallBlast || 0) * forgeMul, type: forge?.recallBlast ? 'fire' : 'physical',
     });
+    if (forge?.recallBlast || forge?.homing) this.ctx.events.emit('forge.triggered', { weapon: 'spear', effect: 'recall' });
     this.stuck = null;
     this.ctx.audio?.sfx?.('spear.recall', { pos: A.position });
     return true;

@@ -202,7 +202,7 @@ export class Player {
 
     if (!ctx.CAPTURE) {
       this._onKey = (e) => {
-        if (e.repeat || !this.ctx?.combat) return;
+        if (e.repeat || !this.ctx?.combat || this.ctx?.input?.enabled === false) return;
         const pick = WEAPON_KEYS[e.code];
         if (pick) this.ctx.combat.equip?.(pick);
         else if (e.code === 'KeyX' || e.code === 'KeyC') this.ctx.combat.cycleWeapon?.();

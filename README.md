@@ -51,11 +51,13 @@ npm run build && npm run preview
 | **Space** / **Shift** | Dash — i-frames during the active window, cancels attack recovery |
 | **1 2 3 4** | Equip blade / spear / bow / shield |
 | **X** or **C** | Cycle weapon |
-| **R** | Summon |
+| **R** | God Call / Summon |
 | **F** | Interact (home altar, doors, rewards) |
 | **Esc** | Pause |
+| **H** | Open the in-game controls guide |
 
-Gamepad is supported: left stick moves, right stick aims, face buttons map to attack/special/dash.
+Gamepad is supported: left stick moves, right stick aims, face buttons map to attack/special/dash,
+and the Menu button pauses. The pause menu includes persistent Master, Music, and Effects volume controls.
 
 ### The four weapons
 

@@ -42,12 +42,20 @@ export class HomeBase {
     ctx.spawner?.stop?.();
     ctx.enemies?.clear?.();
 
-    const stone = ctx.mats?.get?.('stone.tartarus', { variation: 0.18, litGain: 0.7, ambGain: 0.9 }) || standard(0x302542);
+    const stone = ctx.mats?.get?.('stone.tartarus.rim', { variation: 0.18, litGain: 0.82, ambGain: 1.05 }) || standard(0x302542);
+    const shrine = ctx.mats?.get?.('shrine.divine', { variation: 0.12, litGain: 0.88, ambGain: 1.0 }) || stone;
     const bronze = ctx.mats?.get?.('bronze.tartarus', { roughness: 0.38, metalness: 0.88 }) || standard(0x9c6a2f);
     const dark = ctx.mats?.get?.('iron.tartarus', { roughness: 0.65, metalness: 0.7 }) || standard(0x171224);
 
     this._buildPortal(stone, bronze, dark);
-    this._buildAltar(stone, bronze, dark);
+    this._buildAltar(shrine, bronze, dark);
+
+    // Crossroads lighting is subject-first: a broad cool fill preserves the
+    // hero silhouette while a small warm forge bounce separates the altar.
+    const fill = new THREE.PointLight('#b9d7ff', 5.5, 28, 1.7);
+    fill.position.set(-4.5, 7.5, 5.5); this.root.add(fill);
+    const forgeBounce = new THREE.PointLight('#ff9b42', 4.2, 17, 1.9);
+    forgeBounce.position.set(ALTAR_POS.x - 1.2, 3.2, ALTAR_POS.z + 1.8); this.root.add(forgeBounce);
 
     const p = ctx.player;
     if (p) {
@@ -64,6 +72,7 @@ export class HomeBase {
     ctx.ui?.clearPrompts?.();
     ctx.ui?.prompt?.(PORTAL_POS, 'WALK THROUGH · BEGIN THE DESCENT', { key: 'W', height: 4.75, dur: 1e9 });
     ctx.ui?.prompt?.(ALTAR_POS, 'OFFER NECTAR · ALTAR OF THE GODS', { key: 'F', height: 3.0, dur: 1e9 });
+    ctx.ui?.prompt?.(new THREE.Vector3(-5.8, 0, 3.8), 'CONTROLS & AUDIO SETTINGS', { key: 'H', height: 2.0, dur: 1e9 });
     ctx.ui?.setRoom?.(0, 'crossroads');
     ctx.ui?.toast?.('THE CROSSROADS · HOME', { color: '#d8b6ff', dur: 3.0 });
     return this;
@@ -112,7 +121,7 @@ export class HomeBase {
       rune.rotation.z = a;
     }
 
-    const light = new THREE.PointLight('#8c5cff', 18, 12, 2);
+    const light = new THREE.PointLight('#8c5cff', 10.5, 13, 2);
     light.position.set(0, 2.5, 0.7);
     g.add(light);
     this.portalLight = light;
@@ -142,7 +151,7 @@ export class HomeBase {
       gem.position.set(Math.cos(a) * 1.32, 0.18, Math.sin(a) * 1.32);
       gem.userData.phase = a;
     }
-    const light = new THREE.PointLight('#c59cff', 8, 8, 2);
+    const light = new THREE.PointLight('#ffb166', 4.8, 10, 2);
     light.position.y = 2.0;
     g.add(light);
   }
@@ -155,7 +164,7 @@ export class HomeBase {
       this.portalCore.scale.setScalar(s);
     }
     if (this.runes) this.runes.rotation.z = this.t * 0.10;
-    if (this.portalLight) this.portalLight.intensity = 16 + Math.sin(this.t * 3.1) * 3;
+    if (this.portalLight) this.portalLight.intensity = 9.5 + Math.sin(this.t * 3.1) * 1.4;
     if (this.altarPool) this.altarPool.rotation.y = this.t * 0.32;
     if (this.godLights) {
       for (const gem of this.godLights.children) {

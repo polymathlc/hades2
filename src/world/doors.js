@@ -22,6 +22,9 @@
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
 import { Parts, Batcher, lathe, faceted, mergeGeos, ensureColor, TAU, DEG } from './kit.js';
+import { GOD_INFO, GOD_KEYS } from '../game/boons.js';
+
+const GOD_GLYPH = Object.freeze(Object.fromEntries(GOD_KEYS.map((god, i) => [god, i])));
 
 export const REWARDS = {
   boon:   { label: 'Boon of the Gods', color: '#c9b8ff', core: '#ffffff', glyph: 0 },
@@ -30,6 +33,19 @@ export const REWARDS = {
   weapon: { label: 'Arms of the Dead', color: '#7ee0ff', core: '#e8fbff', glyph: 3 },
 };
 export const REWARD_KINDS = Object.keys(REWARDS);
+
+/** Pure, deterministic gate contract used by world construction and tests. */
+export function planDoorChoices(count, random = () => 0.5) {
+  const n = Math.max(0, count | 0);
+  const rest = ['gold', 'health'];
+  for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); const t = rest[i]; rest[i] = rest[j]; rest[j] = t; }
+  const rewards = ['boon', 'weapon', ...rest];
+  const bi = Math.floor(random() * Math.max(1, Math.min(n, rewards.length)));
+  if (bi > 0) { const t = rewards[0]; rewards[0] = rewards[bi]; rewards[bi] = t; }
+  const gods = GOD_KEYS.slice();
+  for (let i = gods.length - 1; i > 0; i--) { const j = Math.floor(random() * (i + 1)); const t = gods[i]; gods[i] = gods[j]; gods[j] = t; }
+  return Array.from({ length: n }, (_, i) => ({ kind: rewards[i % rewards.length], god: gods[i % gods.length] }));
+}
 
 // ---------------------------------------------------------------------------
 // The sigil: a burning emblem inside a gold ring. Authored as SDF shapes so it
@@ -98,13 +114,65 @@ const SIGIL_FRAG = /* glsl */`
     return d;
   }
 
+  // Compact SDF versions of the same eleven identities drawn by the boon UI.
+  // They are deliberately bold: a gate logo must survive the isometric camera.
+  float godGlyph(vec2 p, float which){
+    float d = 1e3;
+    if(which < 0.5){ // Zeus — lightning bolt
+      vec2 q = rot(-0.38) * p;
+      d = min(sdBox(q - vec2(-0.08,-0.12), vec2(0.10,0.30)), sdBox(q - vec2(0.08,0.18), vec2(0.10,0.30)));
+    } else if(which < 1.5){ // Poseidon — trident
+      d = sdBox(p - vec2(0.0,0.08), vec2(0.035,0.34));
+      d = min(d, sdBox(p - vec2(0.0,-0.20), vec2(0.28,0.035)));
+      d = min(d, sdBox(p - vec2(-0.25,-0.31), vec2(0.035,0.15)));
+      d = min(d, sdBox(p - vec2(0.25,-0.31), vec2(0.035,0.15)));
+      d = min(d, sdBox(p - vec2(0.0,-0.34), vec2(0.035,0.18)));
+    } else if(which < 2.5){ // Athena — aegis
+      d = max(sdCircle(p - vec2(0.0,-0.03),0.34), p.y - 0.25);
+      d = min(d, sdCircle(p - vec2(0.0,-0.04),0.08));
+    } else if(which < 3.5){ // Aphrodite — heart
+      vec2 q = vec2(p.x, p.y + 0.06);
+      float a = q.x*q.x + q.y*q.y - 0.105;
+      d = (a*a*a - q.x*q.x*q.y*q.y*q.y) * 5.0;
+    } else if(which < 4.5){ // Ares — crossed blades
+      d = min(sdBox(rot(0.68)*p,vec2(0.035,0.37)), sdBox(rot(-0.68)*p,vec2(0.035,0.37)));
+      d = min(d, sdCircle(p,0.08));
+    } else if(which < 5.5){ // Artemis — bow and arrow
+      float ring = abs(length(p - vec2(-0.16,0.0)) - 0.34) - 0.025;
+      d = max(ring, p.x - 0.18);
+      d = min(d, sdBox(p - vec2(0.02,0.0),vec2(0.34,0.025)));
+    } else if(which < 6.5){ // Dionysus — grapes
+      for(int i=0;i<3;i++) for(int j=0;j<3;j++){
+        vec2 q=vec2((float(i)-1.0)*0.13 + (float(j)-1.0)*0.035,(float(j)-1.0)*0.13);
+        d=min(d,sdCircle(p-q,0.075));
+      }
+      d=min(d,sdBox(rot(-0.45)*(p-vec2(0.12,-0.28)),vec2(0.12,0.045)));
+    } else if(which < 7.5){ // Hermes — winged staff
+      d=sdBox(p-vec2(0.0,0.08),vec2(0.035,0.33));
+      d=min(d,sdBox(rot(0.55)*(p-vec2(-0.16,-0.12)),vec2(0.20,0.045)));
+      d=min(d,sdBox(rot(-0.55)*(p-vec2(0.16,-0.12)),vec2(0.20,0.045)));
+    } else if(which < 8.5){ // Hecate — triple moon
+      d=sdCircle(p,0.16);
+      d=min(d,abs(sdCircle(p-vec2(-0.27,0.0),0.16))-0.025);
+      d=min(d,abs(sdCircle(p-vec2(0.27,0.0),0.16))-0.025);
+    } else if(which < 9.5){ // Selene — crescent
+      d=max(sdCircle(p,0.34),-sdCircle(p-vec2(0.14,-0.02),0.29));
+    } else { // Hephaestus — hammer and anvil
+      vec2 q=rot(-0.55)*p;
+      d=min(sdBox(q-vec2(0.0,0.05),vec2(0.045,0.31)),sdBox(q-vec2(0.0,-0.25),vec2(0.22,0.075)));
+      d=min(d,sdBox(p-vec2(0.0,0.27),vec2(0.30,0.055)));
+      d=min(d,sdBox(p-vec2(-0.10,0.34),vec2(0.16,0.055)));
+    }
+    return d;
+  }
+
   float hash(vec2 p){ vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
   float vn(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
     return mix(mix(hash(i), hash(i + vec2(1,0)), f.x), mix(hash(i + vec2(0,1)), hash(i + vec2(1,1)), f.x), f.y); }
 
   void main(){
     vec2 p = vUv - 0.5;
-    float d = glyph(p, uGlyph);
+    float d = godGlyph(p, uGlyph);
 
     // a slow, non-periodic breath so a sealed sigil still feels alive
     float br = 0.55 + 0.45 * vn(vec2(uTime * 0.35 + uSeed * 7.0, uSeed));
@@ -258,12 +326,7 @@ export class Doors {
     // the room to put the biome's COMPLEMENT at real scale. `weapon` is the
     // cool one (#7ee0ff), so a chamber is guaranteed to advertise it alongside
     // the boon rather than leaving the whole gate arc salmon-on-plum.
-    const rest = ['gold', 'health'];
-    for (let i = rest.length - 1; i > 0; i--) { const j = Math.floor(f() * (i + 1)); const t = rest[i]; rest[i] = rest[j]; rest[j] = t; }
-    const pool = ['boon', 'weapon', ...rest];
-    // the boon is not always the first doorway
-    const bi = Math.floor(f() * Math.max(1, Math.min(anchors.length, pool.length)));
-    if (bi > 0) { const t = pool[0]; pool[0] = pool[bi]; pool[bi] = t; }
+    const plan = planDoorChoices(anchors.length, f);
 
     const stone = kit.mat('shrine');
     // §9.5 relief pass: the jamb fret is the ornament closest to camera in the
@@ -280,8 +343,8 @@ export class Doors {
     // collapses into one instanced draw per part instead of ~40 per door.
     const batch = new Batcher(this.root);
     anchors.forEach((a, i) => {
-      const kind = pool[i % pool.length];
-      const door = this._buildOne(ctx, kit, a, kind, i, { stone, trim, metal, seed: f(), batch });
+      const { kind, god } = plan[i];
+      const door = this._buildOne(ctx, kit, a, kind, i, { stone, trim, metal, seed: f(), batch, god });
       this.list.push(door);
       this.root.add(door.group);
     });
@@ -291,6 +354,8 @@ export class Doors {
 
   _buildOne(ctx, kit, anchor, kind, index, o) {
     const R = REWARDS[kind] || REWARDS.boon;
+    const god = o.god || GOD_KEYS[index % GOD_KEYS.length];
+    const G = GOD_INFO[god] || GOD_INFO.zeus;
     const g = new THREE.Group();                      // the ANIMATED half
     g.name = 'door.' + kind;
     g.position.set(anchor.x, anchor.y || 0, anchor.z);
@@ -352,9 +417,9 @@ export class Doors {
     // ---- the sigil --------------------------------------------------------
     const sigilMat = new THREE.ShaderMaterial({
       uniforms: {
-        uColor: { value: new THREE.Color(R.color) },
+        uColor: { value: new THREE.Color(G.color) },
         uCore: { value: new THREE.Color(R.core) },
-        uTime: { value: 0 }, uOpen: { value: 0 }, uGlyph: { value: R.glyph }, uSeed: { value: o.seed },
+        uTime: { value: 0 }, uOpen: { value: 0 }, uGlyph: { value: GOD_GLYPH[god] ?? 0 }, uSeed: { value: o.seed },
       },
       vertexShader: SIGIL_VERT, fragmentShader: SIGIL_FRAG,
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
@@ -392,7 +457,7 @@ export class Doors {
     const threshMat = new THREE.ShaderMaterial({
       uniforms: {
         uBody: { value: rimC },
-        uCore: { value: new THREE.Color(R.color) },
+        uCore: { value: new THREE.Color(G.color) },
         uInk: { value: new THREE.Color('#05040b') },
         uTime: { value: 0 }, uOpen: { value: 0 }, uSeed: { value: o.seed },
       },
@@ -537,7 +602,7 @@ export class Doors {
       anchor.x - Math.cos(anchor.angle) * 1.1, 0, anchor.z - Math.sin(anchor.angle) * 1.1);
 
     return {
-      index, kind, label: R.label, color: R.color,
+      index, kind, god, godName: G.name, label: `${G.name} · ${R.label}`, color: G.color,
       group: g, sigilMat, threshMat, leaves,
       angle: anchor.angle,
       position: new THREE.Vector3(anchor.x, 0, anchor.z),
@@ -552,7 +617,7 @@ export class Doors {
   // -------------------------------------------------------------------------
   getChoices() {
     return this.list.map((d) => ({
-      index: d.index, kind: d.kind, label: d.label, color: d.color,
+      index: d.index, kind: d.kind, god: d.god, godName: d.godName, label: d.label, color: d.color,
       position: d.position.clone(), anchor: d.anchor.clone(), sealed: this.sealed,
     }));
   }
@@ -607,7 +672,7 @@ export class Doors {
         if (dx * dx + dz * dz < 2.25) {
           if (this._entered !== d.index) {
             this._entered = d.index;
-            const payload = { index: d.index, kind: d.kind, door: d };
+            const payload = { index: d.index, kind: d.kind, god: d.god, godName: d.godName, door: d };
             for (const cb of this._cbs.slice()) { try { cb(payload); } catch (e) { console.error('[doors]', e); } }
             ctx.events?.emit?.('door.entered', payload);
           }

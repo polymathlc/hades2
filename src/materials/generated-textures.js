@@ -1,4 +1,4 @@
-// Eight image-generated atlases supply the authored colour and brushwork for every
+// Nine image-generated atlases supply the authored colour and brushwork for every
 // named material recipe. The procedural baker still owns height-derived normals,
 // roughness, metalness, AO, emissive masks, and the stochastic anti-tiling pass.
 // Keeping those jobs separate gives the game hand-painted source art without
@@ -13,6 +13,7 @@ import tartarusV2Url from '../assets/textures/generated/tartarus-materials-v2-at
 import creaturesPropsV3Url from '../assets/textures/generated/creatures-props-v3-atlas.jpg';
 import arenaBoonsV4Url from '../assets/textures/generated/arena-boons-v4-atlas.jpg';
 import asphodelVisibilityV5Url from '../assets/textures/generated/asphodel-visibility-v5-atlas.jpg';
+import hephaestusForgeGatesV6Url from '../assets/textures/generated/hephaestus-forge-gates-v6-atlas.png';
 
 const GRID_COLS = 3;
 const GRID_ROWS = 2;
@@ -127,6 +128,19 @@ const ATLASES = [
       { col: 0, row: 1, name: 'controlled-lava-v5', keys: ['lava.asphodel'], composite: { detail: 0.28, chroma: 0.055, sourceMix: 0.32 } },
       { col: 1, row: 1, name: 'pale-ash-rubble-v5', keys: ['rubble.asphodel', 'bone.asphodel'], composite: { detail: 0.34, chroma: 0.035, sourceMix: 0.29 } },
       { col: 2, row: 1, name: 'blackened-asphodel-metal-v5', keys: ['bronze.asphodel', 'iron.asphodel'], composite: { detail: 0.32, chroma: 0.045, sourceMix: 0.25 } },
+    ],
+  },
+  {
+    // The portrait occupies cell 0/0 and is consumed directly by the boon UI.
+    // The remaining five cells bring the generated forge language into the
+    // Crossroads, divine gates, metal props, lava and hero equipment.
+    name: 'hephaestus-forge-gates-v6', url: hephaestusForgeGatesV6Url,
+    tiles: [
+      { col: 1, row: 0, name: 'crossroads-carved-slate-v6', keys: ['stone.tartarus.rim'], composite: { detail: 0.34, chroma: 0.045, sourceMix: 0.18 } },
+      { col: 2, row: 0, name: 'divine-gate-bronze-v6', keys: ['shrine.divine', 'gold.divine'], composite: { detail: 0.34, chroma: 0.07, sourceMix: 0.20 } },
+      { col: 0, row: 1, name: 'forge-blackened-iron-v6', keys: ['iron.dark', 'iron.tartarus'], composite: { detail: 0.38, chroma: 0.04, sourceMix: 0.20 } },
+      { col: 1, row: 1, name: 'controlled-molten-bronze-v6', keys: ['lava'], composite: { detail: 0.24, chroma: 0.06, sourceMix: 0.12 } },
+      { col: 2, row: 1, name: 'tempered-weapon-steel-v6', keys: ['armour.bronze', 'shield.brute'], composite: { detail: 0.34, chroma: 0.06, sourceMix: 0.16 } },
     ],
   },
 ];
@@ -275,7 +289,7 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
   return texture;
 }
 
-/** Load and slice the seven project-bound atlases into recipe-addressable maps. */
+/** Load and slice the project-bound atlases into recipe-addressable maps. */
 export async function loadGeneratedAlbedos(anisotropy = 8) {
   if (typeof document === 'undefined') return new Map();
   const loader = new THREE.TextureLoader();

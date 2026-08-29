@@ -15,6 +15,7 @@ import {
 } from './ornament.js';
 import { GOD_INFO, SLOTS, RARITY_LABEL, BoonState } from '../game/boons.js';
 import godPortraitsUrl from '../assets/ui/generated/god-portraits-v1.jpg';
+import hephaestusAtlasUrl from '../assets/textures/generated/hephaestus-forge-gates-v6-atlas.png';
 
 const PORTRAIT_GRID = { cols: 5, rows: 2 };
 const PORTRAIT_CELL = {
@@ -23,8 +24,24 @@ const PORTRAIT_CELL = {
 };
 const godPortraits = typeof Image !== 'undefined' ? new Image() : null;
 if (godPortraits) godPortraits.src = godPortraitsUrl;
+const hephaestusAtlas = typeof Image !== 'undefined' ? new Image() : null;
+if (hephaestusAtlas) hephaestusAtlas.src = hephaestusAtlasUrl;
 
 function drawGodPortrait(g, cx, cy, r, god) {
+  if (god === 'hephaestus' && hephaestusAtlas?.complete && hephaestusAtlas.naturalWidth) {
+    const sw = hephaestusAtlas.naturalWidth / 3;
+    const sh = hephaestusAtlas.naturalHeight / 2;
+    g.save();
+    g.beginPath(); g.arc(cx, cy, r, 0, 6.2832); g.clip();
+    g.filter = 'brightness(1.55) saturate(1.02) contrast(1.04)';
+    g.drawImage(hephaestusAtlas, 2, 2, sw - 4, sh - 4, cx - r, cy - r, r * 2, r * 2);
+    g.filter = 'none';
+    const veil = g.createLinearGradient(cx, cy - r, cx, cy + r);
+    veil.addColorStop(0, 'rgba(8,4,14,0.01)'); veil.addColorStop(0.68, 'rgba(8,4,14,0.03)'); veil.addColorStop(1, 'rgba(8,4,14,0.45)');
+    g.fillStyle = veil; g.fillRect(cx - r, cy - r, r * 2, r * 2);
+    g.restore();
+    return true;
+  }
   const cell = PORTRAIT_CELL[god];
   if (!cell || !godPortraits?.complete || !godPortraits.naturalWidth) return false;
   const sw = godPortraits.naturalWidth / PORTRAIT_GRID.cols;
@@ -138,6 +155,17 @@ function emblemPath(g, kind, r) {
       g.moveTo(.44 * r, 0); g.arc(0, 0, .44 * r, 0, 6.2832);   // full moon
       cres(-0.74 * r, .40 * r, false);
       cres(0.74 * r, .40 * r, true);
+      break;
+    }
+    case 'hammer': {                                 // Hephaestus — hammer + anvil
+      g.save(); g.rotate(-0.54);
+      g.rect(-.12 * r, -.18 * r, .24 * r, 1.08 * r);
+      g.rect(-.58 * r, -.56 * r, 1.16 * r, .34 * r);
+      g.restore();
+      g.moveTo(...P(-.72, .42)); g.lineTo(...P(.72, .42));
+      g.lineTo(...P(.48, .66)); g.lineTo(...P(.22, .72));
+      g.lineTo(...P(.08, .94)); g.lineTo(...P(-.54, .94));
+      g.lineTo(...P(-.68, .70)); g.closePath();
       break;
     }
     case 'crescent':                                 // Selene
@@ -260,6 +288,7 @@ export class BoonOverlay {
     this.title = 'A Boon of the Gods';
     this.subtitle = '';
     this.rects = [];
+    this._inputWasEnabled = true;
   }
 
   /** ARCHITECTURE §2.9 — ui.showBoonChoice(options) -> Promise<chosenBoon> */
@@ -268,6 +297,9 @@ export class BoonOverlay {
     this.options = list.map(x => normalise(x));
     this.raw = list;
     this.active = true;
+    const input = this.ui.ctx?.input;
+    this._inputWasEnabled = input ? input.enabled !== false : true;
+    if (input) input.enabled = false;
     this.t0 = this.ui.now();
     this.hover = -1; this.chosen = -1; this.chosenT = 0;
     const gods = [...new Set(this.options.map(x => x.god))];
@@ -297,12 +329,25 @@ export class BoonOverlay {
     this.ui.hud?.alpha?.set?.(1);
     setTimeout(() => {
       this.active = false;
+      this._restoreInput();
       const r = this._resolve; this._resolve = null;
       if (r) r(picked);
     }, 340);
   }
 
-  cancel() { this.ui.hud?.alpha?.set?.(1); if (this._resolve) { const r = this._resolve; this._resolve = null; this.active = false; r(null); } }
+  _restoreInput() {
+    const input = this.ui.ctx?.input;
+    if (!input) return;
+    const anotherModal = this.ui.nectarUI?.active || this.ui.menus?.screen !== 'game';
+    input.enabled = this._inputWasEnabled && !anotherModal;
+  }
+
+  cancel() {
+    this.ui.hud?.alpha?.set?.(1);
+    const r = this._resolve; this._resolve = null; this.active = false;
+    this._restoreInput();
+    if (r) r(null);
+  }
 
   layout(W, H, S) {
     const cw = CARD_W * S, ch = CARD_H * S, gap = CARD_GAP * S;

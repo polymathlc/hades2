@@ -20,6 +20,7 @@ export const SLOTS = {
   dash:    { name: 'Dash',    glyph: 'chevron' },
   call:    { name: 'Call',    glyph: 'horn' },
   passive: { name: 'Boon',    glyph: 'laurel' },
+  forge:   { name: 'Weapon Forge', glyph: 'hammer' },
 };
 
 export const RARITIES = ['common', 'rare', 'epic', 'heroic'];
@@ -42,6 +43,7 @@ export const GOD_INFO = {
   hermes:    { name: 'Hermes',    title: 'God of Swiftness',      color: GODS.hermes,    status: null,    emblem: 'wing' },
   hecate:    { name: 'Hecate',    title: 'Witch of the Crossroads', color: GODS.hecate,  status: 'chill', emblem: 'moons' },
   selene:    { name: 'Selene',    title: 'Goddess of the Moon',   color: GODS.selene,    status: 'chill', emblem: 'crescent' },
+  hephaestus:{ name: 'Hephaestus',title: 'God of the Forge',      color: GODS.hephaestus,status: 'burn',  emblem: 'hammer' },
 };
 export const GOD_KEYS = Object.keys(GOD_INFO);
 
@@ -269,6 +271,49 @@ export const BOONS = [
     v => `Your Special deals ${v.dmg} arcane damage and Chills (${v.chill}).`,
     (m, v) => rider(m, 'special', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.selene, god: 'selene', name: 'Moonlit Flourish' }),
     { status: 'chill' }),
+
+  // ── HEPHAESTUS — persistent, weapon-specific Daedalus-style forges ──────
+  // Forge boons live outside the four core action slots, so they can alter a
+  // weapon's rules without replacing an Olympian Attack/Special/Cast/Dash.
+  B('hephaestus.blade.wave', 'hephaestus', 'forge', 'Furnace Wave', { dmg: 32 },
+    v => `The Blade combo finisher launches a molten wave for ${v.dmg} damage.`,
+    (m, v) => { m.forge.blade.wave = Math.max(m.forge.blade.wave, v.dmg); }, { weapon: 'blade' }),
+  B('hephaestus.blade.echo', 'hephaestus', 'forge', 'Echo-Tempered Edge', { dmg: 22 },
+    v => `Blade finishers strike a second time in a wide forged ring for ${v.dmg} damage.`,
+    (m, v) => { m.forge.blade.echo = Math.max(m.forge.blade.echo, v.dmg); }, { weapon: 'blade' }),
+  B('hephaestus.blade.ember', 'hephaestus', 'forge', 'Emberbrand', { stacks: 3 },
+    v => `Every Blade hit brands foes with ${v.stacks} Hangover-like ember stacks.`,
+    (m, v) => { m.forge.blade.ember = Math.max(m.forge.blade.ember, v.stacks); }, { weapon: 'blade' }),
+
+  B('hephaestus.spear.trident', 'hephaestus', 'forge', 'Trident Temper', {},
+    () => `A fully charged Spear throw splits into three forged prongs.`,
+    (m) => { m.forge.spear.trident = true; }, { weapon: 'spear' }),
+  B('hephaestus.spear.recall', 'hephaestus', 'forge', 'Volcanic Recall', { radius: 2.8 },
+    v => `The returning Spear erupts in a ${v.radius}m blast when it strikes.`,
+    (m, v) => { m.forge.spear.recallBlast = Math.max(m.forge.spear.recallBlast, v.radius); }, { weapon: 'spear' }),
+  B('hephaestus.spear.seek', 'hephaestus', 'forge', 'Magnetic Harpoon', { turn: 5 },
+    v => `Thrown and recalled Spears bend toward nearby foes with ${v.turn} homing force.`,
+    (m, v) => { m.forge.spear.homing = Math.max(m.forge.spear.homing, v.turn); }, { weapon: 'spear' }),
+
+  B('hephaestus.bow.triple', 'hephaestus', 'forge', 'Triple-Forged String', {},
+    () => `A fully drawn Bow fires a tight fan of three arrows.`,
+    (m) => { m.forge.bow.triple = true; }, { weapon: 'bow' }),
+  B('hephaestus.bow.explosive', 'hephaestus', 'forge', 'Blast-Capped Arrows', { radius: 3.2 },
+    v => `Full-charge arrows explode across ${v.radius}m on impact.`,
+    (m, v) => { m.forge.bow.blast = Math.max(m.forge.bow.blast, v.radius); }, { weapon: 'bow' }),
+  B('hephaestus.bow.seek', 'hephaestus', 'forge', 'Living Bronze Fletching', { turn: 6 },
+    v => `Full-charge arrows seek enemies with ${v.turn} homing force.`,
+    (m, v) => { m.forge.bow.homing = Math.max(m.forge.bow.homing, v.turn); }, { weapon: 'bow' }),
+
+  B('hephaestus.shield.ram', 'hephaestus', 'forge', 'Furnace Ram', { dmg: 38 },
+    v => `A full Shield Rush releases a second molten shockwave for ${v.dmg} damage.`,
+    (m, v) => { m.forge.shield.ram = Math.max(m.forge.shield.ram, v.dmg); }, { weapon: 'shield' }),
+  B('hephaestus.shield.bank', 'hephaestus', 'forge', 'Masterwork Reprisal', { dmg: 44 },
+    v => `A perfect block banks ${v.dmg} damage for your next Shield Rush.`,
+    (m, v) => { m.forge.shield.bank = Math.max(m.forge.shield.bank, v.dmg); }, { weapon: 'shield' }),
+  B('hephaestus.shield.reflect', 'hephaestus', 'forge', 'Mirrored Anvil', { dmg: 28 },
+    v => `Reflecting a projectile also blasts nearby foes for ${v.dmg} damage.`,
+    (m, v) => { m.forge.shield.reflect = Math.max(m.forge.shield.reflect, v.dmg); }, { weapon: 'shield' }),
 ];
 
 // ═══════════════════════════════════════════════════════════ DUO BOONS ════
@@ -307,7 +352,7 @@ export function emptyMods() {
     // multiplicative
     dmgMul: 1, attackMul: 1, specialMul: 1, castMul: 1, callMul: 1,
     attackSpeed: 1, castSpeed: 1, moveMul: 1, manaRegenMul: 1, callCharge: 1,
-    damageTaken: 1,
+    damageTaken: 1, forgeMul: 1,
     // additive
     critChance: 0, critMul: 0, dodge: 0, expose: 0, knockback: 0,
     maxHealthAdd: 0, maxManaAdd: 0, iframeAdd: 0, deflect: 0,
@@ -321,6 +366,12 @@ export function emptyMods() {
     // status potency multipliers, keyed to the combat system's own statuses
     status: { burn: 1, chill: 1, shock: 1, doom: 1, weak: 1 },
     statusDuration: { burn: 1, chill: 1, shock: 1, doom: 1, weak: 1 },
+    forge: {
+      blade: { wave: 0, echo: 0, ember: 0 },
+      spear: { trident: false, recallBlast: 0, homing: 0 },
+      bow: { triple: false, blast: 0, homing: 0 },
+      shield: { ram: 0, bank: 0, reflect: 0 },
+    },
   };
 }
 
@@ -471,7 +522,7 @@ export class BoonState {
     };
     const out = [];
     // a duo, if earned, always takes the first slot — it is the run's reward
-    const duos = this.availableDuos();
+    const duos = this.availableDuos().filter(d => !o.god || d.gods.includes(o.god));
     if (duos.length && (o.allowDuo !== false) && (rng ? rng.f() : 1) < (o.duoChance != null ? o.duoChance : 0.18)) {
       const d = rng ? rng.pick(duos) : duos[0];
       out.push(this.offer(d, (rng ? rng.f() : 0) < 0.5 ? 'epic' : 'heroic'));
@@ -479,7 +530,9 @@ export class BoonState {
     // Once a god has blessed the run, boon doors can improve that exact gift.
     // The card keeps its identity but moves one rarity tier, so the changed
     // numbers and effect intensity are easy to understand.
-    const upgradeable = this.granted.filter(rec => rarityRank(rec.rarity) < RARITIES.length - 1 && (!o.god || rec.god === o.god));
+    const upgradeable = this.granted.filter(rec => rarityRank(rec.rarity) < RARITIES.length - 1
+      && (!o.god || rec.god === o.god)
+      && (!rec.boon.weapon || !o.weapon || rec.boon.weapon === o.weapon));
     const upgradeChance = o.upgradeChance != null ? o.upgradeChance : 0.48;
     if (out.length < count && upgradeable.length && (o.preferUpgrade || (rng ? rng.f() : 0) < upgradeChance)) {
       const rec = rng ? rng.pick(upgradeable) : upgradeable[0];
@@ -488,8 +541,9 @@ export class BoonState {
       out.push(upgrade);
     }
     const gods = o.god ? [o.god] : GOD_KEYS;
-    const pool = BOONS.filter(b => gods.includes(b.god) && !this.byId.has(b.id));
-    const src = pool.length >= count ? pool : BOONS.filter(b => gods.includes(b.god));
+    const eligible = b => gods.includes(b.god) && (!b.weapon || !o.weapon || b.weapon === o.weapon);
+    const pool = BOONS.filter(b => eligible(b) && !this.byId.has(b.id));
+    const src = pool.length >= count ? pool : BOONS.filter(eligible);
     const used = new Set(out.map(x => x.boon.id));
     let guard = 0, seq = 0;
     while (out.length < count && guard++ < 400) {

@@ -1,6 +1,6 @@
 # Generated texture atlas prompts
 
-These eight project-bound atlases were produced with the built-in OpenAI image-generation tool.
+These nine project-bound atlases were produced with the built-in OpenAI image-generation tool.
 Every prompt requested an exact 3-column by 2-row, 1536×1024 atlas. At runtime, the game slices
 the 512×512 cells, closes opposite seams, and maps them to the named material recipes.
 
@@ -16,6 +16,25 @@ Color palette: #07060f, #120b1e, #241238, #3a1d52, #ff5a3c, #8c3b46, #5a2331, #2
 Materials/textures: deliberate directional strokes, value variation within each material, darkened crevices, hand-painted highlights, consistent texel density.
 Constraints: no text, no symbols, no UI, no border, no separator lines, no watermark, no logos, no objects casting shadows, no single focal object. Keep every tile edge-to-edge and seamless; preserve an exact 3 columns by 2 rows layout.
 Avoid: photoreal grunge, generic noise, muddy brown, neutral gray shadows, visible repetition, perspective, vignette, scene lighting.
+```
+
+## Hephaestus, forge and divine gates v6 atlas
+
+Reference image: `god-portraits-v1.jpg` was used only to match the portrait cell's painterly mythic visual language. The generated output is stored as `hephaestus-forge-gates-v6-atlas.png`.
+
+```text
+Use the supplied 5x2 Greek deity portrait atlas only as the visual style reference for the portrait cell: painterly mythic game art, strong readable silhouette, dramatic rim light, rich but controlled color, and no copied character.
+
+Create one exact 3-column by 2-row game asset atlas, landscape 3:2 overall, with six equal square cells aligned edge-to-edge.
+
+Top-left: a head-and-shoulders portrait of Hephaestus, Greek god of the forge, mature powerful craftsman, soot-dark hair and beard, bronze-and-iron laurel, warm ember light from below, cool steel rim light, subtle hammer-and-anvil motif behind him, dignified and distinct from Ares, centered face, painterly mythic action-game portrait matching the supplied reference atlas.
+Top-middle: seamless Crossroads carved blue-black slate surface with restrained Greek meander relief, worn edges, pale mineral veins, high readability, low visual noise.
+Top-right: seamless divine gate surface of aged dark bronze and black stone, radial engraved channels and small neutral medallion sockets suitable for overlaying a god emblem in code, no built-in deity logo.
+Bottom-left: seamless forge-blackened hammered iron, blue-steel highlights, soot, shallow dents, readable roughness.
+Bottom-middle: seamless molten bronze and ember-cracked volcanic surface, warm glowing fissures but mostly dark solid material, controlled bloom.
+Bottom-right: seamless tempered steel weapon-inlay surface, layered folded-metal grain, bronze rivets, faint ember seams and celestial blue accents.
+
+Composition constraints: exact equal cells, no gutters, no borders, no frames, no labels, no letters, no numbers, no watermark, no perspective floor planes. Only the top-left cell contains a person; the other five are flat front-facing tileable material swatches. Keep all important portrait details well inside its cell so atlas cropping is safe.
 ```
 
 ## Tartarus materials v2 atlas

@@ -34,7 +34,7 @@
 // critic loop reproducible.
 // ---------------------------------------------------------------------------
 
-import { GOD_KEYS } from './boons.js';
+import { GOD_INFO, GOD_KEYS } from './boons.js';
 import { MetaProgression } from './meta.js';
 import { HomeBase, NectarDrop } from '../world/homebase.js';
 
@@ -266,6 +266,12 @@ export class RunState {
     // and the enter-trigger all come live together.
     this.ctx.world?.setCleared?.(true);
     this.exits = this.ctx.world?.getExits?.() || [];
+    this.ctx.ui?.clearSigils?.();
+    for (const exit of this.exits) {
+      if (!exit?.god || !exit?.anchor) continue;
+      this.ctx.ui?.sigil?.(exit.anchor, { god: exit.god, slot: exit.god === 'hephaestus' ? 'forge' : 'passive', rarity: 'rare', height: 0.25 });
+      this.ctx.ui?.prompt?.(exit.anchor, `${exit.godName || GOD_INFO[exit.god]?.name || 'GOD'} · ${exit.kind?.toUpperCase?.() || 'BOON'}`, { key: 'W', height: 1.15, dur: 1e9 });
+    }
     const heal = this.ctx.boons?.mods?.clearHeal || 0;
     if (heal > 0 && this.ctx.player) {
       this.ctx.player.health = Math.min(this.ctx.player.maxHealth, this.ctx.player.health + heal);
@@ -290,8 +296,11 @@ export class RunState {
   async _claimBoon(d) {
     const state = this.ctx.boons;
     const rng = this._rng?.fork ? this._rng.fork(`boon:${this.depth}:${d?.index || 0}`) : this._rng;
-    const god = rng?.pick ? rng.pick(GOD_KEYS) : GOD_KEYS[(this.depth + (d?.index || 0)) % GOD_KEYS.length];
-    const offers = state?.roll?.(rng, { count: 3, god, upgradeChance: 0.58 }) || [];
+    const god = d?.god && GOD_INFO[d.god] ? d.god : (rng?.pick ? rng.pick(GOD_KEYS) : GOD_KEYS[(this.depth + (d?.index || 0)) % GOD_KEYS.length]);
+    const offers = state?.roll?.(rng, {
+      count: 3, god, weapon: this.ctx.combat?.weaponId,
+      allowDuo: false, upgradeChance: 0.58,
+    }) || [];
     const choice = this.ctx.ui?.showBoonChoice?.(offers, { upgradeChance: 0.58 });
     if (choice && typeof choice.then === 'function') await choice;
     else if (offers[0]) state?.grant?.(offers[0]);

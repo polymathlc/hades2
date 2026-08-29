@@ -125,6 +125,11 @@ export class Audio {
     // CONTRACT 1: under capture this system does not exist.
     if (ctx && ctx.CAPTURE) { this._capture = true; return; }
     this._loadVolumes();
+    if (ctx?.ui?.menus?.settings) {
+      ctx.ui.menus.settings.master = this.vol.master;
+      ctx.ui.menus.settings.music = this.vol.music;
+      ctx.ui.menus.settings.sfx = this.vol.sfx;
+    }
     try { this._rnd = mulberry32((ctx?.rng?.fork?.('audio')?.f?.() * 0xffffffff) >>> 0 || 0x9e37); }
     catch (e) { /* a stub rng — the fixed seed is fine */ }
     this._bind(ctx);
@@ -453,6 +458,14 @@ export class Audio {
   _bind(ctx) {
     if (!ctx || !ctx.events) return;
     const E = ctx.events, on = (n, f) => { this._offs.push(E.on(n, f)); };
+
+    // The canvas settings panel publishes these values. Keep this bridge in
+    // audio authority so every change is ramped, persisted and immediately
+    // audible instead of merely changing the drawn slider.
+    on('settings.volume', (i) => {
+      if (!i || !['master', 'music', 'sfx', 'ui'].includes(i.channel)) return;
+      this.setVolume(i.channel, i.value);
+    });
 
     // ── damage: combat.js already plays a generic 'hit'; this adds the
     //    elemental colour and the crit accent on top of it.

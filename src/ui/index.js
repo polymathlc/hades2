@@ -37,6 +37,7 @@ export class UI {
     this.toasts = [];
     this._rand = 0;
     this.enabled = true;
+    this._padPrev = {};
     // Constructed eagerly, not in init(): main.js adds UI after the player, and
     // Player.init() calls ctx.ui.setHealth() during initAll. Every contract
     // setter must be safe from the moment the object exists.
@@ -151,7 +152,16 @@ export class UI {
         else if (e.key === 'Enter' || e.key === ' ') this.boonUI.choose(this.boonUI.hover < 0 ? 0 : this.boonUI.hover);
         return;
       }
-      if (e.key === 'Escape') { this.screen(this.menus.screen === 'pause' ? 'game' : 'pause'); return; }
+      if (e.key === 'h' || e.key === 'H') {
+        if (!this._modal()) this.screen('pause');
+        if (this.menus.screen === 'pause') this.menus.activate(this.menus.controlsOpen ? 'back' : 'controls');
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
+        else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
+        return;
+      }
       if (!this._modal()) return;
       if (e.key === 'ArrowDown' || e.key === 's') this.menus.key(1);
       else if (e.key === 'ArrowUp' || e.key === 'w') this.menus.key(-1);
@@ -212,6 +222,10 @@ export class UI {
   screen(name) {
     if (name === 'game') { this.menus.set('game'); this.hud.alpha.set(1); }
     else { this.menus.set(name); this.hud.alpha.set(name === 'pause' ? 0.25 : 0); }
+    if (this.ctx) {
+      this.ctx.paused = name === 'pause';
+      if (this.ctx.input) this.ctx.input.enabled = name === 'game';
+    }
     this.dirty = true;
   }
   // ── extensions (all optional for other systems) ──
@@ -222,6 +236,7 @@ export class UI {
   prompt(pos, text, o) { this.labels.prompt(pos, text, o); }
   clearPrompts() { this.labels.clearPrompts(); }
   sigil(pos, o) { this.labels.sigil(pos, o); }
+  clearSigils() { this.labels.clearSigils(); }
   setResources(obols, nectar) { if (obols != null) this.hud.obols = obols; if (nectar != null) this.hud.nectar = nectar; this.dirty = true; }
   setSummary(o) { Object.assign(this.menus.summary, o || {}); this.dirty = true; }
 
@@ -254,8 +269,36 @@ export class UI {
   }
 
   lateUpdate(alpha, ctx) {
+    if (ctx.paused) this.t += ctx.time?.unscaledDt || 0;
+    this._pollGamepad(ctx);
     if (this._modal() || this.labels.nums.length) this.dirty = true;
     this.draw();
+  }
+
+  _pollGamepad(ctx) {
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
+    const pad = Array.from(navigator.getGamepads()).find(Boolean);
+    if (!pad) { this._padPrev = {}; return; }
+    const down = i => !!pad.buttons?.[i]?.pressed;
+    const edge = (key, value) => { const was = !!this._padPrev[key]; this._padPrev[key] = !!value; return value && !was; };
+    if (edge('pause', down(9))) {
+      if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
+      else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
+    }
+    if (!this.menus.modal || this.boonUI.active || this.nectarUI.active) return;
+    const up = down(12) || (pad.axes?.[1] ?? 0) < -0.72;
+    const dn = down(13) || (pad.axes?.[1] ?? 0) > 0.72;
+    const lf = down(14) || (pad.axes?.[0] ?? 0) < -0.72;
+    const rt = down(15) || (pad.axes?.[0] ?? 0) > 0.72;
+    if (edge('up', up)) this.menus.key(-1);
+    if (edge('down', dn)) this.menus.key(1);
+    if (edge('left', lf)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, -1); }
+    if (edge('right', rt)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, 1); }
+    if (edge('accept', down(0))) { const h = this.menus.hit[this.menus.sel]; if (h) h.act === 'setting' ? this.menus._bump(h.key, 1) : this.menus.activate(h.act); }
+    if (edge('back', down(1))) {
+      if (this.menus.settingsOpen || this.menus.controlsOpen) this.menus.activate('back');
+      else if (this.menus.screen === 'pause') this.screen('game');
+    }
   }
 
   /** Engine calls this after RenderSystem.render(); play-mode DOM path is free. */
@@ -337,7 +380,8 @@ export class UI {
   // ═══════════════════════════════════════ ARCHITECTURE §5 CAPTURE ════════
   _captureState(name, args, ctx) {
     if (name === 'ui') this.setupCaptureHUD(ctx);
-    else if (name === 'boons') this.setupCaptureBoons(ctx);
+    else if (name === 'boons') this.setupCaptureBoons(ctx, 'zeus');
+    else if (name === 'forge') this.setupCaptureBoons(ctx, 'hephaestus');
     else if (name === 'combat') {
       // the combat frame should carry the HUD too — it is what the player sees
       this.setupCaptureHUD(ctx, { quiet: true });
@@ -396,13 +440,15 @@ export class UI {
   }
 
   /** §5 `boons`: the choice open with three real cards, settled and readable. */
-  setupCaptureBoons(ctx) {
+  setupCaptureBoons(ctx, god = 'zeus') {
     this.setupCaptureHUD(ctx, { quiet: true });
     const bs = this.boonState;
     // Hand-picked from one deity to mirror the live post-gate audience. Three
     // slots and three rarities keep the upgrade language readable while the
     // repeated portrait makes it unmistakable that Zeus owns this offer.
-    const want = [['zeus.attack', 'epic'], ['zeus.special', 'rare'], ['zeus.cast', 'heroic']];
+    const want = god === 'hephaestus'
+      ? [['hephaestus.blade.wave', 'epic'], ['hephaestus.blade.echo', 'rare'], ['hephaestus.blade.ember', 'heroic']]
+      : [['zeus.attack', 'epic'], ['zeus.special', 'rare'], ['zeus.cast', 'heroic']];
     const opts = [];
     for (const [id, rarity] of want) {
       const b = BOONS.find(x => x.id === id);

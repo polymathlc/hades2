@@ -18,6 +18,7 @@ export const GOD_LEGACIES = {
   hermes:    { name: 'Winged Practice', text: r => `Move and Attack speed +${r * 2}%`, apply: (m, r) => { const v = 1 + r * 0.02; m.moveMul *= v; m.attackSpeed *= v; } },
   hecate:    { name: 'Crossroads Lore', text: r => `Maximum Magick +${r * 8}; regeneration +${r * 3}%`, apply: (m, r) => { m.maxManaAdd += r * 8; m.manaRegenMul *= 1 + r * 0.03; } },
   selene:    { name: 'Moonlit Discipline', text: r => `Cast and Call damage +${r * 3}%`, apply: (m, r) => { const v = 1 + r * 0.03; m.castMul *= v; m.callMul *= v; } },
+  hephaestus:{ name: 'Master Smithing', text: r => `Forged weapon effects +${r * 5}%`, apply: (m, r) => { m.forgeMul *= 1 + r * 0.05; } },
 };
 
 const cleanRank = value => Math.max(0, Math.min(META_MAX_RANK, Math.floor(Number(value) || 0)));

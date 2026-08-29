@@ -12,6 +12,7 @@ import {
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
+import { CONTROL_ROWS } from '../core/controls.js';
 
 const QUALITY = ['low', 'med', 'high', 'ultra'];
 
@@ -24,6 +25,7 @@ export class Menus {
     this.sel = 0;
     this.hit = [];                 // [{x,y,w,h,act,i}]
     this.settingsOpen = false;
+    this.controlsOpen = false;
     this.settings = { quality: 'high', master: 0.8, music: 0.7, sfx: 0.9, shake: true };
     this.summary = { depth: 1, biome: 'tartarus', kills: 0, damage: 0, time: 0, boons: [], killedBy: 'the Underworld' };
   }
@@ -34,17 +36,18 @@ export class Menus {
     this.t0 = this.ui.now();
     this.sel = 0;
     this.settingsOpen = false;
+    this.controlsOpen = false;
     this.ui.dirty = true;
   }
 
   get modal() { return this.screen === 'title' || this.screen === 'pause' || this.screen === 'death' || this.screen === 'victory'; }
 
   items() {
-    if (this.settingsOpen) return [{ label: 'Back', act: 'back' }];
+    if (this.settingsOpen || this.controlsOpen) return [{ label: 'Back', act: 'back' }];
     switch (this.screen) {
-      case 'title': return [{ label: 'Descend', act: 'start' }, { label: 'Settings', act: 'settings' }, { label: 'Credits', act: 'credits' }];
-      case 'pause': return [{ label: 'Resume', act: 'resume' }, { label: 'Settings', act: 'settings' }, { label: 'Abandon Run', act: 'abandon' }];
-      case 'death': return [{ label: 'Rise Again', act: 'start' }, { label: 'Settings', act: 'settings' }];
+      case 'title': return [{ label: 'Descend', act: 'start' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }, { label: 'Credits', act: 'credits' }];
+      case 'pause': return [{ label: 'Resume', act: 'resume' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }, { label: 'Abandon Run', act: 'abandon' }];
+      case 'death': return [{ label: 'Rise Again', act: 'start' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }];
       case 'victory': return [{ label: 'Descend Again', act: 'start' }];
       default: return [];
     }
@@ -53,8 +56,9 @@ export class Menus {
   activate(act) {
     const ui = this.ui;
     switch (act) {
-      case 'settings': this.settingsOpen = true; this.sel = 0; break;
-      case 'back': this.settingsOpen = false; this.sel = 0; break;
+      case 'settings': this.settingsOpen = true; this.controlsOpen = false; this.sel = 0; break;
+      case 'controls': this.controlsOpen = true; this.settingsOpen = false; this.sel = 0; break;
+      case 'back': this.settingsOpen = false; this.controlsOpen = false; this.sel = 0; break;
       case 'resume': ui.screen('game'); break;
       case 'start': ui.screen('game'); ui.ctx?.events?.emit?.('run.start', {}); break;
       case 'abandon': ui.screen('title'); ui.ctx?.events?.emit?.('run.abandon', {}); break;
@@ -74,7 +78,10 @@ export class Menus {
   click(x, y) {
     for (const h of this.hit) {
       if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) {
-        if (h.act === 'setting') this._bump(h.key, 1);
+        if (h.act === 'setting') {
+          if (h.kind === 'slider' && h.sliderW && x >= h.sliderX && x <= h.sliderX + h.sliderW) this._setVolume(h.key, clamp01((x - h.sliderX) / h.sliderW));
+          else this._bump(h.key, 1);
+        }
         else this.activate(h.act);
         return true;
       }
@@ -94,6 +101,13 @@ export class Menus {
     if (key === 'quality') { const i = QUALITY.indexOf(s.quality); s.quality = QUALITY[(i + d + QUALITY.length) % QUALITY.length]; this.ui.ctx?.events?.emit?.('quality.request', { tier: s.quality }); }
     else if (key === 'shake') { s.shake = !s.shake; this.ui.ctx?.events?.emit?.('settings.shake', { on: s.shake }); }
     else { s[key] = Math.round(((s[key] + 0.1 * d) % 1.05) * 10) / 10; if (s[key] < 0) s[key] = 1; this.ui.ctx?.events?.emit?.('settings.volume', { channel: key, value: s[key] }); }
+    this.ui.dirty = true;
+  }
+
+  _setVolume(key, value) {
+    if (!['master', 'music', 'sfx'].includes(key)) return;
+    this.settings[key] = Math.round(clamp01(value) * 100) / 100;
+    this.ui.ctx?.events?.emit?.('settings.volume', { channel: key, value: this.settings[key] });
     this.ui.dirty = true;
   }
 
@@ -149,7 +163,8 @@ export class Menus {
     laurel(g, cx, ty + size * 0.36, size * 1.55, { side: -1, leaves: 13, from: Math.PI * 0.50, to: Math.PI * 0.06, leafLen: 0.16 });
     g.restore();
 
-    if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.52);
+    if (this.controlsOpen) this._controls(g, W, H, S, t, H * 0.49, Math.min(650 * S, W * 0.78));
+    else if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.52);
     else this._menu(g, W, H, S, t, H * 0.62, a);
 
     g.save(); g.globalAlpha = a * 0.5;
@@ -163,7 +178,7 @@ export class Menus {
   _panelScreen(g, W, H, S, t, age, title, sub) {
     const a = ease.out(clamp01(age / 0.35));
     this._scrim(g, W, H, a);
-    const w = 460 * S, h = (this.settingsOpen ? 400 : 330) * S;
+    const w = (this.controlsOpen ? 700 : 460) * S, h = (this.controlsOpen ? 520 : this.settingsOpen ? 400 : 360) * S;
     const x = (W - w) / 2, y = (H - h) / 2 + (1 - a) * -16 * S;
     g.save(); g.globalAlpha = a;
     frame(g, {
@@ -181,7 +196,8 @@ export class Menus {
     rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(0.5, rgba(PAL.gold, 0.65)); rg.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = rg; g.fillRect(W / 2 - rw / 2, y + 76 * S, rw, Math.max(1, 1.2 * S));
     g.restore();
-    if (this.settingsOpen) this._settings(g, W, H, S, t, y + 110 * S, w - 90 * S);
+    if (this.controlsOpen) this._controls(g, W, H, S, t, y + 108 * S, w - 76 * S);
+    else if (this.settingsOpen) this._settings(g, W, H, S, t, y + 110 * S, w - 90 * S);
     else this._menu(g, W, H, S, t, y + 130 * S, a);
   }
 
@@ -242,7 +258,8 @@ export class Menus {
     }
     g.restore();
 
-    if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.66);
+    if (this.controlsOpen) this._controls(g, W, H, S, t, H * 0.57, Math.min(650 * S, W * 0.78));
+    else if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.66);
     else this._menu(g, W, H, S, t, H * 0.70, a);
   }
 
@@ -291,7 +308,8 @@ export class Menus {
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i], y = y0 + i * step;
       const on = this.sel === i;
-      this.hit.push({ x, y: y - 14 * S, w, h: 26 * S, act: 'setting', key: r.key, i });
+      const sliderX = x + w * 0.52, sliderW = w * 0.48 - 34 * S;
+      this.hit.push({ x, y: y - 14 * S, w, h: 26 * S, act: 'setting', key: r.key, kind: r.kind, sliderX, sliderW, i });
       if (on) { g.fillStyle = rgba(PAL.gold, 0.08); g.fillRect(x - 8 * S, y - 15 * S, w + 16 * S, 28 * S); }
       tracked(g, r.label.toUpperCase(), x, y, {
         size: 12 * S, track: 0.26, weight: 600, align: 'left',
@@ -321,6 +339,27 @@ export class Menus {
     }
     g.restore();
     this._menu(g, W, H, S, t, y0 + rows.length * step + 26 * S, 1, rows.length);
+  }
+
+  // ═══════════════════════════════════════════════════════ CONTROLS ═══════
+  _controls(g, W, H, S, t, y0, width) {
+    const w = width || 640 * S, x = W / 2 - w / 2;
+    const actionX = x, keyboardX = x + w * 0.33, padX = x + w * 0.72;
+    tracked(g, 'ACTION', actionX, y0, { size: 9 * S, track: 0.30, weight: 700, align: 'left', color: rgba(PAL.goldHi, 0.82) });
+    tracked(g, 'KEYBOARD & MOUSE', keyboardX, y0, { size: 9 * S, track: 0.24, weight: 700, align: 'left', color: rgba(PAL.goldHi, 0.82) });
+    tracked(g, 'GAMEPAD', padX, y0, { size: 9 * S, track: 0.30, weight: 700, align: 'left', color: rgba(PAL.goldHi, 0.82) });
+    const step = 27 * S;
+    g.save();
+    for (let i = 0; i < CONTROL_ROWS.length; i++) {
+      const [action, keyboard, pad] = CONTROL_ROWS[i], y = y0 + 26 * S + i * step;
+      if (i % 2 === 0) { g.fillStyle = rgba(PAL.gold, 0.045); g.fillRect(x - 8 * S, y - 16 * S, w + 16 * S, 23 * S); }
+      tracked(g, action.toUpperCase(), actionX, y, { size: 10.5 * S, track: 0.16, weight: 700, align: 'left', color: rgba(PAL.parch, 0.86) });
+      tracked(g, keyboard.toUpperCase(), keyboardX, y, { size: 10.5 * S, track: 0.09, weight: 500, align: 'left', color: rgba(PAL.parchDim, 0.82), font: bodyFont() });
+      tracked(g, pad.toUpperCase(), padX, y, { size: 10.5 * S, track: 0.09, weight: 500, align: 'left', color: rgba(PAL.parchDim, 0.82), font: bodyFont() });
+    }
+    g.restore();
+    tracked(g, 'ATTACKS AIM AT THE CURSOR OR RIGHT STICK', W / 2, y0 + 312 * S, { size: 9 * S, track: 0.24, weight: 600, align: 'center', color: rgba(PAL.goldHi, 0.74) });
+    this._menu(g, W, H, S, t, y0 + 350 * S, 1, 0);
   }
 }
 

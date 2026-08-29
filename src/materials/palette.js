@@ -73,6 +73,7 @@ export const GODS = {
   hermes:    '#ff9a3c',
   hecate:    '#8ef0d0',
   selene:    '#dfe9ff',
+  hephaestus:'#ff9b42',
 };
 
 // ---------------------------------------------------------------------------
