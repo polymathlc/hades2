@@ -40,7 +40,7 @@ import {
 } from './recipes.js';
 import { BakePool } from './bakepool.js';
 import { compositeGeneratedAlbedo, loadGeneratedAlbedos } from './generated-textures.js';
-import { installPrebuilt } from './prebuild-cache.js';
+import { textureProfileForTier } from './texture-budget.js';
 
 const clamp01 = TG.clamp01;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
@@ -57,10 +57,6 @@ const SHARED_SETS = [
   // every chamber asks for these whatever biome it is, and each one caught
   // blocking the main thread in the sync path is ~0.5s of black screen
   'obsidian', 'lava', 'bone', 'marble.elysium',
-  // Player.init builds these immediately after the material worker batch.
-  // Omitting them forced three synchronous main-thread bakes (119-265 ms in
-  // measured Low→High boots) even though the worker pool was already ready.
-  'characterrig.skin', 'characterrig.cloth', 'characterrig.hair',
   'characterrig.hound.hide', 'characterrig.hound.limbs', 'characterrig.hound.keratin',
   'shrine.divine', 'gold.divine',
 ];
@@ -89,16 +85,22 @@ export class MaterialLibrary {
     this.stats = { ms: 0, cpu: 0, built: 0, texels: 0, sync: [] };
     this.biome = 'tartarus';
     this.scale = 1;
+    this.generatedScale = 1;
+    this.anisotropy = 4;
     this._t = 0;
   }
 
   async init(ctx) {
     this.ctx = ctx;
     const tier = (ctx.quality && ctx.quality.tier) || 'high';
-    // texScale is the tier's real cost knob: synthesis is O(n^2), so 0.75 is
-    // 56% of the work and 0.5 is 25% of it. A tier that does not move this only
-    // saves GPU bandwidth; moving it is what makes low/med actually boot fast.
-    this.scale = tier === 'low' ? 0.55 : tier === 'med' ? 0.75 : 1.0;
+    // Texture work is quadratic. The old .55/.75/1.0 policy still generated
+    // millions of texels and decoded nine full 1536×1024 atlases. These
+    // browser-first profiles intentionally trade close-up definition for
+    // shorter loading, lower memory pressure and steadier frame delivery.
+    const profile = textureProfileForTier(tier);
+    this.scale = profile.proceduralScale;
+    this.generatedScale = profile.generatedScale;
+    this.anisotropy = profile.anisotropy;
     const q = ctx.quality || {};
     if (typeof q.texScale === 'number' && q.texScale > 0) this.scale = q.texScale;
     else q.texScale = this.scale;          // publish what we chose, so tools can read it
@@ -146,9 +148,8 @@ export class MaterialLibrary {
       // Generated atlas cells are retained for lazy materials, so downscaling
       // them is a large RAM/VRAM saving in addition to reducing seam-processing
       // work. Procedural normals/ORM keep their normal tier-specific scale.
-      const generatedScale = this.ctx?.quality?.tier === 'low' ? 0.5
-        : this.ctx?.quality?.tier === 'med' ? 0.75 : 1;
-      this.generatedMaps = await loadGeneratedAlbedos(Math.min(16, Math.max(1, max)), generatedScale);
+      const aniso = Math.min(this.anisotropy, Math.max(1, max));
+      this.generatedMaps = await loadGeneratedAlbedos(aniso, this.generatedScale);
       this._applyGeneratedAlbedos();
     } catch (error) {
       // Procedural albedo remains a complete fallback for offline/file builds,
@@ -164,7 +165,7 @@ export class MaterialLibrary {
       const generated = this.generatedMaps.get(set.name);
       if (!generated || set.generatedSource === generated) continue;
       if (set.map && set.map !== set.proceduralMap) set.map.dispose();
-      set.map = compositeGeneratedAlbedo(set.proceduralMap, generated, Math.min(16, generated.anisotropy || 8));
+      set.map = compositeGeneratedAlbedo(set.proceduralMap, generated, this.anisotropy);
       set.generatedSource = generated;
     }
   }
@@ -198,32 +199,26 @@ export class MaterialLibrary {
     for (let i = 0; i < jobs.length; i++) {
       if (!raw[i]) continue;                       // pool failed -> lazy sync bake
       this.stats.cpu += raw[i].cpuMs || 0;
-      // A chamber may have synchronously requested this surface while its
-      // worker job was still in flight. Keep the live cache entry in that
-      // race: installing the late duplicate would leak its textures and
-      // replace materials already bound by the room.
-      installPrebuilt(this.setCache, jobs[i].ck, raw[i], result => this._install(result));
+      this.setCache.set(jobs[i].ck, this._install(raw[i]));
     }
     this.stats.ms += now() - t0;
   }
-
-  /** Begin warming every surface required by a future biome. */
-  prepareBiome(name) { return this.prebuild(this._bootSets(name)); }
 
   /** Turn a bake's raw byte buffers into the cached THREE texture set. */
   _install(b) {
     const n = b.size, key = b.name;
     if (b.error) console.warn('[mats] recipe failed:', key, b.error);
     const generated = this.generatedMaps.get(key);
-    const proceduralMap = TG.byteTexture(b.map, n, { anisotropy: 16, srgb: true });
+    const aniso = this.anisotropy;
+    const proceduralMap = TG.byteTexture(b.map, n, { anisotropy: aniso, srgb: true });
     const set = {
       name: key, size: n,
       proceduralMap,
-      map: generated ? compositeGeneratedAlbedo(proceduralMap, generated, 16) : proceduralMap,
+      map: generated ? compositeGeneratedAlbedo(proceduralMap, generated, aniso) : proceduralMap,
       generatedSource: generated || null,
-      normalMap: TG.byteTexture(b.normalMap, n, { anisotropy: 16 }),
-      ormMap: TG.byteTexture(b.ormMap, n, { anisotropy: 16 }),
-      emissiveMap: b.emissiveMap ? TG.byteTexture(b.emissiveMap, n, { anisotropy: 4, srgb: true }) : null,
+      normalMap: TG.byteTexture(b.normalMap, n, { anisotropy: aniso }),
+      ormMap: TG.byteTexture(b.ormMap, n, { anisotropy: aniso }),
+      emissiveMap: b.emissiveMap ? TG.byteTexture(b.emissiveMap, n, { anisotropy: Math.min(4, aniso), srgb: true }) : null,
       emissiveIntensity: b.emissiveIntensity ?? 0,
       params: b.params || {},
       paint: b.paint || {},
@@ -330,7 +325,7 @@ export class MaterialLibrary {
     TG.strokes(s, n, { rng, flow: TG.flowField(n, { base: 2.0, swirl: 1.1, freq: 5, seed: 1203 }), count: Math.round(n * 2.7), len: [n * 0.02, n * 0.08], width: [0.8, 1.6], value: [-0.14, -0.04], bristle: 0.8, taper: 2.1 });
     const out = new Float32Array(n * n);
     for (let i = 0; i < out.length; i++) out[i] = clamp01(0.5 + (g[i] - 0.5) * 0.42 + s[i] * 1.05);
-    this._detailTex = TG.fieldTexture(out, n, { anisotropy: 8 });
+    this._detailTex = TG.fieldTexture(out, n, { anisotropy: Math.min(4, this.anisotropy) });
     this._detailTex.name = 'detail.grain';
     return this._detailTex;
   }
@@ -351,7 +346,7 @@ export class MaterialLibrary {
       rgbF[j + 1] = v * 255;
       rgbF[j + 2] = (v * 0.96 + (1 - t) * 0.06) * 255;
     }
-    this._macroTex = TG.rgbTexture(rgbF, n, { linear: true, anisotropy: 4 });
+    this._macroTex = TG.rgbTexture(rgbF, n, { linear: true, anisotropy: Math.min(4, this.anisotropy) });
     this._macroTex.name = 'macro.variation';
     return this._macroTex;
   }

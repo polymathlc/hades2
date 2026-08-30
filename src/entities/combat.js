@@ -503,15 +503,7 @@ export class CombatSystem {
       this.projectiles?.releaseLodgedByTarget?.(t, 'death');
       if (t === ctx.player) this.projectiles?.releaseCastShardsBySource?.(t, 'player-death');
       ctx.events.emit('entity.died', { entity: t, pos: pos || t.position, dir: info.dir, source: src, type });
-      if (t !== ctx.player) {
-        const tier = ctx.quality?.tier || 'high';
-        const browserTier = tier === 'low' || tier === 'med';
-        // Bosses add a large dissolve, shake and (on High/Ultra) a short time
-        // flourish. Keeping the old universal 70 ms full stop on top made a
-        // successful kill feel like a dropped frame, especially on Low.
-        this.hitstop(t.def?.boss ? (browserTier ? 32 : tier === 'ultra' ? 50 : 42) : (browserTier ? 44 : 55));
-        this._recentDamage += 40;
-      }
+      if (t !== ctx.player) { this.hitstop(70); this._recentDamage += 40; }
     }
     return amount;
   }

@@ -86,23 +86,23 @@ export const TUNING = {
 // A weapon that plays the blade's clip is a bug, so every entry below is a
 // pose authored for that arm — see anim.js §ARSENAL CLIPS.
 // ---------------------------------------------------------------------------
-const WEAPON_ANIM = {
+export const WEAPON_ANIM = {
   blade:  { _fallback: 'attack1', _charge: 'attack3', _block: 'guard', _rush: 'dash',
-            cut1: 'attack1', cut2: 'attack2', lunge: 'attack3', dashcut: 'attack1', sweep: 'special' },
+            cut1: 'attack1', cut2: 'attack2', lunge: 'attack3', dashcut: 'dashSlash', sweep: 'special' },
   spear:  { _fallback: 'thrust1', _charge: 'throwWind', _block: 'guard', _rush: 'rush',
-            poke1: 'thrust1', poke2: 'thrust2', dashthrust: 'thrust1', spin: 'spin', loose: 'throw' },
+            poke1: 'thrust1', poke2: 'thrust2', dashthrust: 'dashThrust', spin: 'spin', loose: 'throw' },
   bow:    { _fallback: 'loose', _charge: 'draw', _block: 'guard', _rush: 'rush',
             loose: 'loose', kick: 'special' },
   shield: { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
             punch1: 'bash1', punch2: 'bash2' },
   fists:  { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
-            jab1: 'bash1', jab2: 'bash2', jab3: 'attack1', jab4: 'bash2', dashupper: 'rush', uppercut: 'special' },
+            jab1: 'bash1', jab2: 'bash2', jab3: 'attack1', jab4: 'bash2', dashupper: 'dashUpper', uppercut: 'special' },
   rail:   { _fallback: 'loose', _charge: 'draw', _block: 'guard', _rush: 'rush',
             loose: 'loose', bombard: 'castSweep' },
   staff:  { _fallback: 'thrust1', _charge: 'throwWind', _block: 'guard', _rush: 'rush',
             staff1: 'thrust1', staff2: 'spin', staff3: 'castSweep', loose: 'throw' },
   blades: { _fallback: 'attack1', _charge: 'draw', _block: 'guard', _rush: 'dash',
-            knife1: 'attack1', knife2: 'attack2', knife3: 'attack3', shadowcut: 'dash', loose: 'loose' },
+            knife1: 'attack1', knife2: 'attack2', knife3: 'attack3', shadowcut: 'dashSlash', loose: 'loose' },
   flames: { _fallback: 'loose', _charge: 'castRitual', _block: 'guard', _rush: 'rush',
             loose: 'cast', orbit: 'castSweep' },
   axe:    { _fallback: 'attack3', _charge: 'spin', _block: 'guard', _rush: 'rush',
@@ -110,7 +110,7 @@ const WEAPON_ANIM = {
   skull:  { _fallback: 'loose', _charge: 'castRitual', _block: 'guard', _rush: 'rush',
             loose: 'throw', skullrush: 'rush' },
   coat:   { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
-            gauntlet1: 'bash1', gauntlet2: 'bash2', gauntlet3: 'special', jetpunch: 'rush', rockets: 'castSweep' },
+            gauntlet1: 'bash1', gauntlet2: 'bash2', gauntlet3: 'special', jetpunch: 'dashThrust', rockets: 'castSweep' },
 };
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -398,10 +398,11 @@ export class Player {
     if (W && this.alive && this.state !== 'dead' && this.state !== 'hurt') {
       if (inp.pressed('attack')) {
         this._faceCursor();
-        W.press('attack');
-        // Attack pressed after the dash has begun must select the arm's
-        // authored dash-strike instead of silently playing its standing combo.
-        if (this.state === 'dash') W.queueDashAttack?.();
+        // During a dash this is a dedicated third move. Do not also feed a
+        // standing Attack into the weapon state machine and then disguise it;
+        // queue only the authored Dash Attack.
+        if (this.state === 'dash' && W.queueDashAttack?.()) { /* dedicated route */ }
+        else W.press('attack');
       }
       if (inp.pressed('special')) { this._faceCursor(); W.press('special'); }
       // WeaponRuntime.release() does not look at WHICH button was let go — it
@@ -619,12 +620,13 @@ export class Player {
     // STEERING. A charge or a guard must track the aim — a bow you cannot
     // re-aim while drawn is a bow you never draw. A committed swing must not:
     // that is the contract the enemy reads when it sidesteps you.
-    // NOTE the `st === 'attack'` guard: the runtime does not null `step` when
+    // NOTE the strike-state guard: the runtime does not null `step` when
     // it enters a rush, so testing the step alone would let you steer a shield
     // charge off its own line for the first few frames.
-    const s = st === 'attack' ? W.step : null;
+    const strike = st === 'attack' || st === 'dashAttack';
+    const s = strike ? W.step : null;
     if (st === 'charge' || st === 'block') this._steer(dt, ctx, this.tune.steerLambdaAim);
-    else if (st === 'attack' && (!s || W.t < s.turnLock || W.t >= s.cancel)) {
+    else if (strike && (!s || W.t < s.turnLock || W.t >= s.cancel)) {
       this._steer(dt, ctx, this.tune.steerLambdaCommit);
     }
 
@@ -665,7 +667,9 @@ export class Player {
    */
   _syncWeaponAnim(ctx, W) {
     if (!W) return;
-    const st = W.state, s = st === 'attack' ? W.step : null;
+    const st = W.state;
+    const strike = st === 'attack' || st === 'dashAttack';
+    const s = strike ? W.step : null;
     const key = W.weaponId + '|' + st + '|' + (s ? s.name : '-') + '|' + W.stepIndex;
     if (key === this._animKey) return;
     this._animKey = key;
@@ -674,7 +678,7 @@ export class Player {
     const map = WEAPON_ANIM[W.weaponId] || WEAPON_ANIM.blade;
     const chg = W.weapon && W.weapon.charge;
     let clip = null, span = 0;
-    if (st === 'attack') {
+    if (strike) {
       clip = (s && map[s.name]) || map._fallback;
       span = s ? s.dur : 0.4;
     } else if (st === 'charge') {
@@ -696,10 +700,10 @@ export class Player {
     const cd = this.animator.duration(clip);
     const speed = span > 0.02 ? clamp(cd / span, 0.3, 4.0) : 1;
     // chained combo steps cut in hard; a fresh action gets a real blend
-    const fade = (st === 'attack' && W.stepIndex > 0) ? 0.04 : 0.075;
+    const fade = (st === 'attack' && W.stepIndex > 0) ? 0.04 : st === 'dashAttack' ? 0.025 : 0.075;
     this.animator.play(clip, { fade, restart: true, speed });
     this._animLock = 0.05;
-    if (st === 'attack' || st === 'rush') {
+    if (strike || st === 'rush') {
       this.combatHeat = Math.min(1.6, this.combatHeat + 0.42);
       this.squash = -0.03;
     }

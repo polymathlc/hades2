@@ -28,10 +28,7 @@
 import * as THREE from 'three';
 import { clamp, clamp01, TAU } from '../../core/math.js';
 import { TokenPool } from '../ai.js';
-import {
-  Enemy, refreshFamilyRims, usesAdditiveDeathDissolve,
-  makeDeathDissolveMaterial, prewarmDeathDissolve, disposeDeathDissolveMaterial,
-} from './base.js';
+import { Enemy, refreshFamilyRims } from './base.js';
 import { Telegraphs } from './telegraph.js';
 import { SHADE, BRUTE, brutePreDamage } from './melee.js';
 import { HEXER, HERALD } from './casters.js';
@@ -84,19 +81,6 @@ export class EnemyManager {
     // per-INSTANCE, so a family can share its real materials and still flash
     // individually. No material cloning, no shader recompiles.
     this.flashMat = new THREE.MeshBasicMaterial({ color: 0xfff0dc, toneMapped: false, fog: false });
-
-    // The first additive SkinnedMesh seen by WebGL used to compile on the
-    // first multi-kill frame, producing a measured 737-794 ms hitch. Low/Med
-    // use the normal body plus pooled death VFX and never create that program;
-    // High/Ultra link both roster variants here, before combat can begin.
-    this.dissolveMaterialTemplate = null;
-    this.dissolvePrewarmed = false;
-    if (usesAdditiveDeathDissolve(ctx.quality?.tier || 'high')) {
-      const material = makeDeathDissolveMaterial();
-      this.dissolvePrewarmed = await prewarmDeathDissolve(ctx, material);
-      if (this.dissolvePrewarmed) this.dissolveMaterialTemplate = material;
-      else disposeDeathDissolveMaterial(material);
-    }
 
     this.spawner = new Spawner();
     this.spawner.init(ctx, this);
@@ -448,12 +432,7 @@ export class EnemyManager {
     return b;
   }
 
-  dispose() {
-    this.telegraphs.dispose();
-    for (const e of this.all) e._dissolveMat?.dispose?.();
-    disposeDeathDissolveMaterial(this.dissolveMaterialTemplate);
-    this.flashMat?.dispose?.();
-  }
+  dispose() { this.telegraphs.dispose(); }
 }
 
 export default EnemyManager;

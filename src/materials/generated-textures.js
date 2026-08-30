@@ -5,15 +5,18 @@
 // losing the physically useful channels already tuned to each mesh.
 
 import * as THREE from 'three';
-import tartarusUrl from '../assets/textures/generated/tartarus-atlas.jpg';
-import biomesUrl from '../assets/textures/generated/biomes-atlas.jpg';
-import propsUrl from '../assets/textures/generated/props-atlas.jpg';
-import charactersUrl from '../assets/textures/generated/characters-atlas.jpg';
-import tartarusV2Url from '../assets/textures/generated/tartarus-materials-v2-atlas.jpg';
-import creaturesPropsV3Url from '../assets/textures/generated/creatures-props-v3-atlas.jpg';
-import arenaBoonsV4Url from '../assets/textures/generated/arena-boons-v4-atlas.jpg';
-import asphodelVisibilityV5Url from '../assets/textures/generated/asphodel-visibility-v5-atlas.jpg';
-import hephaestusForgeGatesV6Url from '../assets/textures/generated/hephaestus-forge-gates-v6-atlas.png';
+// Browser builds use half-resolution, aggressively compressed atlas sources.
+// Each cell remains 256² before the tier-specific slicer downsamples it again;
+// the original 1536×1024 masters stay in the repository for future art edits.
+import tartarusUrl from '../assets/textures/generated/web/tartarus-atlas-web.jpg';
+import biomesUrl from '../assets/textures/generated/web/biomes-atlas-web.jpg';
+import propsUrl from '../assets/textures/generated/web/props-atlas-web.jpg';
+import charactersUrl from '../assets/textures/generated/web/characters-atlas-web.jpg';
+import tartarusV2Url from '../assets/textures/generated/web/tartarus-materials-v2-atlas-web.jpg';
+import creaturesPropsV3Url from '../assets/textures/generated/web/creatures-props-v3-atlas-web.jpg';
+import arenaBoonsV4Url from '../assets/textures/generated/web/arena-boons-v4-atlas-web.jpg';
+import asphodelVisibilityV5Url from '../assets/textures/generated/web/asphodel-visibility-v5-atlas-web.jpg';
+import hephaestusForgeGatesV6Url from '../assets/textures/generated/web/hephaestus-forge-gates-v6-atlas-web.jpg';
 
 const GRID_COLS = 3;
 const GRID_ROWS = 2;

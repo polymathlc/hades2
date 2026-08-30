@@ -39,8 +39,6 @@ export class UI {
     this._rand = 0;
     this.enabled = true;
     this._padPrev = {};
-    this._drawInterval = 0;
-    this._drawAcc = 0;
     // Constructed eagerly, not in init(): main.js adds UI after the player, and
     // Player.init() calls ctx.ui.setHealth() during initAll. Every contract
     // setter must be safe from the moment the object exists.
@@ -62,11 +60,6 @@ export class UI {
 
   async init(ctx) {
     this.ctx = ctx;
-    const tier = ctx.quality?.tier || 'high';
-    // Canvas2D is raster work on the main thread. Animated prompts and sigils
-    // keep the HUD dirty continuously, so cap only the browser-friendly tiers;
-    // world rendering and input still run at the full display cadence.
-    this._drawInterval = tier === 'low' ? 1 / 30 : tier === 'med' ? 1 / 45 : 0;
     this.menus.settings.quality = ctx.quality?.source === 'auto' ? 'auto' : (ctx.quality?.tier || 'med');
     this._rng = ctx.rng && ctx.rng.fork ? ctx.rng.fork('ui') : ctx.rng;
 
@@ -205,7 +198,6 @@ export class UI {
     this.hud.setRoom(ctx.run?.depth || 1, ctx.run?.biome || 'tartarus');
     this.hud.roomT = -9;
     this.draw();
-    this._drawAcc = 0;
   }
 
   _modal() { return this.nectarUI.active || this.boonUI.active || this.menus.modal; }
@@ -215,8 +207,7 @@ export class UI {
     let w = 1600, h = 900;
     if (r && r.domElement) { w = r.domElement.width || w; h = r.domElement.height || h; }
     // cap the UI raster so a 4K screen does not pay for a 4K interface
-    const tier = ctx?.quality?.tier || 'high';
-    const cap = tier === 'low' ? 1600 : tier === 'med' ? 1800 : 2200;
+    const cap = 2200;
     if (w > cap) { h = Math.round(h * cap / w); w = cap; }
     if (this.W === w && this.H === h) return;
     this.W = w; this.H = h;
@@ -304,23 +295,12 @@ export class UI {
     if (ctx.paused) this.t += ctx.time?.unscaledDt || 0;
     this._pollGamepad(ctx);
     if (this._modal() || this.labels.nums.length) this.dirty = true;
-    // The HUD consumes `t` for gold sweeps, glints, prompt bobbing and boon
-    // pulses even when its data is unchanged. Keep drawing at the tier cadence
-    // instead of treating `dirty` as a static-cache gate and freezing motion.
-    if (this._drawInterval > 0) {
-      this._drawAcc = Math.min(this._drawInterval * 2,
-        this._drawAcc + (ctx.time?.unscaledDt || 0));
-      if (this._drawAcc + 1e-9 < this._drawInterval) return;
-      this._drawAcc %= this._drawInterval;
-    }
     this.draw();
   }
 
   _pollGamepad(ctx) {
     if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
-    const pads = navigator.getGamepads();
-    let pad = null;
-    for (let i = 0; i < pads.length; i++) { if (pads[i]) { pad = pads[i]; break; } }
+    const pad = Array.from(navigator.getGamepads()).find(Boolean);
     if (!pad) { this._padPrev = {}; return; }
     const down = i => !!pad.buttons?.[i]?.pressed;
     const edge = (key, value) => { const was = !!this._padPrev[key]; this._padPrev[key] = !!value; return value && !was; };

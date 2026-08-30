@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BOONS, BoonState, GOD_INFO, GOD_KEYS } from '../src/game/boons.js';
 import { WeaponRuntime, WEAPONS, WEAPON_IDS } from '../src/entities/weapons.js';
-import { Player } from '../src/entities/player.js';
+import { Player, WEAPON_ANIM } from '../src/entities/player.js';
+import { buildClipData } from '../src/entities/anim.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
 import { HomeBase, HOME_ALTAR_POS, HOME_MIRROR_POS, TitanBloodDrop } from '../src/world/homebase.js';
@@ -161,16 +162,14 @@ assert.equal(chooseGraphicsTier({ capture: true, requested: 'low' }), 'ultra');
 assert.equal(chooseGraphicsTier({ requested: 'low', stored: 'high' }), 'low');
 assert.equal(chooseGraphicsTier({ stored: 'med', deviceMemory: 16, cores: 16 }), 'med');
 assert.equal(chooseGraphicsTier({ deviceMemory: 4, cores: 4, width: 1920, height: 1080 }), 'low');
-assert.equal(chooseGraphicsTier({ deviceMemory: 8, cores: 8, width: 1920, height: 1080 }), 'med');
-assert.equal(chooseGraphicsTier({ deviceMemory: 12, cores: 10, width: 1920, height: 1080 }), 'high');
+assert.equal(chooseGraphicsTier({ deviceMemory: 8, cores: 8, width: 1920, height: 1080 }), 'high');
 assert.equal(chooseGraphicsTier({}), 'med');
 assert.equal(graphicsDprCap('low'), 1);
 assert.equal(graphicsDprCap('med'), 1.25);
 assert.ok(TIERS.low.renderScale <= 0.7 && !TIERS.low.shadows && !TIERS.low.bloom && !TIERS.low.ao && TIERS.low.dustLayers === 0);
 assert.ok(TIERS.med.renderScale < TIERS.high.renderScale && !TIERS.med.godrays);
 assert.equal(new Engine({ quality: { tier: 'low' } }).fixedDt, 1 / 60);
-assert.equal(new Engine({ quality: { tier: 'high' } }).fixedDt, 1 / 60);
-assert.equal(new Engine({ quality: { tier: 'ultra' } }).fixedDt, 1 / 120);
+assert.equal(new Engine({ quality: { tier: 'high' } }).fixedDt, 1 / 120);
 for (const name of ['tartarus', 'asphodel', 'elysium']) {
   const grade = GRADES[name];
   assert.ok(grade.exposure >= (name === 'elysium' ? 0.95 : 1.2), `${name} exposure regressed into a gloomy range`);
@@ -560,6 +559,7 @@ function harness(weaponId, actor = null) {
 
   player.state = 'move';
   runtime.update(1 / 120);
+  assert.equal(runtime.state, 'dashAttack', 'dashcut reused the standing Attack state');
   assert.equal(runtime.step?.name, 'dashcut', 'Dash+Attack fell back to standing cut1');
   assert.equal(runtime.stepIndex, -2, 'dashcut was misidentified as a combo step');
   assert.equal(runtime.t, 0, 'dashcut skipped its visible windup on dash exit');
@@ -629,6 +629,7 @@ function harness(weaponId, actor = null) {
 
   player.state = 'move';
   runtime.update(1 / 120);
+  assert.equal(runtime.state, 'dashAttack', 'Spear Dash-Strike reused the standing Attack state');
   assert.equal(runtime.step?.name, 'dashthrust', 'Spear Dash+Attack fell back to poke1');
   assert.equal(runtime.stepIndex, -2, 'Spear Dash-Strike entered the standing combo chain');
   runtime.update(runtime.step.t0 + 1 / 120);
@@ -640,6 +641,18 @@ function harness(weaponId, actor = null) {
   assert.equal(strike.boonGod, 'hermes', 'Spear Dash-Strike did not inherit the Attack boon');
   assert.equal(strike.boonSlot, 'attack');
   assert.equal(player._boonPostDash, false, 'Spear Dash-Strike did not consume the post-dash payoff');
+}
+
+// Dash Attacks have their own authored silhouettes. They must never map back
+// to a standing slash, standing thrust, or the locomotion dash clip.
+{
+  const clips = buildClipData();
+  for (const clip of ['dashSlash', 'dashThrust', 'dashUpper']) assert.ok(clips[clip], `${clip} clip is missing`);
+  assert.equal(WEAPON_ANIM.blade.dashcut, 'dashSlash');
+  assert.equal(WEAPON_ANIM.spear.dashthrust, 'dashThrust');
+  assert.equal(WEAPON_ANIM.fists.dashupper, 'dashUpper');
+  assert.notEqual(WEAPON_ANIM.blade.dashcut, WEAPON_ANIM.blade.cut1);
+  assert.notEqual(WEAPON_ANIM.spear.dashthrust, WEAPON_ANIM.spear.poke1);
 }
 
 // Player-level direction handoff: moving north while aiming east must keep

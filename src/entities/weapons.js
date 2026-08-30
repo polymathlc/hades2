@@ -469,7 +469,7 @@ export class WeaponRuntime {
   constructor(combat, wielder, weaponId = 'blade') {
     this.combat = combat; this.ctx = combat.ctx; this.actor = wielder;
     this.equip(weaponId);
-    this.state = 'idle';        // idle | attack | charge | block | rush | reload
+    this.state = 'idle';        // idle | attack | dashAttack | charge | block | rush | reload
     this.step = null; this.stepIndex = -1;
     this.t = 0; this.dur = 0;
     this.hbId = 0; this.fired = false;
@@ -498,7 +498,10 @@ export class WeaponRuntime {
 
   get busy() { return this.state !== 'idle' && this.state !== 'block'; }
   /** Recovery is dash-cancellable from the step's `cancel` mark. */
-  get cancellable() { return this.state !== 'attack' || (this.step && this.t >= this.step.cancel); }
+  get cancellable() {
+    const committedStrike = this.state === 'attack' || this.state === 'dashAttack';
+    return !committedStrike || (this.step && this.t >= this.step.cancel);
+  }
   get moveScale() {
     if (this.state === 'idle') return 1;
     if (this.state === 'reload') return 0.46;
@@ -515,6 +518,7 @@ export class WeaponRuntime {
       if (this.weaponId === 'rail' && this.ammo <= 0) { if (this.state === 'idle') this._beginReload(); return; }
       if (w.charge && w.charge.action === 'attack') { this.holding = true; if (!this.busy) this._beginCharge(); return; }
       if (this.state === 'attack') { this.queued = true; return; }
+      if (this.state === 'dashAttack') return;
       this.buffer = w.buffer;
       return;
     }
@@ -536,7 +540,7 @@ export class WeaponRuntime {
     // Once the dashcut has begun, repeated input is a normal combo request.
     // Re-arming dash intent here could survive the active move and turn a
     // later standing Attack into an unexplained second dashcut.
-    if (this.state === 'attack' && this.step === this.weapon.dashAttack) return false;
+    if (this.state === 'dashAttack') return false;
     this.dashQueued = true;
     this.buffer = Math.max(this.buffer, this.weapon.buffer);
     return true;
@@ -575,13 +579,14 @@ export class WeaponRuntime {
         if (this.buffer > 0 && this.dashQueued && this.weapon.dashAttack) {
           if (this.actor?.state === 'dash') break;
           this.buffer = 0;
-          this._beginStep(this.weapon.dashAttack, -2);
+          this._beginDashAttack(this.weapon.dashAttack);
         } else if (this.buffer > 0 && this.weapon.combo) {
           this.buffer = 0;
           this._beginStep(this.weapon.combo[0], 0);
         }
         break;
       case 'attack': this._stepAttack(actionDt); break;
+      case 'dashAttack': this._stepAttack(actionDt); break;
       case 'charge': this._stepCharge(actionDt); break;
       case 'rush': this._stepRush(dt); break;
       case 'block': this._stepBlock(dt); break;
@@ -720,6 +725,28 @@ export class WeaponRuntime {
       this.ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x, 0.08, A.position.z), { radius: 3.2, color, life: 0.32 });
     }
     this.ctx.audio?.sfx?.(s.sfx + '.hit', { pos: A.position, gain: 0.5 });
+  }
+
+  /** A real third action state, not a standing Attack pasted onto Dash. */
+  _beginDashAttack(s) {
+    this.state = 'dashAttack'; this.step = s; this.stepIndex = -2;
+    this.t = 0; this.fired = false; this.queued = false; this.dashQueued = false; this.rootDone = 0;
+    this.dur = s.dur;
+    const A = this.actor;
+    this.ctx.events.emit('weapon.dashAttack', {
+      weapon: this.weaponId, step: s.name, actor: A, dur: s.dur, t0: s.t0, t1: s.t1,
+    });
+    // Preserve generic weapon-step listeners such as cloth/audio accents while
+    // exposing the dedicated event and state to animation/gameplay systems.
+    this.ctx.events.emit('weapon.step', { weapon: this.weaponId, step: s.name, actor: A, dur: s.dur, t0: s.t0, t1: s.t1, dashAttack: true });
+    A.onWeaponState?.('dashAttack', s);
+    this.ctx.audio?.sfx?.(s.sfx, { pos: A.position });
+    const color = s.vfx?.color || this.weapon.palette.glow || this.weapon.palette.body;
+    this.ctx.vfx?.shockwave?.(A.position.clone().setY(0.05), { radius: 1.55, color, life: 0.24 });
+    this.ctx.vfx?.burst?.(A.position.clone().setY(0.8), {
+      count: 10, color, speed: 7.5, spread: 0.58, kind: 'chev',
+    });
+    if (s.shake) this.ctx.events.emit('camera.shake', { amp: s.shake.amp * 0.42, dur: 0.10, freq: 38 });
   }
 
   _boon(slot) {

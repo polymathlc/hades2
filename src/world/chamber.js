@@ -309,7 +309,7 @@ export class World {
     ctx.events?.on?.('room.cleared', () => this.setCleared(true));
     // The capture harness never fights an enemy, so the shot sheet would only
     // ever see sealed, dark doors. Open them once the room has settled.
-    if (isCaptureMode(ctx)) this.setCleared(true);
+    if (ctx.CAPTURE || ctx.capture) this.setCleared(true);
   }
 
   // ----------------------------------------------------------------- build
@@ -507,19 +507,18 @@ export class World {
     // Water weeping out of the vault and falling through the chamber. It is
     // the only genuinely COOL moving element in a room full of fire, and it
     // occupies the upper band of the frame where §9.6 wants the complement.
-    const ambientCounts = chamberAmbientCounts(B, ctx.quality);
     this.props.emberField(ctx, {
       // §9.6 needs the complement at frame scale and this is the only COOL
       // moving element in a room lit entirely by fire. Measured whole-frame
       // cyan on the gameplay framing was 5.8% against the 8% floor, so the
       // fall is doubled in count and pulled in over the play space rather than
       // hugging the wall.
-      rng, count: ambientCounts.drips, name: 'vault.drips', streak: true,
+      rng, count: 72, name: 'vault.drips', streak: true,
       color: B.accent, accent: B.accent, rise: false,
       rIn: maxR * 0.30, rOut: maxR * 0.96, yBase: (G.wallTop || 13) - 1.2, spread: 3.0, span: 12,
     });
     this.props.emberField(ctx, {
-      rng, count: ambientCounts.embers,
+      rng, count: Math.round(B.ember.count * (ctx.quality?.render?.motes ? 1 : 0.5)),
       color: B.ember.color, accent: B.ember.accent, rise: B.ember.rise,
       // OVER THE VOID, which is what this field is for: at rIn 0.55R more than
       // half the population spawned UNDER the arena plate, where it can only
@@ -2341,7 +2340,7 @@ export class World {
       this.props.addSway(big, { amp: 0.022, rate: 0.24, phase: 3.1, axis: 'z', drift: 0.8 });
       G.flamePoints.push({ x: hx, y: hy + 0.55, z: hz, seed: 0.62, scale: 0.95 });
       // borrow a pooled practical if the rig has one spare
-      this.props.borrowLight(ctx, {
+      ctx.lighting?.acquireLight?.({
         color: '#ffb070', intensity: 210, distance: 15, decay: 2.0,
         pos: [hx, hy + 0.2, hz], flicker: 0.34, speed: 0.63, kind: 'practical',
       });
@@ -2661,7 +2660,7 @@ export class World {
 
   setCleared(v = true) {
     this._clearedPending = v;
-    const snap = isCaptureMode(this.ctx);
+    const snap = !!(this.ctx && (this.ctx.CAPTURE || this.ctx.capture));
     this.doors.setSealed(!v, snap);
     return this;
   }
@@ -2671,9 +2670,6 @@ export class World {
   // =========================================================================
   setBiome(name, ctx = this.ctx) {
     if (!BIOMES[name] || name === this.biome) return this;
-    // Release chamber-owned handles before the rig spends its new biome
-    // budget; build().clear() will safely find the ownership list empty.
-    this.props.releaseLights();
     // Announce FIRST: the light rig retunes, publishes a new rim constant and
     // a new prefiltered sky, and re-authors its practicals — all of which
     // build() then reads while laying out the chamber.
@@ -2742,20 +2738,5 @@ export class World {
 }
 
 const EMPTY = [];
-
-/** The capture API object is not a mode flag; only CAPTURE requests snap. */
-export function isCaptureMode(ctx) { return !!ctx?.CAPTURE; }
-
-/** Chamber-local ambient counts derived from the renderer's mote budget. */
-export function chamberAmbientCounts(biome, quality = {}) {
-  const motes = Number(quality?.render?.motes);
-  const tier = quality?.tier || quality?.render?.tier || 'high';
-  const scale = tier === 'low' || (Number.isFinite(motes) && motes <= 120) ? 0.45
-    : tier === 'med' || (Number.isFinite(motes) && motes <= 350) ? 0.70 : 1;
-  return {
-    drips: Math.max(0, Math.round(72 * scale)),
-    embers: Math.max(0, Math.round((biome?.ember?.count || 0) * scale)),
-  };
-}
 
 export default World;

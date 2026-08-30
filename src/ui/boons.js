@@ -15,8 +15,11 @@ import {
 } from './ornament.js';
 import { GOD_INFO, SLOTS, RARITY_LABEL, BoonState } from '../game/boons.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from './boon-choice.js';
-import godPortraitsUrl from '../assets/ui/generated/god-portraits-v1.jpg';
-import hephaestusAtlasUrl from '../assets/textures/generated/hephaestus-forge-gates-v6-atlas.png';
+// Cards never display these atlases at source resolution. Compact browser
+// editions keep the reward screen quick to open on integrated GPUs while the
+// full-resolution files remain available as art masters.
+import godPortraitsUrl from '../assets/ui/generated/web/god-portraits-v1-web.jpg';
+import hephaestusAtlasUrl from '../assets/textures/generated/web/hephaestus-forge-gates-v6-atlas-web.jpg';
 
 const PORTRAIT_GRID = { cols: 5, rows: 2 };
 const PORTRAIT_CELL = {

@@ -34,9 +34,7 @@ export function chooseGraphicsTier(options = {}) {
   if (!memory && !cores) return 'med';
   if ((memory > 0 && memory < 8) || (cores > 0 && cores < 8)
     || (pixels >= 4_000_000 && !clearlyPowerful)) return 'med';
-  // An 8 GB / 8-thread laptop is common, not a reliable signal of a fast GPU.
-  // Auto mode should favour steady play; High remains available explicitly.
-  return clearlyPowerful ? 'high' : 'med';
+  return 'high';
 }
 
 export function graphicsChoiceSource({ capture = false, requested, stored } = {}) {

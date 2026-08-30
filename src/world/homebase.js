@@ -586,11 +586,11 @@ export class NectarDrop {
     const haloG = shared.halo;
     const halo = new THREE.Mesh(haloG, gold); halo.rotation.x = Math.PI / 2; halo.position.y = 0.45; this.root.add(halo);
     this.halo = halo;
-    // Keep rewards emissive-only on every tier. Adding a new PointLight after
-    // a boss dies changes Three's light-count shader permutation and can force
-    // every visible standard material to relink precisely during the death
-    // transition. The three bright reward meshes already read clearly, while
-    // the chamber's fixed LightRig supplies their surrounding illumination.
+    // On Low the emissive mesh is sufficient; another per-object point light
+    // would cost more than the reward's three tiny meshes.
+    if (ctx.quality?.tier !== 'low') {
+      const light = new THREE.PointLight(this.style.color, 8, 7, 2); light.position.y = 0.65; this.root.add(light);
+    }
     ctx.scene?.add?.(this.root);
     ctx.ui?.prompt?.(this.root.position, `${this.style.label} ×${amount}`, { key: this.style.key, height: 2.1, dur: 4 });
   }

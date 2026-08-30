@@ -405,6 +405,101 @@ export function buildClipData() {
     { t: 0.42, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
   ]);
 
+  // ── DASH ATTACKS — separate silhouettes, never recycled standing clips ──
+  // Low sliding cross-cut: weapon trails during the plant, then draws a broad
+  // horizontal line while the legs remain in a recognisable dash stance.
+  C.dashSlash = new Clip('dashSlash', 0.36, [
+    ...pose(0, {
+      pelvis: [24, -18, 2], spine1: [15, -10, 0], chest: [18, -24, -4], head: [-12, 20, 0],
+      armR: [-36, 0, -72], foreR: [-62, 0, 18], handR: [-18, 0, 26],
+      armL: [38, 0, 32], foreL: [-54, 0, -8], thighL: [-56, 0, 7], shinL: [34, 0, 0],
+      thighR: [34, 0, -7], shinR: [26, 0, 0],
+    }, 'outQuad'),
+    { t: 0, b: 'pelvis', p: [0, -0.10, -0.08] },
+    ...pose(0.085, {
+      pelvis: [30, -34, 2], spine1: [18, -22, 0], chest: [24, -42, -6], head: [-14, 34, 0],
+      armR: [-52, 0, -96], foreR: [-30, 0, 12], handR: [-8, 0, 34],
+      armL: [28, 0, 46], foreL: [-66, 0, -10], thighL: [-64, 0, 8], shinL: [42, 0, 0],
+      thighR: [40, 0, -8], shinR: [30, 0, 0],
+    }, 'outQuad'),
+    { t: 0.085, b: 'pelvis', p: [-0.02, -0.12, -0.10], e: 'outQuad' },
+    ...pose(0.155, {
+      pelvis: [22, 62, -2], spine1: [14, 38, 0], spine2: [10, 28, 2], chest: [18, 72, 8], head: [-8, -42, 0],
+      armR: [-66, 0, 78], foreR: [-8, 0, -8], handR: [2, 0, -26],
+      armL: [34, 0, -58], foreL: [-48, 0, 8], thighL: [-48, 0, 8], shinL: [54, 0, 0],
+      thighR: [18, 0, -8], shinR: [38, 0, 0],
+    }, 'outQuint'),
+    { t: 0.155, b: 'pelvis', p: [0.03, -0.095, 0.12], e: 'outQuint' },
+    ...pose(0.235, {
+      pelvis: [16, 48, 0], chest: [14, 54, 5], head: [-4, -28, 0],
+      armR: [-52, 0, 64], foreR: [-22, 0, -4], armL: [22, 0, -42], foreL: [-52, 0, 4],
+      thighL: [-36, 0, 6], shinL: [44, 0, 0], thighR: [8, 0, -6], shinR: [34, 0, 0],
+    }, 'linear'),
+    ...stance(0.36, 'outCubic'),
+    { t: 0.36, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // Two-handed driving thrust: the weapon and both shoulders form one long
+  // line, with a much lower centre of gravity than either standing spear poke.
+  C.dashThrust = new Clip('dashThrust', 0.37, [
+    ...pose(0, {
+      pelvis: [28, -8, 0], spine1: [18, -5, 0], chest: [24, -10, 0], head: [-16, 10, 0],
+      armR: [-62, 0, -42], foreR: [-88, 0, 12], armL: [-58, 0, 34], foreL: [-82, 0, -10],
+      thighL: [-62, 0, 6], shinL: [42, 0, 0], thighR: [38, 0, -6], shinR: [28, 0, 0],
+    }, 'outQuad'),
+    { t: 0, b: 'pelvis', p: [0, -0.11, -0.12] },
+    ...pose(0.09, {
+      pelvis: [34, -12, 0], spine1: [22, -8, 0], chest: [30, -16, 0], head: [-18, 18, 0],
+      armR: [-78, 0, -54], foreR: [-106, 0, 14], armL: [-72, 0, 46], foreL: [-102, 0, -12],
+      thighL: [-70, 0, 7], shinL: [48, 0, 0], thighR: [44, 0, -7], shinR: [30, 0, 0],
+    }, 'outQuad'),
+    { t: 0.09, b: 'pelvis', p: [0, -0.13, -0.15], e: 'outQuad' },
+    ...pose(0.16, {
+      pelvis: [30, 4, 0], spine1: [20, 2, 0], chest: [28, 6, 0], head: [-14, -4, 0],
+      clavR: [0, 8, -12], armR: [-102, 0, -10], foreR: [-4, 0, 0], handR: [8, 0, 0],
+      clavL: [0, 6, 10], armL: [-98, 0, 12], foreL: [-6, 0, 0], handL: [8, 0, 0],
+      thighL: [-66, 0, 7], shinL: [56, 0, 0], thighR: [32, 0, -7], shinR: [38, 0, 0],
+    }, 'outQuint'),
+    { t: 0.16, b: 'pelvis', p: [0, -0.115, 0.16], e: 'outQuint' },
+    ...pose(0.245, {
+      pelvis: [22, 3, 0], chest: [20, 5, 0], head: [-8, -3, 0],
+      armR: [-90, 0, -14], foreR: [-18, 0, 2], armL: [-86, 0, 16], foreL: [-20, 0, -2],
+      thighL: [-48, 0, 6], shinL: [46, 0, 0], thighR: [18, 0, -6], shinR: [34, 0, 0],
+    }, 'linear'),
+    ...stance(0.37, 'outCubic'),
+    { t: 0.37, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // Rising Dash Attack for fists/gauntlets: a planted crouch explodes into a
+  // full-body uppercut, rather than borrowing the shield-rush pose.
+  C.dashUpper = new Clip('dashUpper', 0.34, [
+    ...pose(0, {
+      pelvis: [30, 18, 0], spine1: [20, 12, 0], chest: [28, 20, 0], head: [-18, -10, 0],
+      armR: [24, 0, -42], foreR: [-112, 0, 8], armL: [38, 0, 32], foreL: [-72, 0, -6],
+      thighL: [-70, 0, 8], shinL: [70, 0, 0], thighR: [-34, 0, -8], shinR: [56, 0, 0],
+    }, 'outQuad'),
+    { t: 0, b: 'pelvis', p: [0, -0.17, -0.08] },
+    ...pose(0.085, {
+      pelvis: [38, 24, 0], spine1: [25, 16, 0], chest: [34, 30, 0], head: [-22, -16, 0],
+      armR: [42, 0, -54], foreR: [-128, 0, 10], armL: [48, 0, 40], foreL: [-82, 0, -8],
+      thighL: [-78, 0, 9], shinL: [82, 0, 0], thighR: [-42, 0, -9], shinR: [68, 0, 0],
+    }, 'outQuad'),
+    { t: 0.085, b: 'pelvis', p: [0, -0.20, -0.10], e: 'outQuad' },
+    ...pose(0.155, {
+      pelvis: [-12, -8, 0], spine1: [-8, -6, 0], chest: [-24, -12, 0], head: [14, 8, 0],
+      armR: [-158, 0, -14], foreR: [-8, 0, 0], handR: [10, 0, 0],
+      armL: [-72, 0, 28], foreL: [-30, 0, -4], thighL: [-26, 0, 7], shinL: [38, 0, 0],
+      thighR: [22, 0, -7], shinR: [32, 0, 0],
+    }, 'outQuint'),
+    { t: 0.155, b: 'pelvis', p: [0, 0.06, 0.14], e: 'outQuint' },
+    ...pose(0.225, {
+      pelvis: [-8, -6, 0], chest: [-18, -10, 0], head: [10, 6, 0],
+      armR: [-142, 0, -18], foreR: [-20, 0, 0], armL: [-58, 0, 24], foreL: [-42, 0, -4],
+    }, 'linear'),
+    ...stance(0.34, 'outCubic'),
+    { t: 0.34, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
   // ── ATTACK 1 — right-to-left horizontal slash ────────────────────────────
   C.attack1 = new Clip('attack1', 0.46, [
     ...stance(0),

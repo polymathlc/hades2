@@ -352,11 +352,6 @@ export class RunState {
       return;
     }
     this.state = 'cleared';
-    // The reward decision is useful idle time for the material workers. Start
-    // the next biome before the player enters its gate instead of blocking the
-    // first Asphodel/Elysium frame on two dozen cold texture sets.
-    const nextBiome = this.biomeFor(this.depth + 1);
-    if (nextBiome !== this.biome) this.ctx.mats?.prepareBiome?.(nextBiome);
     // THE DOORS ARE THE REWARD. Unsealing is the only thing that happens on a
     // clear, and it must happen through the world so the sigils, thresholds
     // and the enter-trigger all come live together.

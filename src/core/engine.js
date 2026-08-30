@@ -6,13 +6,11 @@ import { clamp } from './math.js';
 export class Engine {
   constructor(opts={}){
     const tier = opts.quality?.tier || 'high';
-    // Rendering quality must not silently double gameplay CPU cost.  High is
-    // the automatic desktop tier, and 120 Hz made every AI, collision, status
-    // and projectile system run twice per displayed 60 Hz frame.  Reserve the
-    // 120 Hz simulation for explicitly selected Ultra/capture; all ordinary
-    // browser tiers remain responsive at 60 Hz and have bounded catch-up work.
-    this.fixedDt = tier === 'ultra' ? 1/120 : 1/60;
-    this.maxSubSteps = tier === 'low' ? 3 : tier === 'med' ? 4 : tier === 'high' ? 5 : 8;
+    // 120 Hz doubled the CPU cost of every AI, combat and world system. The
+    // browser-friendly tiers use a still-responsive 60 Hz simulation and a
+    // smaller catch-up budget so a slow frame cannot trigger a spiral of work.
+    this.fixedDt = (tier === 'low' || tier === 'med') ? 1/60 : 1/120;
+    this.maxSubSteps = tier === 'low' ? 3 : tier === 'med' ? 5 : 8;
     this.systems = [];
     this._acc = 0; this._last = 0; this._raf = 0; this.running = false; this.skipRender = false;
     this.ctx = {
@@ -71,17 +69,12 @@ export class Engine {
       this._acc -= this.fixedDt; steps++;
       t.dt = this.fixedDt; t.t += this.fixedDt; t.frame++;
       for(const s of this.systems) if(s.update) s.update(this.fixedDt, c);
-      // Press/release edges belong to one simulation step, not one rendered
-      // frame. A catch-up frame can run several fixed steps; exposing the same
-      // edge to all of them queued duplicate attacks. Conversely, when a fast
-      // render frame runs zero steps the edge must survive until simulation
-      // actually consumes it.
-      if(steps === 1) c.input.end();
     }
     if(steps >= this.maxSubSteps) this._acc = 0;
     const alpha = this._acc / this.fixedDt;
     t.alpha = alpha; t.renderDt = dt;
     for(const s of this.systems) if(s.lateUpdate) s.lateUpdate(alpha, c);
+    c.input.end();
     if(!this.skipRender) for(const s of this.systems) if(s.render) s.render(c);
     this.perf._acc += dt; this.perf._n++;
     if(this.perf._acc >= 0.5){ this.perf.fps = this.perf._n/this.perf._acc; this.perf.ms = 1000*this.perf._acc/this.perf._n; this.perf._acc=0; this.perf._n=0; }
