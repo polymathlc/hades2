@@ -211,12 +211,25 @@ export const HERO_PALETTE = {
   bladeEdge: '#d8cfae',
   leather:   '#37203f',
   glow:      '#7fe3ff',   // the accent complement (§1.2) — eyes, sigils
+  // brow / lip / capeDeep were hard-coded inline before, which meant Melinoe
+  // inherited a plum eyebrow and a violet cape shadow that belong to Zagreus.
+  // A hero-specific hex authored inside buildParts() is a recolour waiting to
+  // happen, and §14 says the two heirs must read as different SHAPES and
+  // different COLOUR FAMILIES.
+  brow:      '#2e1a3f',   // eyebrow + lash line: the darkest note on the face
+  lip:       '#e0a086',
+  capeDeep:  '#2a1240',   // the mantle's lower two-fifths — the ink anchor
 };
 
 export const HERO_SPEC = {
   name: 'erebus.hero',
   height: 2.05,
-  build: { shoulder: 1.0, limb: 1.0, bulk: 1.0 },
+  // shoulder 1.06: measured on the hero shot the head spanned 0.48 of the
+  // shoulder width where a Hades hero reads at 0.38-0.42. Half of that gap is
+  // paid by the cranium trim in buildParts(), the other half by pushing the
+  // clavicle out 6% — which now moves the arm MESH too, because SW is finally
+  // threaded through the geometry.
+  build: { shoulder: 1.06, limb: 1.0, bulk: 1.0 },
   palette: HERO_PALETTE,
   features: {
     pauldron: 'left',      // 'left' | 'right' | 'both' | 'none'
@@ -226,9 +239,14 @@ export const HERO_SPEC = {
     greaves: true,
     bracers: true,
     harness: true,
-    hair: 'swept',         // 'swept' | 'short' | 'none'
+    hair: 'swept',         // 'swept' | 'short' | 'long' | 'none'
+    bodice: false,         // Zagreus is bare-chested; Melinoe is not
     witchArm: 'none',      // 'left' | 'right' | 'none'
     eyes: true,
+    // Which hand is NOT making a fist. Both hands used to be the identical
+    // closed grip, so a character standing with nothing in either hand still
+    // held two invisible weapons — the clearest "puppet" tell on the model.
+    openHand: 'left',
     // Player weapons are separate hand-mounted models (player-weapons.js),
     // allowing the equipped arm to change silhouette at runtime.
     weapon: 'none',        // 'xiphos' | 'none'
@@ -241,7 +259,14 @@ export const HERO_SPEC = {
   // (measured: the eyes read pure white, not the authored #7fe3ff), so the one
   // chromatic accent on the face delivered a featureless highlight instead of
   // the §1.2 complement. A bigger, cooler eye reads as a SHAPE.
-  glowIntensity: 0.30,
+  // 0.30 still clipped: in 03_hero_char the irises rendered as two blown WHITE
+  // discs with a bloom halo twice their geometric size — "two glowing dots",
+  // which §b names as an outright fail. Part of that was the rim wash landing
+  // on them as well (fixed in SLOT_PAINT below); the rest is that a 26mm
+  // emissive on a 300mm head only needs to be the brightest note on the FACE,
+  // not in the frame. 0.22 keeps it above the skin's specular and under the
+  // bloom threshold.
+  glowIntensity: 0.22,
   rim: null,               // optional { color, strength } override for this actor
 };
 
@@ -264,6 +289,9 @@ export const MELINOE_PALETTE = {
   bladeEdge: '#e2f3da',
   leather:   '#211d29',
   glow:      '#77f0c2',
+  brow:      '#6b6152',   // warm ash: a plum brow on a bone-blonde head reads wrong
+  lip:       '#e0a894',
+  capeDeep:  '#0b1615',
 };
 
 export const MELINOE_SPEC = {
@@ -279,13 +307,23 @@ export const MELINOE_SPEC = {
     greaves: false,
     bracers: true,
     harness: true,
-    hair: 'swept',
+    // 'long' adds a third hair bone and drops the nape mass to mid-back. It is
+    // the cheapest way to make the two heirs different BLACK SHAPES (§14): at
+    // 1/8 resolution a crown-height difference of 3cm is invisible, a 40cm
+    // difference in hair length is not.
+    hair: 'long',
+    bodice: true,
     witchArm: 'left',
     eyes: true,
+    // 'left' for both heirs: player-weapons.js mounts the blade, spear, fists,
+    // rail, staff and axe on handR, so the RIGHT hand is the one that has to
+    // keep a closed grip. Melinoe's open hand is also her witch arm, which is
+    // where the spectral rings and the cast VFX live.
+    openHand: 'left',
     weapon: 'none',
   },
-  glowIntensity: 0.38,
-  rim: { color: '#84f2c8', strength: 0.76 },
+  glowIntensity: 0.28,
+  rim: { color: '#84f2c8', strength: 2.3 },
 };
 
 /** deep-ish merge so a caller can override one feature without restating all. */
@@ -333,7 +371,15 @@ function skeletonDef(spec) {
   if (spec.features.hair !== 'none') {
     add('hairA', 'head', [0, 1.755, -0.075], [0, 1.655, -0.175], 0.135, 'hair');
     add('hairB', 'hairA', [0, 1.655, -0.175], [0, 1.548, -0.246], 0.115, 'hair');
-    chains.push({ name: 'hair', bones: ['hairA', 'hairB'], stiff: 34, damp: 7.0, grav: 2.4, inertia: 0.5, maxAng: 0.42 });
+    if (spec.features.hair === 'long') {
+      // A long mane needs a third link or it swings as one rigid plank. Lower
+      // stiffness down the chain so the tip trails the root (overlap), which is
+      // the whole reason secondary motion is worth solving at all.
+      add('hairC', 'hairB', [0, 1.548, -0.246], [0, 1.310, -0.262], 0.100, 'hair');
+      chains.push({ name: 'hair', bones: ['hairA', 'hairB', 'hairC'], stiff: 24, damp: 5.4, grav: 3.6, inertia: 0.8, maxAng: 0.50 });
+    } else {
+      chains.push({ name: 'hair', bones: ['hairA', 'hairB'], stiff: 34, damp: 7.0, grav: 2.4, inertia: 0.5, maxAng: 0.42 });
+    }
   }
   if (spec.features.cape) {
     add('capeA', 'chest', [0, 1.482, -0.175], [0, 1.238, -0.238], 0.34, 'cape');
@@ -438,8 +484,8 @@ const CREVICE = [
   // FACE. At 90px the face is four shapes: brow shadow, eye sockets, the plane
   // under the cheekbone and the shadow under the nose. Without them the head is
   // a lit egg, which is the single most "programmer art" thing a hero can be.
-  { p: [0.048, 1.704, 0.130], r: 0.066, k: 0.80 }, // eye socket L
-  { p: [-0.048, 1.704, 0.130], r: 0.066, k: 0.80 }, // eye socket R
+  { p: [0.057, 1.704, 0.127], r: 0.068, k: 0.80 }, // eye socket L
+  { p: [-0.057, 1.704, 0.127], r: 0.068, k: 0.80 }, // eye socket R
   { p: [0.040, 1.648, 0.146], r: 0.038, k: 0.42 }, // mouth corner L
   { p: [-0.040, 1.648, 0.146], r: 0.038, k: 0.42 }, // mouth corner R
   { p: [0, 1.716, 0.150], r: 0.045, k: 0.55 }, // nasion
@@ -450,6 +496,38 @@ const CREVICE = [
   { p: [0.245, 1.155, 0.05], r: 0.09, k: 0.34 },  // inner elbow L
   { p: [-0.245, 1.155, 0.05], r: 0.09, k: 0.34 },  // inner elbow R
   { p: [0, 1.10, 0.13], r: 0.13, k: 0.26 },  // navel / abdominal shadow
+  { p: [0, 1.010, 0.140], r: 0.090, k: 0.30 },  // linea alba, below the navel
+
+  // ── ROUND-5 ADDITIONS ────────────────────────────────────────────────────
+  // Audited against the rendered hero shot rather than the list: every crevice
+  // below was a place where two forms MEET and the frame showed one continuous
+  // lit value across the join. Painted AO is what makes a procedural body read
+  // as sculpted (§4); a join with no darkening is the plastic-toy tell.
+  { p: [0, 1.330, 0.150], r: 0.075, k: 0.44 },  // sternum groove between the pecs
+  { p: [0.076, 1.300, 0.132], r: 0.078, k: 0.38 },  // under the pectoral L
+  { p: [-0.076, 1.300, 0.132], r: 0.078, k: 0.38 },  // under the pectoral R
+  { p: [0.058, 1.462, 0.086], r: 0.062, k: 0.40 },  // clavicle pit L
+  { p: [-0.058, 1.462, 0.086], r: 0.062, k: 0.40 },  // clavicle pit R
+  { p: [0.246, 1.300, 0.000], r: 0.098, k: 0.40 },  // under the pauldron lames L
+  { p: [-0.246, 1.300, 0.000], r: 0.098, k: 0.40 },  // under the pauldron lames R
+  { p: [0.168, 1.446, -0.120], r: 0.130, k: 0.34 },  // under the mantle at the shoulder L
+  { p: [-0.168, 1.446, -0.120], r: 0.130, k: 0.34 },  // under the mantle at the shoulder R
+  { p: [0, 0.906, 0.000], r: 0.215, k: 0.30 },  // inside the girdle / under the belt
+  { p: [0, 0.836, 0.000], r: 0.235, k: 0.20 },  // where the pteruges overlap the hip
+  { p: [0.250, 0.930, 0.006], r: 0.058, k: 0.30 },  // under the bracer cuff L
+  { p: [-0.250, 0.930, 0.006], r: 0.058, k: 0.30 },  // under the bracer cuff R
+  { p: [0.120, 0.172, -0.018], r: 0.068, k: 0.30 },  // boot top / greave hem L
+  { p: [-0.120, 0.172, -0.018], r: 0.068, k: 0.30 },  // boot top / greave hem R
+  // FACE, second pass. The jaw, the ear and the hairline are three new form
+  // junctions on the head; without their shadows the new geometry would just
+  // be extra lit surface, which at 90px is worse than none.
+  { p: [0.142, 1.660, 0.010], r: 0.058, k: 0.36 },  // ear-to-jaw notch L
+  { p: [-0.142, 1.660, 0.010], r: 0.058, k: 0.36 },  // ear-to-jaw notch R
+  { p: [0, 1.622, 0.150], r: 0.030, k: 0.40 },  // under the lower lip
+  { p: [0.130, 1.744, 0.058], r: 0.058, k: 0.32 },  // temple L
+  { p: [-0.130, 1.744, 0.058], r: 0.058, k: 0.32 },  // temple R
+  { p: [0, 1.790, 0.128], r: 0.082, k: 0.30 },  // hairline shadow on the forehead
+  { p: [0, 1.560, 0.084], r: 0.088, k: 0.32 },  // under the jaw, into the throat
 ];
 
 // NOTE: the crevice table is authored in the REFERENCE 1.90m space. Callers
@@ -516,6 +594,32 @@ const SLOT_MAT = {
 //    reference. Measured, that left 1.8% of lit hero pixels carrying any cool
 //    hue at all. rimStrength is the only multiplier on that term we own, so the
 //    per-slot strengths below carry the ~4x the edge actually needs.
+//    ── ROUND-5 CORRECTION, AND IT OVERRULES THE PARAGRAPH ABOVE ────────────
+//    rimStrength is NOT only a multiplier on the additive. painterly.js:921
+//    reads
+//        pLitCol *= mix( vec3(1.0), vec3(0.42, 0.82, 1.06), clamp(rimK*3.2,0,1) )
+//    with rimK = fres * gate * uRimStrength * shBoost. That is a KEY-SUPPRESSION
+//    multiply — it cuts red to 42% and lifts blue — and because of the clamp it
+//    SATURATES. Solve for where it reaches 1 at the shipped numbers
+//    (strength 10.4, rimPower 1.75, gate ~0.70): fres >= 0.0275, i.e. every
+//    normal more than 33 DEGREES off the view vector. On a rounded figure that
+//    is ~85% of the visible surface, so the "rim" was not a rim at all — it was
+//    a global desaturating blue wash over the whole character, and it is the
+//    single reason the hero rendered as a pale ice-blue snowman in 03_hero_char
+//    while his authored #e8bd93 skin never reached the frame. The shader's own
+//    comment records the same failure at rimK*5.0 and fixes it by cutting the
+//    multiplier from 5.0 to 3.2; raising rimStrength 4x here more than undid it.
+//    THE FIX IS DISTRIBUTION, NOT ENERGY — the same conclusion painterly.js
+//    reached about the additive. Cut the strength ~5x and RAISE rimPower so the
+//    fresnel band is narrow: at strength 1.9 / power 3.3 the suppression only
+//    saturates outside a 69-degree cone, i.e. in the outer ~20 degrees of the
+//    form, which IS the contour, and the additive at the contour lands at 0.29
+//    scene-linear instead of 1.88 — under AgX's shoulder, so it arrives as a
+//    saturated periwinkle edge rather than as white.
+//    (Both numbers were computed against painterly.js:860/888/921 before being
+//    changed, not swept: the cone angle is acos(1 - ((1/3.2)/(gate*strength))^
+//    (1/power)) and the additive is 0.9^power * gate * strength * 1.16 * keyRef
+//    * 0.026 with keyRef ~10.3.)
 // 3. HUE. painterly.js:658 multiplies the authored rim colour component-wise by
 //    vec3(0.30, 1.22, 0.72) as an AgX "pre-compensation". That drags the
 //    mandated #5fd0ff (h197) toward green and crushes its red to 30%.
@@ -593,23 +697,52 @@ const RIM_GATE = [-0.45, 0.40];
 // loss. The subject test cannot be won on the hero's exposure alone; the
 // competing background has to come DOWN, which is what the statue, brazier
 // and colonnade caps in world/chamber.js are for.
+// ── ROUND-5: THE COOL HALF WAS TEAL, AND IT WAS DELETING THE INK ANCHORS ────
+// The paragraph above is right that the shadow side of a fire-lit character
+// must go COLD. The multiply it shipped does not do that; it does something
+// else, and the hero shot shows it plainly.
+//
+// ARITHMETIC. The mantle's albedo #3d1a5c is linear (0.047, 0.010, 0.110).
+// cloth.shadowTint multiplied its blue by 1.90 -> 0.208, i.e. the SHADOW side
+// of the cape came back nearly twice as bright in blue as the cape's own lit
+// albedo. The same term on skin (0.82, 0.55, 0.35) returns (0.246, 0.396,
+// 0.623): green above red, which is hue ~215 — TEAL. §1.3 mandates 240-320
+// (indigo / violet / black-plum) and §7 hard-bans neutral/greyed shadow; a
+// hue-215 shadow is neither of those things, it is a second light in cyan.
+//
+// WHAT THE FRAME SHOWED. In 03_hero_char the mantle, the boots and the hair —
+// the three surfaces this file's own header calls "the ink anchors that keep
+// the silhouette readable" — rendered as the palest, coolest masses on the
+// character, paler than the skin they are supposed to frame. The hero read as
+// a pale-blue snowman in a bathrobe and the §14 black-shape test had nothing
+// to separate figure from cape.
+//
+// THE FIX, and what it is NOT. The cool half stays: every slot still multiplies
+// its shadow by a strongly blue-weighted vector, so the terminator still meets
+// a warm key with an opposed hue over a third of the character (the thing the
+// paragraph above was protecting). What changes is that RED now leads GREEN, so
+// the shadow lands at hue 285-295 — a rich violet, §15.3's "a violet shadow
+// should be a RICH violet" — and the blue gain drops from 1.90 to ~1.30 so a
+// dark albedo stays dark. ambGain comes down on cloth and hair for the same
+// reason: a hemisphere wash lifts every normal equally, and on the two darkest
+// slots that wash IS the reason they stopped being dark.
 export const SLOT_PAINT = {
   skin: {
-    litGain: 0.49, ambGain: 0.44, specGain: 0.22, rimStrength: 10.4, rimPower: 1.75, rimGate: RIM_GATE,
-    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.30, 0.72, 1.78],
-    rampLevels: [0.27, 0.50, 0.92], rampSteps: [0.30, 0.58], rampSoftness: 0.07, rampStrength: 0.60, shadowDepth: 0.88,
+    litGain: 0.49, ambGain: 0.44, specGain: 0.22, rimStrength: 1.90, rimPower: 3.30, rimGate: RIM_GATE,
+    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.52, 0.38, 1.35],
+    rampLevels: [0.27, 0.50, 0.92], rampSteps: [0.30, 0.58], rampSoftness: 0.07, rampStrength: 0.60, shadowDepth: 0.86,
     contourStrength: 0.82, contourStart: 0.54,
   },
   cloth: {
-    litGain: 0.47, ambGain: 0.42, specGain: 0.18, rimStrength: 12.0, rimPower: 1.70, rimGate: RIM_GATE,
-    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.26, 0.70, 1.90],
-    rampLevels: [0.29, 0.52, 0.94], rampSteps: [0.30, 0.58], rampSoftness: 0.08, rampStrength: 0.58, shadowDepth: 0.92,
+    litGain: 0.47, ambGain: 0.37, specGain: 0.18, rimStrength: 2.20, rimPower: 3.20, rimGate: RIM_GATE,
+    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.46, 0.34, 1.30],
+    rampLevels: [0.26, 0.49, 0.94], rampSteps: [0.30, 0.58], rampSoftness: 0.08, rampStrength: 0.58, shadowDepth: 0.90,
     contourStrength: 0.95, contourStart: 0.50,
   },
   hair: {
-    litGain: 0.42, ambGain: 0.40, specGain: 0.16, rimStrength: 13.2, rimPower: 1.65, rimGate: RIM_GATE,
-    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.24, 0.66, 1.95],
-    rampLevels: [0.22, 0.44, 0.86], rampSteps: [0.28, 0.56], rampSoftness: 0.07, rampStrength: 0.60, shadowDepth: 0.94,
+    litGain: 0.42, ambGain: 0.33, specGain: 0.16, rimStrength: 2.40, rimPower: 3.10, rimGate: RIM_GATE,
+    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.44, 0.32, 1.32],
+    rampLevels: [0.20, 0.41, 0.86], rampSteps: [0.28, 0.56], rampSoftness: 0.07, rampStrength: 0.60, shadowDepth: 0.92,
     contourStrength: 1.00, contourStart: 0.48,
   },
   // METAL is the character's own highlight band (§9.3/§9.5): the gold lames,
@@ -617,8 +750,8 @@ export const SLOT_PAINT = {
   // allowed to reach genuine white, and they get there on a small sharp
   // SPECULAR glint (§4), not on a raised diffuse.
   metal: {
-    litGain: 0.56, ambGain: 0.40, specGain: 0.68, rimStrength: 9.8, rimPower: 2.00, rimGate: RIM_GATE,
-    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.34, 0.74, 1.70],
+    litGain: 0.56, ambGain: 0.40, specGain: 0.68, rimStrength: 1.70, rimPower: 3.50, rimGate: RIM_GATE,
+    rimColor: RIM_HEX, rimDir: RIM_DIR, shadowTint: [0.60, 0.46, 1.24],
     rampLevels: [0.26, 0.58, 1.00], rampSteps: [0.30, 0.56], rampSoftness: 0.055, rampStrength: 0.55, shadowDepth: 0.74,
     contourStrength: 0.70, contourStart: 0.56,
   },
@@ -628,203 +761,462 @@ export const SLOT_PAINT = {
 function buildParts(spec) {
   const P = spec.palette, F = spec.features;
   const k = spec.height / 1.90;
+  // ── BUILD KNOBS ARE NOW REAL ────────────────────────────────────────────
+  // `build.shoulder` and `build.bulk` were declared on every spec and read by
+  // NOBODY: skeletonDef() scaled the clavicle/arm BONES by `shoulder` while
+  // buildParts() authored the arm mesh at a fixed 0.232-0.250, so Melinoe's
+  // arms hung 28mm outboard of her own skeleton and her "narrower build" was
+  // a comment rather than a silhouette. SW/BK below are threaded through every
+  // lateral offset and every limb radius, which is what makes the two heirs
+  // distinguishable as black shapes (§14 subject test) instead of recolours.
+  const SW = spec.build?.shoulder ?? 1;   // lateral scale: shoulders, arms, ornament
+  const BK = spec.build?.bulk ?? 1;       // mass scale: limb and torso radii
   const parts = [];
   const add = (g, slot, tint, bind, ao) => { parts.push({ g, slot, tint, bind, ao }); return g; };
-  const BODY = null; // resolved to the body-bone set by the caller
+  const RH = { mode: 'rigid', bone: 'head' };
+  const brow = P.brow || P.hair;
+
+  /**
+   * A swept BAND around a vertical axis — belts, pauldron lames, cuffs,
+   * circlets. tubeGeo's frame puts N horizontal-radial and B vertical for a
+   * horizontal spine, so `th` is the plate's THICKNESS and `hh` its HEIGHT.
+   * That is exactly the difference between armour and the TorusGeometry rolls
+   * this replaces: a torus tube is CIRCULAR, so its lit edge is a rounded
+   * sausage with no arris for §4's "small, bright, sharp glint" to sit on. A
+   * band has two arrises, and the tint callback can put gold on them (u is the
+   * angle around the section: 0 inner, 0.25 top, 0.5 outer, 0.75 bottom).
+   */
+  const band = (o) => {
+    const N = o.seg ?? 26, A0 = (o.a0 ?? 0) * D2R, A1 = (o.a1 ?? 360) * D2R;
+    const spine = [];
+    for (let i = 0; i < N; i++) {
+      const t = N > 1 ? i / (N - 1) : 0, a = lerp(A0, A1, t);
+      const prof = o.prof ? o.prof(t) : 1;
+      const R = (o.R ?? 0.18) * (o.rx ? o.rx(a) : 1);
+      spine.push({
+        p: [(o.cx ?? 0) + R * Math.sin(a) * (o.ex ?? 1),
+        (o.cy ?? 0) + (o.dy ? o.dy(a) : 0),
+        (o.cz ?? 0) + R * Math.cos(a) * (o.ez ?? 1)],
+        r: 1, sx: o.th, sz: o.hh * prof,
+      });
+    }
+    return tubeGeo(spine, {
+      radial: o.radial ?? 10, up: [0, 1, 0],
+      capStart: o.cap ?? 'flat', capEnd: o.cap ?? 'flat',
+    });
+  };
+  // gold on both arrises, the plate's own metal on the faces, ink underneath.
+  // The hot band was 32% of the section, which at play scale is not an arris —
+  // it is a pale sausage, and that is exactly how the three pauldron lames read
+  // in 03_hero_char. 18% keeps a lit LINE on each edge with the plate's own
+  // metal between them, which is what §4's "small, bright, sharp glint" means.
+  const chamfer = (hot, face, deep) => (x, y, z, u) =>
+    ((u > 0.205 && u < 0.295) || (u > 0.705 && u < 0.795)) ? hot
+      : ((u < 0.12 || u > 0.88) ? deep : face);
 
   // ── torso ────────────────────────────────────────────────────────────────
+  // A hero's torso is a WEDGE: wide deltoid shelf, cut waist, flared iliac.
+  // sx at the chest rides SW so a narrow-build spec actually narrows.
+  const tsx = (v) => v * lerp(1, SW, 0.72), tr = (v) => v * lerp(1, BK, 0.80);
   add(tubeGeo([
-    { p: [0, 0.920, 0.004], r: 0.150, sx: 1.28, sz: 0.86 },
-    { p: [0, 0.985, 0.006], r: 0.162, sx: 1.30, sz: 0.84 },
-    { p: [0, 1.100, 0.010], r: 0.140, sx: 1.22, sz: 0.82 },
-    { p: [0, 1.235, 0.014], r: 0.163, sx: 1.30, sz: 0.83 },
-    { p: [0, 1.375, 0.016], r: 0.190, sx: 1.36, sz: 0.80 },
-    { p: [0, 1.462, 0.008], r: 0.180, sx: 1.50, sz: 0.74 },
-    { p: [0, 1.520, 0.004], r: 0.108, sx: 1.14, sz: 0.94 },
-  ], { radial: 18, capStart: 'round', capScale: 0.9, capEnd: 'flat' }), 'skin', P.skin, { only: 'body' });
+    { p: [0, 0.920, 0.004], r: tr(0.152), sx: 1.26, sz: 0.86 },
+    { p: [0, 0.985, 0.006], r: tr(0.160), sx: 1.28, sz: 0.84 },
+    { p: [0, 1.100, 0.010], r: tr(0.134), sx: 1.20, sz: 0.82 },   // waist, cut 4%
+    { p: [0, 1.235, 0.014], r: tr(0.164), sx: 1.30, sz: 0.83 },
+    { p: [0, 1.330, 0.016], r: tr(0.182), sx: tsx(1.34), sz: 0.82 },
+    { p: [0, 1.400, 0.014], r: tr(0.193), sx: tsx(1.42), sz: 0.79 },
+    { p: [0, 1.468, 0.006], r: tr(0.182), sx: tsx(1.56), sz: 0.73 },
+    { p: [0, 1.520, 0.004], r: tr(0.108), sx: 1.14, sz: 0.94 },
+  ], { radial: 20, capStart: 'round', capScale: 0.9, capEnd: 'flat' }), 'skin', P.skin, { only: 'torso' });
 
-  add(tubeGeo([{ p: [0, 1.470, 0.004], r: 0.074 }, { p: [0, 1.610, 0.008], r: 0.070 }],
-    { radial: 12, capStart: 'flat', capEnd: 'flat' }), 'skin', P.skin, { only: 'body' });
-
-  // ── head ─────────────────────────────────────────────────────────────────
-  add(prim(new THREE.SphereGeometry(1, 24, 16), { pos: [0, 1.694, 0.008], scale: [0.158, 0.177, 0.165] }),
-    'skin', P.skin, { mode: 'rigid', bone: 'head' });
-  add(prim(new THREE.SphereGeometry(1, 18, 12), { pos: [0, 1.622, 0.040], scale: [0.128, 0.094, 0.127] }),
-    'skin', P.skin, { mode: 'rigid', bone: 'head' });
-  add(tubeGeo([{ p: [0, 1.708, 0.148], r: 0.024 }, { p: [0, 1.658, 0.176], r: 0.017 }], { radial: 8 }),
-    'skin', P.skin, { mode: 'rigid', bone: 'head' });
-  add(tubeGeo([{ p: [-0.098, 1.734, 0.126], r: 0.025, sx: 0.48, sz: 0.85 },
-  { p: [0, 1.739, 0.161], r: 0.025, sx: 0.48, sz: 0.85 },
-  { p: [0.098, 1.734, 0.126], r: 0.025, sx: 0.48, sz: 0.85 }],
-    { radial: 8, capStart: 'round', capEnd: 'round' }), 'skin', P.skinDeep, { mode: 'rigid', bone: 'head' });
-  // BROW RIDGE. Skin, not hair: a hair-tinted bar across the eyeline read as a
-  // fringe pulled down over the face at play distance. Lifted 12mm so the eye
-  // assembly below has room to be three parts instead of one lozenge.
-  add(tubeGeo([{ p: [-0.110, 1.7245, 0.098], r: 0.026, sx: 0.60, sz: 0.62 },
-  { p: [0, 1.7275, 0.150], r: 0.027, sx: 0.60, sz: 0.62 },
-  { p: [0.110, 1.7245, 0.098], r: 0.026, sx: 0.60, sz: 0.62 }],
-    { radial: 8, capStart: 'round', capEnd: 'round' }), 'skin', P.skinDeep, { mode: 'rigid', bone: 'head' });
-
-  // ── EYES (§4: the face must carry information at 90px) ───────────────────
-  // Was: ONE emissive sphere per side at x +-0.056 / z 0.156. On a head
-  // ellipsoid of half-axes (0.158, 0.177, 0.165) centred z 0.008 that corner
-  // solves to 1.23 on the implicit — i.e. the outer corner of the right eye
-  // hung OFF the head silhouette, a visible geometry error on the protagonist.
-  // Pulled in to x +-0.048 / z 0.1545 (implicit 0.98-1.03: proud by ~1mm, which
-  // is what makes an eyeball read as a bulge) and split into three parts:
-  //   sclera-shadow lens   dark, wide  -> the socket
-  //   iris                 emissive, HALF the old size -> a pupil, not a lamp
-  //   upper lid            hair-tinted crescent -> the lash line that gives the
-  //                        face an expression instead of a stare
-  if (F.eyes) for (const s of [1, -1]) {
-    add(prim(new THREE.SphereGeometry(1, 12, 8), { pos: [0.048 * s, 1.7055, 0.1545], rot: [0, 0, -11 * s], scale: [0.030, 0.017, 0.0135] }),
-      'skin', P.skinDeep, { mode: 'rigid', bone: 'head' });
-    add(prim(new THREE.SphereGeometry(1, 10, 8), { pos: [0.0475 * s, 1.7045, 0.1585], rot: [0, 0, -11 * s], scale: [0.020, 0.016, 0.0120] }),
-      'glow', P.glow, { mode: 'rigid', bone: 'head' });
+  // PECTORALS + trapezius. The chest was one smooth tube, so the largest lit
+  // surface on the character carried no form at all and the harness strap read
+  // as a stripe painted on a barrel. Two shallow plates and the sternum crevice
+  // give the key something to break over.
+  for (const s of [1, -1]) {
+    add(prim(new THREE.SphereGeometry(1, 14, 10),
+      { pos: [0.078 * SW * s, 1.366, 0.104], rot: [0, 0, -11 * s], scale: [0.106 * SW, 0.046, 0.062] }),
+      'skin', P.skin, { only: 'torso' });
+    // trapezius: the neck-to-shoulder slope. Without it the head sat on a flat
+    // shelf and the neck sheared visibly whenever the head turned.
     add(tubeGeo([
-      { p: [0.020 * s, 1.7145, 0.1455], r: 0.0050, sx: 1.0, sz: 0.62 },
-      { p: [0.048 * s, 1.7195, 0.1560], r: 0.0072, sx: 1.0, sz: 0.62 },
-      { p: [0.077 * s, 1.7130, 0.1400], r: 0.0048, sx: 1.0, sz: 0.62 },
-    ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'hair', P.hair, { mode: 'rigid', bone: 'head' });
+      { p: [0.026 * s, 1.512, -0.010], r: 0.040, sx: 1.0, sz: 0.72 },
+      { p: [0.104 * SW * s, 1.482, -0.006], r: 0.046, sx: 1.0, sz: 0.72 },
+      { p: [0.186 * SW * s, 1.452, 0.000], r: 0.040, sx: 1.0, sz: 0.72 },
+    ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'skin', P.skin,
+      { only: ['chest', 'neck', 'clavL', 'clavR'], bias: { chest: 1.4 } });
   }
-  // MOUTH. There was no mouth geometry anywhere in the head block, so the face
-  // carried exactly two features. A shallow skinDeep tube reads as a drawn line
-  // at gameplay scale and as a closed mouth in the hero shot.
-  add(tubeGeo([
-    { p: [-0.031, 1.6455, 0.1600], r: 0.0062, sx: 1.0, sz: 0.55 },
-    { p: [0, 1.6475, 0.1690], r: 0.0080, sx: 1.0, sz: 0.55 },
-    { p: [0.031, 1.6455, 0.1600], r: 0.0062, sx: 1.0, sz: 0.55 },
-  ], { radial: 6, capStart: 'round', capEnd: 'round' }), 'skin', P.skinDeep, { mode: 'rigid', bone: 'head' });
-  // lower lip catch-light: a thin proud roll under the mouth line
-  add(tubeGeo([
-    { p: [-0.024, 1.6375, 0.1585], r: 0.0068, sx: 1.0, sz: 0.50 },
-    { p: [0, 1.6385, 0.1665], r: 0.0090, sx: 1.0, sz: 0.50 },
-    { p: [0.024, 1.6375, 0.1585], r: 0.0068, sx: 1.0, sz: 0.50 },
-  ], { radial: 6, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, { mode: 'rigid', bone: 'head' });
 
-  // ── hair: a cap wrapped on the skull + a swinging back mass + spikes ──────
-  if (F.hair !== 'none') {
-    const HC = V(0, 1.694, -0.008), HR = V(0.180, 0.198, 0.190);
-    add(sheetGeo(6, 22, (u, v) => {
-      const phi = (v - 0.5) * TAU;
-      const thMax = lerp(1.14, 2.46, (1 - Math.cos(phi)) * 0.5);
-      const th = Math.max(0.001, u * thMax);
-      const back = (1 - Math.cos(phi)) * 0.5;
-      const vol = 1.04 + 0.34 * clamp01((th - 0.45) * 1.3) * (0.35 + 0.65 * back);
-      return V(HC.x + HR.x * vol * Math.sin(th) * Math.sin(phi),
-        HC.y + HR.y * vol * Math.cos(th),
-        HC.z + HR.z * vol * Math.sin(th) * Math.cos(phi) - 0.026 * back * u);
-    }, 0.022), 'hair', (x, y, z, u) => (u > 0.86 ? P.hairTip : P.hair), { only: ['head', 'hairA'], bias: { head: 3.0 } });
-
+  // BODICE. HERO_SPEC's torso is bare (Zagreus is), and MELINOE_SPEC inherited
+  // that verbatim — so her spec's "different cloth" amounted to a skirt and a
+  // cape over an identical naked torso. A clad chest is also the fastest value
+  // break available on the upper body: dark cloth under a bright face.
+  if (F.bodice) {
     add(tubeGeo([
-      { p: [0, 1.750, -0.108], r: 0.118, sx: 0.94, sz: 0.92 },
-      { p: [0, 1.694, -0.162], r: 0.107, sx: 0.92, sz: 0.88 },
-      { p: [0, 1.614, -0.210], r: 0.078, sx: 0.88, sz: 0.84 },
-      { p: [0, 1.548, -0.258], r: 0.036, sx: 0.82, sz: 0.80 },
-    ], { radial: 12, capStart: 'flat', capEnd: 'round' }), 'hair',
-      (x, y, z) => (y < 1.60 ? P.hairTip : P.hair), { only: ['head', 'hairA', 'hairB'] });
+      { p: [0, 0.985, 0.006], r: tr(0.166), sx: 1.28, sz: 0.84 },
+      { p: [0, 1.100, 0.010], r: tr(0.140), sx: 1.20, sz: 0.82 },
+      { p: [0, 1.235, 0.014], r: tr(0.170), sx: 1.30, sz: 0.83 },
+      { p: [0, 1.330, 0.016], r: tr(0.188), sx: tsx(1.34), sz: 0.82 },
+      { p: [0, 1.408, 0.014], r: tr(0.198), sx: tsx(1.42), sz: 0.79 },
+      { p: [0, 1.452, 0.008], r: tr(0.188), sx: tsx(1.52), sz: 0.74 },
+    ], { radial: 20, capStart: 'flat', capEnd: 'flat' }), 'cloth',
+      (x, y) => ((y > 1.436 || y < 1.000) ? P.metalDeep : (y < 1.14 ? P.clothDeep : P.cloth)),
+      { only: 'torso' });
+  }
 
+  // ILIAC CREST — the "V" that runs from the hip point down under the girdle.
+  // On a bare-chested figure it is the only form between the navel and the belt
+  // and without it the abdomen is 25cm of unbroken lit skin, which is the
+  // largest featureless surface anywhere on the character.
+  for (const s of [1, -1]) add(tubeGeo([
+    { p: [0.126 * s, 1.010, 0.086], r: 0.0135, sx: 0.70, sz: 0.80 },
+    { p: [0.086 * s, 0.960, 0.128], r: 0.0150, sx: 0.70, sz: 0.80 },
+    { p: [0.034 * s, 0.916, 0.142], r: 0.0110, sx: 0.70, sz: 0.80 },
+  ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, { only: 'torso' });
+
+  add(tubeGeo([{ p: [0, 1.470, 0.004], r: 0.074 }, { p: [0, 1.610, 0.008], r: 0.069 }],
+    { radial: 12, capStart: 'flat', capEnd: 'flat' }), 'skin', P.skin, { only: 'torso' });
+
+  // ═══ HEAD ════════════════════════════════════════════════════════════════
+  // §4: the face must carry information at 90px. At the hero framing the head
+  // is ~90px tall, so every feature here is sized against that: a 3mm form on a
+  // 0.35m head is 0.8px and is therefore not worth authoring, while a 15mm
+  // plane change is 4px and is the entire difference between a face and an egg.
+  // CRANIUM. Measured on the rendered hero shot the figure stood 5.55 HEADS
+  // tall (chin 1.556 to hair crest 1.898 = 0.342 on a 1.90 body); Hades and
+  // Hades II both sit at 6.5-7, and 5.5 is the proportion of a chibi. The
+  // braincase — not the face — is where the excess was: trimming the skull's
+  // half-axes 0.177 -> 0.164 in Y and 0.157 -> 0.151 in X takes the top of the
+  // head down 13mm and the width down 12mm WITHOUT moving a single facial
+  // landmark, which is the only version of this fix that does not cost the
+  // face its 90px legibility.
+  add(prim(new THREE.SphereGeometry(1, 24, 18), { pos: [0, 1.690, 0.008], scale: [0.151, 0.164, 0.158] }),
+    'skin', P.skin, RH);
+  // JAW. Was a 0.256m-wide sphere — as wide as the cranium, which is precisely
+  // what made the head read as a lit egg with dots on it. A jaw is NARROWER
+  // than the skull and it has a corner; the mass is cut 12% and the gonial
+  // angle is authored explicitly by the mandible tube below.
+  add(prim(new THREE.SphereGeometry(1, 20, 14), { pos: [0, 1.640, 0.046], scale: [0.111, 0.079, 0.116] }),
+    'skin', P.skin, RH);
+  for (const s of [1, -1]) {
+    // mandible: gonial angle under the ear -> along the jaw -> chin. A lit
+    // arris here is what separates head from neck at play distance.
+    add(tubeGeo([
+      { p: [0.117 * s, 1.680, -0.016], r: 0.0150, sx: 0.66, sz: 1.0 },
+      { p: [0.112 * s, 1.628, 0.024], r: 0.0158, sx: 0.66, sz: 1.0 },
+      { p: [0.080 * s, 1.602, 0.098], r: 0.0146, sx: 0.78, sz: 1.0 },
+      { p: [0.025 * s, 1.592, 0.140], r: 0.0126, sx: 0.90, sz: 1.0 },
+    ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, RH);
+    // zygomatic arch. The CREVICE table already darkened "the plane under the
+    // cheekbone"; there was no cheekbone, so the shadow had nothing to be under.
+    add(tubeGeo([
+      { p: [0.134 * s, 1.702, 0.006], r: 0.0180, sx: 0.58, sz: 0.82 },
+      { p: [0.114 * s, 1.696, 0.084], r: 0.0200, sx: 0.58, sz: 0.82 },
+      { p: [0.068 * s, 1.688, 0.134], r: 0.0150, sx: 0.58, sz: 0.82 },
+    ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, RH);
+    // EARS. There were none. An earless head is the loudest mannequin cue there
+    // is, and the ear is the only thing that breaks the skull's circle in
+    // profile — i.e. it is half of the run-cycle silhouette.
+    add(prim(new THREE.SphereGeometry(1, 10, 10),
+      { pos: [0.150 * s, 1.688, -0.014], rot: [0, -16 * s, -9 * s], scale: [0.015, 0.038, 0.028] }),
+      'skin', P.skin, RH);
+    add(tubeGeo([
+      { p: [0.156 * s, 1.704, -0.004], r: 0.0050, sx: 0.7, sz: 1.0 },
+      { p: [0.161 * s, 1.686, -0.018], r: 0.0050, sx: 0.7, sz: 1.0 },
+      { p: [0.154 * s, 1.670, -0.008], r: 0.0042, sx: 0.7, sz: 1.0 },
+    ], { radial: 6, capStart: 'round', capEnd: 'round' }), 'skin', P.skinDeep, RH);
+  }
+  // chin
+  add(prim(new THREE.SphereGeometry(1, 12, 10), { pos: [0, 1.598, 0.140], scale: [0.036, 0.028, 0.029] }),
+    'skin', P.skin, RH);
+  // NOSE — bridge, tip, nostril wings. The old part was a single 24mm tube:
+  // a peg. The "under the nose" crevice needs a tip to sit under.
+  add(tubeGeo([
+    { p: [0, 1.7320, 0.1310], r: 0.0098, sx: 0.80, sz: 0.90 },
+    { p: [0, 1.7080, 0.1500], r: 0.0130, sx: 0.82, sz: 0.90 },
+    { p: [0, 1.6870, 0.1720], r: 0.0180, sx: 0.94, sz: 0.98 },
+    { p: [0, 1.6710, 0.1635], r: 0.0140, sx: 1.08, sz: 0.82 },
+  ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, RH);
+  for (const s of [1, -1])
+    add(prim(new THREE.SphereGeometry(1, 8, 6), { pos: [0.0195 * s, 1.6765, 0.1565], scale: [0.0125, 0.0105, 0.0140] }),
+      'skin', P.skin, RH);
+  // BROW. Was ONE straight horizontal skinDeep bar spanning the whole forehead:
+  // at a 90px head that is a 4px dark plank and it read as a headband, not a
+  // brow — and it was doing the eyebrow's job in the eyebrow's colour, so the
+  // face had no separate expression line at all. Now the ridge is SKIN (a proud
+  // form that catches the key, with the socket crevice supplying its shadow)
+  // and the eyebrow is its own thin dark line above it, angled so the two ends
+  // of the face are not parallel.
+  for (const s of [1, -1]) {
+    add(tubeGeo([
+      { p: [0.014 * s, 1.7215, 0.1470], r: 0.0130, sx: 0.85, sz: 0.70 },
+      { p: [0.060 * s, 1.7300, 0.1360], r: 0.0158, sx: 0.85, sz: 0.70 },
+      { p: [0.107 * s, 1.7185, 0.0930], r: 0.0120, sx: 0.85, sz: 0.70 },
+    ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, RH);
+    add(tubeGeo([
+      { p: [0.018 * s, 1.7350, 0.1490], r: 0.0058, sx: 1.0, sz: 0.52 },
+      { p: [0.063 * s, 1.7430, 0.1375], r: 0.0074, sx: 1.0, sz: 0.52 },
+      { p: [0.110 * s, 1.7280, 0.0935], r: 0.0046, sx: 1.0, sz: 0.52 },
+    ], { radial: 6, capStart: 'round', capEnd: 'round' }), 'hair', brow, RH);
+  }
+
+  // ── EYES ─────────────────────────────────────────────────────────────────
+  // Four parts per eye: a dark almond socket, an iris HALF the socket's width,
+  // a lash line and a lower lid. Measured at the hero framing the socket is
+  // ~8px wide and the iris ~3px — a dark almond with a bright point in it,
+  // where the previous 2:3 iris-to-socket ratio was a lamp with a rim.
+  if (F.eyes) for (const s of [1, -1]) {
+    // SOCKET SPACING is measured, not eyeballed: the face is 0.302 wide at eye
+    // level and the canonical division is five eye-widths across it, so an eye
+    // is 0.060 wide and the two centres sit 0.060 apart — i.e. at +-0.058, not
+    // the +-0.0485 that left a half-eye gap and read as a doll.
+    // The socket is tinted BROW, not skinDeep: #a8654a is a warm orange-brown
+    // and at 90px it rendered as a ring around the iris, so each eye read as a
+    // pair of goggles. A socket has to be the darkest note on the face or the
+    // iris has nothing to be bright against.
+    add(prim(new THREE.SphereGeometry(1, 12, 8), { pos: [0.0575 * s, 1.7050, 0.1500], rot: [0, 0, -10 * s], scale: [0.0300, 0.0170, 0.0140] }),
+      'hair', brow, RH);
+    add(prim(new THREE.SphereGeometry(1, 10, 8), { pos: [0.0565 * s, 1.7040, 0.1560], rot: [0, 0, -10 * s], scale: [0.0132, 0.0122, 0.0110] }),
+      'glow', P.glow, RH);
+    // lash line
+    add(tubeGeo([
+      { p: [0.028 * s, 1.7140, 0.1425], r: 0.0050, sx: 1.0, sz: 0.58 },
+      { p: [0.057 * s, 1.7195, 0.1520], r: 0.0074, sx: 1.0, sz: 0.58 },
+      { p: [0.088 * s, 1.7120, 0.1330], r: 0.0046, sx: 1.0, sz: 0.58 },
+    ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'hair', brow, RH);
+    // lower lid: a proud skin roll. It is the catch-light that stops the eye
+    // from reading as a hole punched in the head.
+    add(tubeGeo([
+      { p: [0.031 * s, 1.6955, 0.1410], r: 0.0052, sx: 1.0, sz: 0.50 },
+      { p: [0.057 * s, 1.6935, 0.1495], r: 0.0064, sx: 1.0, sz: 0.50 },
+      { p: [0.085 * s, 1.6955, 0.1320], r: 0.0044, sx: 1.0, sz: 0.50 },
+    ], { radial: 6, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, RH);
+  }
+  // MOUTH — the closed line, and a proud lower lip that carries the catch-light.
+  add(tubeGeo([
+    { p: [-0.034, 1.6440, 0.1580], r: 0.0060, sx: 1.0, sz: 0.55 },
+    { p: [0, 1.6465, 0.1690], r: 0.0082, sx: 1.0, sz: 0.55 },
+    { p: [0.034, 1.6440, 0.1580], r: 0.0060, sx: 1.0, sz: 0.55 },
+  ], { radial: 6, capStart: 'round', capEnd: 'round' }), 'skin', P.skinDeep, RH);
+  add(tubeGeo([
+    { p: [-0.025, 1.6355, 0.1570], r: 0.0070, sx: 1.0, sz: 0.50 },
+    { p: [0, 1.6365, 0.1660], r: 0.0092, sx: 1.0, sz: 0.50 },
+    { p: [0.025, 1.6355, 0.1570], r: 0.0070, sx: 1.0, sz: 0.50 },
+  ], { radial: 6, capStart: 'round', capEnd: 'round' }), 'skin', P.lip || P.skin, RH);
+
+  // ── HAIR ─────────────────────────────────────────────────────────────────
+  // WAS: a cap whose `vol` term inflated the wrap ellipsoid to 1.38x on top of
+  // HR (0.180, 0.198, 0.190) — a 0.50m-wide mass on a 0.32m skull, reaching
+  // z 0.196 when the face's own front plane is at z 0.147, i.e. a 5cm BRIM
+  // hanging over the eyes. Measured against the skull's half-axes it was 1.55x;
+  // in the 1/8 black-shape test (§14) the head-plus-hair blob was 60% of the
+  // shoulder width and the figure read as a mushroom, and the laurel crown —
+  // the only gold on the head — was authored at radius 0.172 INSIDE a 0.222
+  // hair mass and never reached the frame at all.
+  // NOW: the cap hugs the skull (peak 1.19x at the nape, 1.05x at the hairline),
+  // the hairline sits 7cm above the brow so there is a lit forehead, and the
+  // volume that used to be a dome is spent on directional locks that BREAK the
+  // circle — which is what a silhouette is made of.
+  if (F.hair !== 'none') {
+    const LONG = F.hair === 'long';
+    const HC = V(0, 1.690, -0.004), HR = V(0.164, 0.174, 0.170);
+    add(sheetGeo(6, 24, (u, v) => {
+      const phi = (v - 0.5) * TAU;
+      const back = (1 - Math.cos(phi)) * 0.5;
+      // thMax at the FRONT is the hairline. 0.99 rad put it at y 1.796 — 7cm
+      // of bare forehead above the brow, which reads as balding, not as swept
+      // hair. 1.17 lands it a third of the way down the face.
+      // The exponent is solved, not tuned: a LINEAR blend put the side hairline
+      // at y 1.652 and swallowed both ears whole (the ear spans 1.650-1.726),
+      // which threw away the geometry added to break the skull's profile
+      // circle. back^2.16 puts it at 1.716 — over the top of the ear, lobe
+      // exposed — while leaving the nape unchanged at back = 1.
+      const thMax = lerp(1.17, 2.36, Math.pow(back, 2.16));
+      const th = Math.max(0.001, u * thMax);
+      const vol = 1.03 + 0.16 * clamp01((th - 0.75) * 1.15) * (0.30 + 0.70 * back);
+      // a shallow centre parting: the crown is a valley, not a dome
+      const part = 1 - 0.045 * Math.exp(-Math.pow((phi) / 0.55, 2)) * clamp01((0.9 - th) * 2.4);
+      return V(HC.x + HR.x * vol * Math.sin(th) * Math.sin(phi),
+        HC.y + HR.y * vol * part * Math.cos(th),
+        HC.z + HR.z * vol * Math.sin(th) * Math.cos(phi) - 0.030 * back * u);
+    }, 0.020), 'hair', (x, y, z, u) => (u > 0.86 ? P.hairTip : P.hair), { only: ['head', 'hairA'], bias: { head: 3.0 } });
+
+    // nape mass — a tapered wedge, not the fat sausage that used to weld itself
+    // to the cap and read as one purple boulder in profile.
+    add(tubeGeo(LONG ? [
+      { p: [0, 1.748, -0.112], r: 0.100, sx: 1.02, sz: 0.86 },
+      { p: [0, 1.672, -0.172], r: 0.098, sx: 1.02, sz: 0.78 },
+      { p: [0, 1.560, -0.212], r: 0.092, sx: 1.00, sz: 0.68 },
+      { p: [0, 1.420, -0.238], r: 0.080, sx: 0.96, sz: 0.60 },
+      { p: [0, 1.286, -0.256], r: 0.056, sx: 0.88, sz: 0.54 },
+      { p: [0, 1.180, -0.264], r: 0.020, sx: 0.78, sz: 0.48 },
+    ] : [
+      { p: [0, 1.746, -0.114], r: 0.102, sx: 1.02, sz: 0.86 },
+      { p: [0, 1.682, -0.172], r: 0.096, sx: 1.00, sz: 0.78 },
+      { p: [0, 1.606, -0.222], r: 0.070, sx: 0.92, sz: 0.70 },
+      { p: [0, 1.528, -0.262], r: 0.028, sx: 0.80, sz: 0.60 },
+    ], { radial: 12, capStart: 'flat', capEnd: 'round' }), 'hair',
+      (x, y) => (y < (LONG ? 1.46 : 1.60) ? P.hairTip : P.hair),
+      { only: ['head', 'hairA', 'hairB', 'hairC'] });
+
+    // FACE-FRAMING LOCKS. The single most identifying shape on the head: two
+    // long tresses falling from the temple past the jaw. They also fix the
+    // ear/jaw junction, which was a bald sphere-on-sphere seam.
+    // Deliberately UNEQUAL: the left tress runs past the jaw, the right stops
+    // at the cheekbone. Two identical tresses framed the face like a pageboy
+    // bob and left the head bilaterally symmetric, which is the one thing a
+    // black shape cannot afford (§1.1, §14).
+    for (const s of [1, -1]) {
+      const L = s > 0 ? 1.0 : 0.66;
+      add(tubeGeo([
+        { p: [0.112 * s, 1.776, 0.096], r: 0.024, sx: 0.56, sz: 0.90 },
+        { p: [0.134 * s, 1.716, 0.110], r: 0.020, sx: 0.48, sz: 0.88 },
+        { p: [0.133 * s, lerp(1.716, 1.646, L), 0.102], r: 0.015, sx: 0.44, sz: 0.84 },
+        { p: [0.118 * s, lerp(1.700, 1.588, L), 0.076], r: 0.005, sx: 0.40, sz: 0.80 },
+      ], { radial: 7, capStart: 'flat', capEnd: 'round' }), 'hair',
+        (x, y) => (y < 1.664 ? P.hairTip : P.hair), RH);
+    }
+
+    // swept back-blades + a crest spike: the crown-breaking silhouette
     for (const s of [1, -1])
       add(tubeGeo([
-        { p: [0.106 * s, 1.794, 0.070], r: 0.036 },
-        { p: [0.158 * s, 1.792, -0.092], r: 0.031 },
-        { p: [0.142 * s, 1.746, -0.236], r: 0.009 },
+        { p: [0.100 * s, 1.780, 0.062], r: 0.032 },
+        { p: [0.154 * s, 1.778, -0.096], r: 0.027 },
+        { p: [0.142 * s, 1.728, -0.244], r: 0.008 },
       ], { radial: 8, capStart: 'flat', capEnd: 'round' }), 'hair',
         (x, y, z) => (z < -0.14 ? P.hairTip : P.hair), { only: ['head', 'hairA', 'hairB'] });
     for (const s of [1, -1]) {
       add(tubeGeo([
-        { p: [0.030 * s, 1.836, 0.086], r: 0.030 },
-        { p: [0.052 * s, 1.792, 0.156], r: 0.024 },
-        { p: [0.070 * s, 1.752, 0.188], r: 0.007 },
+        { p: [0.030 * s, 1.820, 0.078], r: 0.027 },
+        { p: [0.054 * s, 1.782, 0.152], r: 0.021 },
+        { p: [0.074 * s, 1.748, 0.184], r: 0.006 },
       ], { radial: 7, capStart: 'flat', capEnd: 'round' }), 'hair',
-        (x, y) => (y < 1.775 ? P.hairTip : P.hair), { mode: 'rigid', bone: 'head' });
+        (x, y) => (y < 1.786 ? P.hairTip : P.hair), RH);
       add(tubeGeo([
-        { p: [0.098 * s, 1.812, 0.048], r: 0.028 },
-        { p: [0.132 * s, 1.766, 0.118], r: 0.022 },
-        { p: [0.148 * s, 1.726, 0.146], r: 0.007 },
+        { p: [0.092 * s, 1.800, 0.044], r: 0.025 },
+        { p: [0.130 * s, 1.758, 0.116], r: 0.019 },
+        { p: [0.148 * s, 1.722, 0.144], r: 0.006 },
       ], { radial: 7, capStart: 'flat', capEnd: 'round' }), 'hair',
-        (x, y) => (y < 1.750 ? P.hairTip : P.hair), { mode: 'rigid', bone: 'head' });
+        (x, y) => (y < 1.758 ? P.hairTip : P.hair), RH);
     }
     add(tubeGeo([
-      { p: [0, 1.874, 0.034], r: 0.038 },
-      { p: [0, 1.890, -0.114], r: 0.032 },
-      { p: [0, 1.836, -0.256], r: 0.009 },
+      { p: [0, 1.856, 0.030], r: 0.033 },
+      { p: [0, 1.874, -0.114], r: 0.028 },
+      { p: [0, 1.824, -0.258], r: 0.008 },
     ], { radial: 8, capStart: 'flat', capEnd: 'round' }), 'hair',
       (x, y, z) => (z < -0.16 ? P.hairTip : P.hair), { only: ['head', 'hairA', 'hairB'] });
   }
 
-  // ── laurel crown (§1.5 ornament carries the light) ───────────────────────
+  // ── crown (§1.5 ornament carries the light) ──────────────────────────────
+  // The circlet radius goes 0.172 -> 0.196 and the leaves 0.170 -> 0.198: with
+  // the hair cut back to 0.19 half-width the gold now sits OUTSIDE it and reads
+  // as a crown rather than as flecks buried in a wig.
   if (F.crown === 'laurel') {
-    add(prim(new THREE.TorusGeometry(0.172, 0.0115, 6, 32), { pos: [0, 1.806, -0.014], rot: [90, 0, 0], scale: [1, 1.06, 1] }),
-      'metal', P.metal, { mode: 'rigid', bone: 'head' });
-    const NL = 12;
+    // R 0.186 floated 40mm clear of the hair (solved: the cap's radius at
+    // y 1.782 is 0.147-0.151 all round) and the circlet read as a hat brim
+    // hovering over the head in 03_hero_char. 0.156 / ez 1.06 lands it 5mm
+    // proud of the hair, which is where a circlet sits.
+    add(band({ cy: 1.778, cz: -0.008, R: 0.156, ez: 1.06, th: 0.0085, hh: 0.0165, seg: 34, radial: 8 }),
+      'metal', chamfer(P.metalHot, P.metal, P.metalDeep), RH);
+    const NL = 14;
     for (let i = 0; i < NL; i++) {
       const a = (i / NL) * 360 + 12;
       const leaf = new THREE.SphereGeometry(1, 8, 6);
-      prim(leaf, { scale: [0.022, 0.046, 0.010], rot: [-52, 0, (i % 2 ? 8 : -8)] });
-      prim(leaf, { rot: [0, a, 0], pos: [0.170 * Math.sin(a * D2R), 1.828, 0.178 * Math.cos(a * D2R) - 0.014] });
-      add(leaf, 'metal', i % 3 === 0 ? P.metalHot : P.metal, { mode: 'rigid', bone: 'head' });
+      // a leaf is a lens with a spine, not a bean: sz 0.008 makes it thin enough
+      // that its lit face and its dark edge are two separate values at 90px.
+      // -70 rather than -56: the leaves stand up and OUT, so they cut real
+      // notches in the head's outline instead of lying flat on the circlet.
+      prim(leaf, { scale: [0.023, 0.054, 0.008], rot: [-70, 0, (i % 2 ? 13 : -13)] });
+      prim(leaf, { rot: [0, a, 0], pos: [0.156 * Math.sin(a * D2R), 1.800, 0.166 * Math.cos(a * D2R) - 0.008] });
+      add(leaf, 'metal', i % 3 === 0 ? P.metalHot : P.metal, RH);
     }
-    add(prim(new THREE.SphereGeometry(1, 10, 8), { pos: [0, 1.812, 0.172], scale: [0.016, 0.019, 0.011] }),
-      'glow', P.glow, { mode: 'rigid', bone: 'head' });
+    add(prim(new THREE.OctahedronGeometry(0.024, 0), { pos: [0, 1.786, 0.156], scale: [0.72, 1.20, 0.55] }),
+      'glow', P.glow, RH);
   } else if (F.crown === 'moon') {
-    // The witch's lunar circlet: a thin silver band, central moonstone and two
-    // rising horn arcs. It deliberately breaks the round laurel silhouette.
-    add(prim(new THREE.TorusGeometry(0.176, 0.0105, 7, 34), { pos: [0, 1.808, -0.012], rot: [90, 0, 0], scale: [1, 1.04, 1] }),
-      'metal', P.metal, { mode: 'rigid', bone: 'head' });
+    // The witch's lunar circlet. It has to break the head circle HARDER than
+    // the laurel does, because the moon crown is the fastest read on which
+    // heir is on screen — so the horns are longer, thinner and swept back.
+    add(band({ cy: 1.780, cz: -0.008, R: 0.158, ez: 1.06, th: 0.0080, hh: 0.0150, seg: 34, radial: 8 }),
+      'metal', chamfer(P.metalHot, P.metal, P.metalDeep), RH);
+    // The horns are one CRESCENT read as two arms: thick at the root, tapering
+    // to points that curl back over the crown. Two straight spikes read as
+    // insect antennae at play scale; a crescent reads as the moon, and the moon
+    // is the whole point of the character.
     for (const s of [-1, 1]) {
       add(tubeGeo([
-        { p: [0.040 * s, 1.842, 0.152], r: 0.012 },
-        { p: [0.092 * s, 1.902, 0.126], r: 0.010 },
-        { p: [0.120 * s, 1.948, 0.076], r: 0.0035 },
-      ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'metal', P.metalHot, { mode: 'rigid', bone: 'head' });
+        { p: [0.034 * s, 1.806, 0.162], r: 0.0260, sx: 0.46, sz: 1.0 },
+        { p: [0.096 * s, 1.852, 0.144], r: 0.0230, sx: 0.42, sz: 1.0 },
+        { p: [0.152 * s, 1.906, 0.082], r: 0.0175, sx: 0.40, sz: 1.0 },
+        { p: [0.178 * s, 1.950, -0.014], r: 0.0110, sx: 0.38, sz: 1.0 },
+        { p: [0.162 * s, 1.974, -0.104], r: 0.0030, sx: 0.36, sz: 1.0 },
+      ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'metal',
+        (x, y) => (y > 1.90 ? P.metalHot : P.metal), RH);
     }
-    add(prim(new THREE.OctahedronGeometry(0.031, 0), { pos: [0, 1.865, 0.174], scale: [0.78, 1.25, 0.52] }),
-      'glow', P.glow, { mode: 'rigid', bone: 'head' });
+    add(prim(new THREE.OctahedronGeometry(0.034, 0), { pos: [0, 1.868, 0.180], scale: [0.78, 1.30, 0.52] }),
+      'glow', P.glow, RH);
   }
 
   // ── pauldrons ────────────────────────────────────────────────────────────
-  // WAS: one SphereGeometry hemisphere 0.336m across — the SAME diameter as the
-  // head (0.316 x 0.354) — wearing 6-segment tori whose tube facets read as
-  // gear teeth at play scale. That is the closest thing in the package to a §7
-  // "programmer-art primitive left visible".
-  // NOW: three overlapping LAMES (articulated plates) stepping down the deltoid
-  // with a hard 4mm reveal between them, each capped by a 12-segment gold arris.
-  // The mass is cut 25% in width and 44% in height so the shoulder no longer
-  // out-masses the head, and the stepped edges give the silhouette three
-  // horizontal accents instead of one bald dome.
-  const lamePlate = (s, bone, tint, o) => {
-    // a shallow spherical shell segment: the plate itself
-    const g = prim(new THREE.SphereGeometry(1, 22, 10, 0, TAU, 0, o.phi), { scale: o.scale });
-    prim(g, { rot: [0, 0, -o.tilt * s], pos: [o.px * s, o.py, o.pz] });
-    add(g, 'metal', tint, { mode: 'rigid', bone: bone(s) });
-    // the arris: a gold roll on the plate's lower lip. 12 radial segments, not
-    // 6 — at 6 the tube is a hexagon and the hexagon is what reads as a cog.
-    const r = prim(new THREE.TorusGeometry(o.scale[0] * Math.sin(o.phi) * 0.995, o.tube, 12, 34), {
-      rot: [90, 0, 0], pos: [0, o.scale[1] * Math.cos(o.phi), 0], scale: [1, 1, o.scale[2] / o.scale[0]],
-    });
-    prim(r, { rot: [0, 0, -o.tilt * s], pos: [o.px * s, o.py, o.pz] });
-    add(r, 'metal', P.metalHot, { mode: 'rigid', bone: bone(s) });
-  };
+  // WAS: three concentric SphereGeometry domes 0.29m across whose silhouette
+  // outlines differed by a handful of pixels, so the "articulated lames" merged
+  // into one bald 0.09m-deep mushroom cap that out-massed the head and read, in
+  // the hero shot, as a stack of pancakes.
+  // NOW: real LAMES — flattened bands swept around the deltoid, each with a
+  // gold arris top and bottom (chamfer()), stepping outward and dropping at the
+  // outer point, over a shallow cap carrying a fore-aft crest. Vertical mass is
+  // cut ~55%, the horizontal wrap is kept, and the three plates now show three
+  // separate lit edges instead of one smooth dome.
   const CL = (s) => 'clav' + (s > 0 ? 'L' : 'R');
   const AR = (s) => 'arm' + (s > 0 ? 'L' : 'R');
+  const BX = (s) => 0.234 * SW * s;
+  const lame = (s, bone, o) => {
+    add(band({
+      cx: BX(s), cy: o.y, cz: 0.004, R: o.R * SW, ex: s, ez: 0.98,
+      a0: o.a0, a1: o.a1, th: o.th, hh: o.hh, seg: 15, radial: 10,
+      dy: (a) => -o.drop * Math.sin(a),
+      prof: (t) => 0.44 + 0.56 * Math.sin(Math.PI * t),
+    }), 'metal', chamfer(P.metalHot, o.face || P.metal, P.metalDeep), { mode: 'rigid', bone });
+  };
+  const shoulderCap = (s, bone, o) => {
+    // 12 segments, not 20: a shallow shell at 12 has visible facet arrises in
+    // SILHOUETTE, and the plate is a struck plate rather than a turned dome.
+    const g = prim(new THREE.SphereGeometry(1, 12, 5, 0, TAU, 0, 1.24), { scale: o.scale });
+    prim(g, { rot: [0, 0, -o.tilt * s], pos: [BX(s) + o.px * s, o.py, 0.004] });
+    // the crown of the cap only — the old +0.012 threshold put metalHot (which
+    // is #ffe0a0, i.e. near white) over most of the dome and gave the shoulder
+    // a bald pale highlight bigger than the head.
+    add(g, 'metal', (x, y) => (y > o.py + o.scale[1] * 0.66 ? P.metalHot : P.metal), { mode: 'rigid', bone });
+    // CREST: a fore-aft ridge over the crown of the cap. This is the one arris
+    // the play camera (pitch 45, looking DOWN) actually sees, and without it the
+    // top of the shoulder was the largest unbroken specular surface on the hero.
+    add(tubeGeo([
+      { p: [BX(s) + o.px * s, o.py + o.scale[1] * 0.56, -o.scale[2] * 0.88], r: 0.0090, sx: 0.8, sz: 1.2 },
+      { p: [BX(s) + o.px * s + 0.010 * s, o.py + o.scale[1] * 1.02, 0.004], r: 0.0145, sx: 0.8, sz: 1.2 },
+      { p: [BX(s) + o.px * s, o.py + o.scale[1] * 0.56, o.scale[2] * 0.90], r: 0.0085, sx: 0.8, sz: 1.2 },
+    ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'metal', P.metalHot, { mode: 'rigid', bone });
+  };
   const pauldron = (s) => {
-    lamePlate(s, CL, (x, y) => (y > 1.50 ? P.metalHot : P.metal),
-      { phi: 1.34, scale: [0.126, 0.088, 0.132], tilt: 18, px: 0.206, py: 1.462, pz: 0.006, tube: 0.0115 });
-    lamePlate(s, CL, P.metal,
-      { phi: 1.44, scale: [0.138, 0.076, 0.144], tilt: 26, px: 0.221, py: 1.418, pz: 0.004, tube: 0.0105 });
-    lamePlate(s, AR, P.metalDeep,
-      { phi: 1.50, scale: [0.147, 0.068, 0.152], tilt: 40, px: 0.244, py: 1.362, pz: 0.002, tube: 0.0100 });
+    // 0.070 -> 0.054 of cap height. At 0.070 the dome was still the largest
+    // unbroken specular surface on the character seen from the play camera
+    // (pitch 45, looking down) and it read as a bald cap sitting on top of the
+    // lames rather than as the top plate of the same harness.
+    shoulderCap(s, CL(s), { scale: [0.114 * SW, 0.054, 0.126], tilt: 16, px: -0.004, py: 1.464 });
+    lame(s, CL(s), { y: 1.452, R: 0.117, hh: 0.030, th: 0.0115, a0: -38, a1: 216, drop: 0.020, face: P.metal });
+    // the middle lame's FACE goes deep: three plates all in bright metal gave
+    // the shoulder one uninterrupted pale mass, and a stack of lames is only
+    // legible if consecutive plates differ in value.
+    lame(s, CL(s), { y: 1.394, R: 0.129, hh: 0.028, th: 0.0105, a0: -32, a1: 212, drop: 0.026, face: P.metalDeep });
+    lame(s, AR(s), { y: 1.336, R: 0.135, hh: 0.025, th: 0.0095, a0: -26, a1: 208, drop: 0.030, face: P.metalDeep });
     // the standing fin that breaks the dome's contour (§1.1: silhouette first)
-    add(tubeGeo([{ p: [0.190 * s, 1.578, 0.004], r: 0.022 }, { p: [0.243 * s, 1.652, -0.030], r: 0.015 },
-    { p: [0.272 * s, 1.704, -0.074], r: 0.004 }], { radial: 8, capStart: 'flat', capEnd: 'round' }),
+    add(tubeGeo([{ p: [0.192 * SW * s, 1.566, 0.004], r: 0.021, sx: 0.72, sz: 1.0 },
+    { p: [0.250 * SW * s, 1.654, -0.030], r: 0.014, sx: 0.66, sz: 1.0 },
+    { p: [0.284 * SW * s, 1.718, -0.078], r: 0.0035, sx: 0.6, sz: 1.0 }],
+      { radial: 8, capStart: 'flat', capEnd: 'round' }),
       'metal', P.metalHot, { mode: 'rigid', bone: CL(s) });
   };
   const smallCap = (s) => {
-    lamePlate(s, CL, P.metal,
-      { phi: 1.26, scale: [0.112, 0.070, 0.114], tilt: 26, px: 0.216, py: 1.474, pz: 0.006, tube: 0.0092 });
-    lamePlate(s, CL, P.metalDeep,
-      { phi: 1.38, scale: [0.122, 0.058, 0.126], tilt: 34, px: 0.228, py: 1.436, pz: 0.004, tube: 0.0086 });
+    shoulderCap(s, CL(s), { scale: [0.099 * SW, 0.043, 0.107], tilt: 22, px: -0.006, py: 1.468 });
+    lame(s, CL(s), { y: 1.436, R: 0.109, hh: 0.023, th: 0.0090, a0: -30, a1: 208, drop: 0.018, face: P.metalDeep });
   };
   if (F.pauldron === 'left' || F.pauldron === 'both') pauldron(1);
   else if (F.pauldron !== 'none') smallCap(1);
@@ -834,145 +1226,293 @@ function buildParts(spec) {
   // ── harness, gorget, medallion ───────────────────────────────────────────
   if (F.harness) {
     add(tubeGeo([
-      { p: [0.150, 1.508, 0.062], r: 0.030, sx: 1.55, sz: 0.42 },
+      { p: [0.150 * SW, 1.508, 0.062], r: 0.030, sx: 1.55, sz: 0.42 },
       { p: [0.098, 1.400, 0.140], r: 0.030, sx: 1.55, sz: 0.42 },
       { p: [0.004, 1.276, 0.164], r: 0.030, sx: 1.55, sz: 0.42 },
       { p: [-0.098, 1.140, 0.150], r: 0.030, sx: 1.55, sz: 0.42 },
       { p: [-0.160, 1.020, 0.108], r: 0.028, sx: 1.50, sz: 0.42 },
     ], { radial: 10, capStart: 'flat', capEnd: 'flat' }), 'metal', P.metalDeep, { only: ['chest', 'spine2', 'spine1'] });
-    add(prim(new THREE.TorusGeometry(0.118, 0.021, 6, 26), { pos: [0, 1.498, 0.008], rot: [90, 0, 0], scale: [1, 1, 0.92] }),
-      'metal', P.metalHot, { only: ['chest', 'neck'], bias: { chest: 2 } });
-    add(prim(new THREE.SphereGeometry(1, 14, 10), { pos: [0.052, 1.352, 0.166], scale: [0.056, 0.056, 0.024] }),
+    // GORGET — a band, so it has a top and a bottom arris. The 6-segment torus
+    // it replaces was a hexagonal sausage: at play scale its facets read as
+    // tooling marks and it carried a single soft highlight.
+    add(band({ cy: 1.498, cz: 0.008, R: 0.122, ez: 0.92, th: 0.0135, hh: 0.030, seg: 30, radial: 10 }),
+      'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { only: ['chest', 'neck'], bias: { chest: 2 } });
+    // SIGIL. Was a bare 0.056m egg with a 14mm dot on it — the largest single
+    // ornament on the chest and it read as an egg. Now a rimmed disc with four
+    // cardinal rays and the glow set into it: a struck medal.
+    add(prim(new THREE.SphereGeometry(1, 16, 10), { pos: [0.052, 1.352, 0.164], scale: [0.050, 0.050, 0.020] }),
+      'metal', P.metal, { only: ['chest', 'spine2'] });
+    add(prim(new THREE.TorusGeometry(0.050, 0.0085, 8, 22), { pos: [0.052, 1.352, 0.170] }),
       'metal', P.metalHot, { only: ['chest', 'spine2'] });
-    add(prim(new THREE.SphereGeometry(1, 10, 8), { pos: [0.052, 1.352, 0.182], scale: [0.014, 0.014, 0.009] }),
+    for (let i = 0; i < 4; i++) {
+      const a = i * 90 + 45;
+      add(prim(new THREE.SphereGeometry(1, 6, 5), {
+        pos: [0.052 + 0.031 * Math.cos(a * D2R), 1.352 + 0.031 * Math.sin(a * D2R), 0.178],
+        rot: [0, 0, a], scale: [0.019, 0.0055, 0.005],
+      }), 'metal', P.metalHot, { only: ['chest', 'spine2'] });
+    }
+    add(prim(new THREE.OctahedronGeometry(0.017, 0), { pos: [0.052, 1.352, 0.180], scale: [1, 1, 0.55] }),
       'glow', P.glow, { only: ['chest', 'spine2'] });
   }
 
   // ── girdle ───────────────────────────────────────────────────────────────
-  add(prim(new THREE.TorusGeometry(0.182, 0.031, 7, 30), { pos: [0, 0.948, 0.008], rot: [90, 0, 0], scale: [1, 1, 0.74] }),
-    'cloth', P.leather, { only: ['pelvis', 'spine1'] });
-  add(prim(new THREE.BoxGeometry(0.086, 0.070, 0.034), { pos: [0, 0.948, 0.140] }),
+  // WAS a TorusGeometry(0.182, 0.031) — a circular-section ring, which is why
+  // the hero shot showed a black inner-tube floating in front of the waist. A
+  // belt is a BAND: 10cm tall, 3cm thick, with a gold pinstripe on each arris
+  // and a row of bosses. §1.5's "gold filigree edges catch light" needs an edge.
+  add(band({
+    cy: 0.948, cz: 0.008, R: 0.186 * lerp(1, BK, 0.7), ez: 0.76, th: 0.016, hh: 0.052,
+    seg: 32, radial: 12,
+  }), 'cloth', (x, y, z, u) => (((u > 0.18 && u < 0.31) || (u > 0.69 && u < 0.82)) ? P.metalDeep : P.leather),
+    { only: ['pelvis', 'spine1'] });
+  {
+    // GIRDLE BOSSES. The spec has always claimed "gold girdle bosses"; there was
+    // exactly ONE, a box on the front. Seven studs around the belt give the
+    // waist a rhythm of tiny sharp glints (§4) and a value break between the
+    // bare torso and the skirt.
+    const NB = 9;
+    for (let i = 0; i < NB; i++) {
+      const a = (i / NB) * TAU + 0.35;
+      if (Math.abs(Math.sin(a)) < 0.16 && Math.cos(a) > 0) continue;   // leave the buckle its space
+      add(prim(new THREE.SphereGeometry(1, 8, 6), {
+        pos: [0.196 * lerp(1, BK, 0.7) * Math.sin(a), 0.948, 0.150 * lerp(1, BK, 0.7) * Math.cos(a) + 0.008],
+        scale: [0.020, 0.024, 0.016],
+      }), 'metal', i % 2 ? P.metalHot : P.metal, { only: ['pelvis', 'spine1'] });
+    }
+  }
+  add(prim(new THREE.BoxGeometry(0.082, 0.062, 0.030), { pos: [0, 0.948, 0.142] }),
+    'metal', P.metal, { only: ['pelvis', 'spine1'] });
+  add(prim(new THREE.BoxGeometry(0.050, 0.034, 0.020), { pos: [0, 0.948, 0.156] }),
     'metal', P.metalHot, { only: ['pelvis', 'spine1'] });
 
   // ── pteruges (the chiton skirt) ──────────────────────────────────────────
+  // WAS: panels that FLARED 30% wider toward the hem, all exactly the same
+  // length. That is a bell, and in the black-shape test the skirt read as a
+  // solid drum with a straight bottom edge. Pteruges taper to rounded tongues
+  // and they are cut in a long-short rhythm; that rhythm plus the taper is the
+  // whole reason a Hades skirt reads as cloth in motion rather than as a barrel.
   const NS = F.skirt | 0;
   for (let i = 0; i < NS; i++) {
     const a0 = (22.5 + i * (360 / NS)) * D2R;
-    const arc = (360 / NS) * 0.66 * D2R;
-    add(sheetGeo(5, 4, (u, v) => {
-      const flare = 1 + 0.30 * u * u;
-      const a = a0 + (v - 0.5) * arc * flare;
-      const rr = lerp(0.158, 0.300, u * u * 0.45 + u * 0.55);
-      const y = lerp(0.938, 0.446, u);
+    // 0.76 of the pitch left 11 degrees of bare thigh between neighbouring
+    // panels, and in 03_hero_char the skirt read as four crimson STRAPS over
+    // bare legs rather than as a skirt. 0.90 closes the gaps to ~4 degrees at
+    // the waist while the taper still opens them at the hem, which is what
+    // pteruges actually do.
+    const arc = (360 / NS) * 0.90 * D2R;
+    const long = (i % 2 === 0) ? 1.0 : 0.885;
+    add(sheetGeo(6, 5, (u, v) => {
+      const taper = 1 - 0.34 * u * u;
+      const a = a0 + (v - 0.5) * arc * taper;
+      const rr = lerp(0.160, 0.292, u * u * 0.40 + u * 0.60);
+      // rounded tongue: the corners lift as the panel narrows
+      const y = lerp(0.938, 0.938 - 0.496 * long, u) + 0.034 * u * u * Math.abs(v - 0.5) * 2;
       return V(rr * Math.sin(a), y, rr * Math.cos(a));
     }, 0.017), 'cloth',
-      (x, y) => (y < 0.478 ? P.metalHot : (y < 0.516 ? P.metal : (y < 0.560 ? P.clothDeep : P.cloth))),
+      (x, y, z, u) => (u > 0.905 ? P.metalHot : (u > 0.845 ? P.metal : (u > 0.755 ? P.clothDeep : P.cloth))),
       { only: ['pelvis', `skirt${i}A`, `skirt${i}B`], bias: { pelvis: 0.55 } });
   }
 
   // ── mantle / cape ────────────────────────────────────────────────────────
   if (F.cape) {
-    add(sheetGeo(9, 12, (u, v) => {
-      const e = u * u * 0.50 + u * 0.50;
-      const half = lerp(0.94, 0.88, e);
-      const R = lerp(0.215, 0.438, e);
-      const zc = lerp(0.045, 0.085, e);
-      let y = lerp(1.502, 0.520, e);
-      if (u > 0.58) y += 0.062 * Math.sin(v * Math.PI * 3.0) * ((u - 0.58) / 0.42);
-      const ang = (v - 0.5) * 2 * half + 0.10 * Math.sin(Math.PI * u) * (v - 0.5);
-      return V(R * Math.sin(ang), y, zc - R * Math.cos(ang));
-    }, 0.022), 'cloth',
-      (x, y, z, u, v, side) => (side < 0 ? P.capeLine : (y < 0.64 ? '#2a1240' : P.cape)),
+    // WAS: a symmetric sheet with ONE hem scallop authored in Y — a curtain. It
+    // had no fold running down its length, so the biggest single surface on the
+    // character carried one flat value, and its two halves were mirror images,
+    // which is the fastest way to make a silhouette read as a mannequin.
+    // NOW: unequal half-angles (the mantle is pinned at the pauldron shoulder
+    // and falls open on the other side), five vertical folds whose depth grows
+    // toward the hem, a standing collar behind the neck, and 12cm more length.
+    add(sheetGeo(11, 18, (u, v) => {
+      const e = u * u * 0.46 + u * 0.54;
+      const t = (v - 0.5) * 2;                              // -1 .. +1
+      const half = (t >= 0 ? lerp(1.00, 1.11, e) : lerp(0.76, 0.90, e));
+      const R = lerp(0.204, 0.452, e);
+      const zc = lerp(0.040, 0.120, e);
+      // folds: radial ridges that deepen down the cloth. This is where a
+      // mantle's light lives.
+      const fold = Math.cos(v * Math.PI * 5.0) * (0.026 + 0.050 * e);
+      const RR = R + fold;
+      // DRAPE. The whole cloth swings 0.22 rad toward the character's left as
+      // it falls, so the mantle trails off one hip instead of hanging like a
+      // pair of curtains. In the 1/8 black-shape test a symmetric cape and a
+      // symmetric torso add up to one vertical slab; this is the term that
+      // makes the lower half of the silhouette lean.
+      const ang = t * half + 0.10 * Math.sin(Math.PI * u) * t + 0.22 * e;
+      let y = lerp(1.556, 0.398, e);
+      y += (1 - smoothstep(clamp01(u * 3.0))) * 0.050 * (1 - t * t);   // collar
+      // hem: five scallops, deep enough to notch the OUTLINE rather than just
+      // shade the surface — the hem is the cape's only free edge and it is the
+      // only place the cape can stop being a rectangle.
+      y -= 0.092 * Math.sin(v * Math.PI * 5.0) * smoothstep(clamp01((u - 0.46) / 0.54));
+      return V(RR * Math.sin(ang), y, zc - RR * Math.cos(ang));
+    }, 0.024), 'cloth',
+      (x, y, z, u, v, side) => (side < 0 ? P.capeLine : (u > 0.62 ? (P.capeDeep || P.cape) : P.cape)),
       { only: ['chest', 'capeA', 'capeB', 'capeC', 'capeD'], bias: { chest: 0.7 } });
+    // shoulder clasps: the two points the mantle actually hangs from
+    for (const s of [1, -1])
+      add(prim(new THREE.SphereGeometry(1, 10, 8), { pos: [0.118 * SW * s, 1.498, -0.026], scale: [0.030, 0.030, 0.016] }),
+        'metal', P.metalHot, { only: ['chest', 'clavL', 'clavR'] });
   }
 
   // ── arms / hands / bracers ───────────────────────────────────────────────
+  const OPEN = F.openHand || 'left';
   for (const s of [1, -1]) {
     const S = s > 0 ? 'L' : 'R';
     const spectral = (F.witchArm === 'left' && S === 'L') || (F.witchArm === 'right' && S === 'R');
+    // ELBOW DENSITY (skinning). The arm was one tube with a SINGLE ring at the
+    // elbow: a 90-degree bend then has exactly one cross-section to distribute
+    // it over, and the joint pinches to a crease. Rings at 1.220 / 1.090 either
+    // side of the joint give the bend three sections and the elbow keeps its
+    // volume; the 1.155 ring is also fattened 3mm into an olecranon so the bent
+    // arm has a point instead of a dent.
     add(tubeGeo([
-      { p: [0.232 * s, 1.470, 0.004], r: 0.090 },
-      { p: [0.242 * s, 1.320, -0.004], r: 0.073 },
-      { p: [0.245 * s, 1.155, -0.012], r: 0.059 },
-      { p: [0.248 * s, 1.020, 0.000], r: 0.056 },
-      { p: [0.250 * s, 0.910, 0.012], r: 0.047 },
+      { p: [0.232 * SW * s, 1.470, 0.004], r: 0.088 * BK },
+      { p: [0.238 * SW * s, 1.362, -0.002], r: 0.077 * BK },
+      { p: [0.243 * SW * s, 1.220, -0.010], r: 0.063 * BK },
+      { p: [0.245 * SW * s, 1.155, -0.012], r: 0.061 * BK },
+      { p: [0.247 * SW * s, 1.090, -0.006], r: 0.058 * BK },
+      { p: [0.249 * SW * s, 1.000, 0.002], r: 0.056 * BK },
+      { p: [0.250 * SW * s, 0.910, 0.012], r: 0.046 * BK },
     ], { radial: 12, capStart: 'round', capScale: 0.7, capEnd: 'flat' }), spectral ? 'glow' : 'skin',
-      spectral ? ((x, y) => y < 1.19 ? P.glow : P.metalHot) : P.skin, { only: 'body' });
-    // ── HAND ───────────────────────────────────────────────────────────────
-    // WAS: one smooth-skinned stub tube — a chamfered block with no fingers and
-    // no thumb, AND (the worse half of the bug) bound with `only:'body'` while
-    // the xiphos beside it is bound rigid to handR. In any extended-arm pose the
-    // two solve differently and the blade visibly detaches from the fist, which
-    // is the single most important contour in an action game's attack frame.
-    // NOW: a closed fist bound RIGID to the same hand bone the weapon uses, so
-    // hand and blade are one shape by construction, plus a knuckle roll, three
-    // finger ridges and an opposed thumb at 42deg off the fist axis.
+      spectral ? ((x, y) => y < 1.19 ? P.glow : P.metalHot) : P.skin,
+      // The arm answers to the arm chain ONLY. With `only:'body'` the chest
+      // segment scored kernel 0.48 on the arm's topmost ring (distance 0.246
+      // against a support radius of 0.527) and held ~19% of it, which is a
+      // visible drag on any raise past ~90 degrees. The clavicle is kept as a
+      // blend partner but biased to 0.4 so the deltoid follows the ARM.
+      { only: ['clav' + S, 'arm' + S, 'fore' + S, 'hand' + S], bias: { ['clav' + S]: 0.40 } });
+    // DELTOID CAP, rigid to the ARM bone. The shoulder seam is the classic
+    // smear: the top of the arm tube is auto-weighted, so raising the arm past
+    // ~70 degrees drags torso vertices with it and tears the joint open. A cap
+    // that belongs entirely to the arm covers that seam by construction — the
+    // same trick the fist uses to stay welded to the weapon.
+    add(prim(new THREE.SphereGeometry(1, 16, 12),
+      // Sized against the shoulder line, not against the seam it hides: at
+      // y 1.446 with a 0.102 half-height the cap's crown reached 1.548, a full
+      // 80mm ABOVE the torso's shoulder ring at 1.468, and in 03_hero_char it
+      // read as a bare skin ball sitting on top of the armour. 1.428 / 0.082
+      // tops out at 1.510, just under the pauldron cap, so it still covers the
+      // seam and no longer breaks the shoulder's line.
+      { pos: [0.228 * SW * s, 1.428, 0.002], rot: [0, 0, -7 * s], scale: [0.092 * BK, 0.082 * BK, 0.090 * BK] }),
+      spectral ? 'glow' : 'skin', spectral ? P.glow : P.skin, { mode: 'rigid', bone: 'arm' + S });
+
     const HN = 'hand' + S;
+    const open = (OPEN === 'left' && S === 'L') || (OPEN === 'right' && S === 'R');
+    // palm — shared by both hands
     add(tubeGeo([
-      { p: [0.249 * s, 0.900, 0.014], r: 0.040, sx: 1.02, sz: 0.74 },
-      { p: [0.251 * s, 0.862, 0.026], r: 0.043, sx: 1.06, sz: 0.78 },
-      { p: [0.252 * s, 0.822, 0.038], r: 0.038, sx: 1.02, sz: 0.76 },
-      { p: [0.252 * s, 0.792, 0.048], r: 0.028, sx: 0.94, sz: 0.70 },
+      { p: [0.249 * SW * s, 0.900, 0.014], r: 0.040, sx: 1.02, sz: 0.74 },
+      { p: [0.251 * SW * s, 0.862, 0.026], r: 0.043, sx: 1.06, sz: 0.78 },
+      { p: [0.252 * SW * s, 0.822, 0.038], r: 0.038, sx: 1.02, sz: 0.76 },
+      { p: [0.252 * SW * s, 0.792, 0.048], r: 0.028, sx: 0.94, sz: 0.70 },
     ], { radial: 10, capStart: 'round', capEnd: 'round', capScale: 0.85 }), spectral ? 'glow' : 'skin', spectral ? P.glow : P.skin,
       { mode: 'rigid', bone: HN });
-    // knuckle roll across the front of the fist — the arris that catches the key
-    add(tubeGeo([
-      { p: [0.215 * s, 0.868, 0.052], r: 0.0125 },
-      { p: [0.252 * s, 0.872, 0.058], r: 0.0135 },
-      { p: [0.286 * s, 0.866, 0.050], r: 0.0115 },
-    ], { radial: 8, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.metalHot : P.skin, { mode: 'rigid', bone: HN });
-    // three finger ridges curling back under the grip
-    for (let fi = 0; fi < 3; fi++) {
-      const dx = (-0.026 + fi * 0.026) * s;
+    if (open) {
+      // THE OPEN HAND. Both hands used to be the identical closed fist, so a
+      // character holding nothing still made a grip, which reads as a doll. The
+      // free hand gets four separated, slightly curled fingers and a thumb
+      // swung out of the palm plane — a relaxed hand, and still a shape a bow
+      // grip or a shield strap sits inside.
+      for (let fi = 0; fi < 4; fi++) {
+        const dx = (-0.030 + fi * 0.020) * s, len = 1 - Math.abs(fi - 1.2) * 0.11;
+        add(tubeGeo([
+          { p: [0.250 * SW * s + dx, 0.812, 0.046], r: 0.0110 },
+          { p: [0.251 * SW * s + dx * 1.10, 0.782 + 0.010 * (1 - len), 0.052], r: 0.0100 },
+          { p: [0.252 * SW * s + dx * 1.18, 0.750 + 0.020 * (1 - len), 0.046], r: 0.0088 },
+          { p: [0.252 * SW * s + dx * 1.22, 0.726 + 0.026 * (1 - len), 0.030], r: 0.0070 },
+        ], { radial: 6, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin',
+          spectral ? P.metalDeep : P.skin, { mode: 'rigid', bone: HN });
+      }
       add(tubeGeo([
-        { p: [0.252 * s + dx, 0.866, 0.058], r: 0.0115 },
-        { p: [0.253 * s + dx, 0.836, 0.056], r: 0.0110 },
-        { p: [0.253 * s + dx, 0.812, 0.040], r: 0.0095 },
-      ], { radial: 7, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.metalDeep : P.skinDeep, { mode: 'rigid', bone: HN });
+        { p: [0.220 * SW * s, 0.872, 0.036], r: 0.0150 },
+        { p: [0.198 * SW * s, 0.840, 0.058], r: 0.0130 },
+        { p: [0.192 * SW * s, 0.812, 0.076], r: 0.0095 },
+      ], { radial: 8, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.glow : P.skin,
+        { mode: 'rigid', bone: HN });
+    } else {
+      // the fist, bound RIGID to the same bone the weapon uses so hand and hilt
+      // are one shape by construction
+      add(tubeGeo([
+        { p: [0.215 * SW * s, 0.868, 0.052], r: 0.0125 },
+        { p: [0.252 * SW * s, 0.872, 0.058], r: 0.0135 },
+        { p: [0.286 * SW * s, 0.866, 0.050], r: 0.0115 },
+      ], { radial: 8, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.metalHot : P.skin, { mode: 'rigid', bone: HN });
+      for (let fi = 0; fi < 3; fi++) {
+        const dx = (-0.026 + fi * 0.026) * s;
+        add(tubeGeo([
+          { p: [0.252 * SW * s + dx, 0.866, 0.058], r: 0.0115 },
+          { p: [0.253 * SW * s + dx, 0.836, 0.056], r: 0.0110 },
+          { p: [0.253 * SW * s + dx, 0.812, 0.040], r: 0.0095 },
+        ], { radial: 7, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.metalDeep : P.skinDeep, { mode: 'rigid', bone: HN });
+      }
+      add(tubeGeo([
+        { p: [0.216 * SW * s, 0.884, 0.030], r: 0.0155 },
+        { p: [0.205 * SW * s, 0.856, 0.052], r: 0.0140 },
+        { p: [0.212 * SW * s, 0.832, 0.068], r: 0.0105 },
+      ], { radial: 8, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.glow : P.skin, { mode: 'rigid', bone: HN });
     }
-    // thumb — laid across the grip, 42deg off the fist axis
-    add(tubeGeo([
-      { p: [0.216 * s, 0.884, 0.030], r: 0.0155 },
-      { p: [0.205 * s, 0.856, 0.052], r: 0.0140 },
-      { p: [0.212 * s, 0.832, 0.068], r: 0.0105 },
-    ], { radial: 8, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.glow : P.skin, { mode: 'rigid', bone: HN });
     if (spectral) {
       for (let ri = 0; ri < 3; ri++) {
-        add(prim(new THREE.TorusGeometry(0.064 - ri * 0.006, 0.007, 6, 18), {
-          pos: [0.249 * s, 1.07 - ri * 0.075, 0.004], rot: [90, 0, 0],
+        add(prim(new THREE.TorusGeometry((0.064 - ri * 0.006) * SW, 0.007, 8, 20), {
+          pos: [0.249 * SW * s, 1.07 - ri * 0.075, 0.004], rot: [90, 0, 0],
         }), 'glow', ri === 1 ? P.metalHot : P.glow, { mode: 'rigid', bone: 'fore' + S });
       }
     }
     if (F.bracers) {
-      add(tubeGeo([{ p: [0.247 * s, 1.118, -0.008], r: 0.068 }, { p: [0.250 * s, 0.938, 0.010], r: 0.061 }],
+      add(tubeGeo([{ p: [0.247 * SW * s, 1.118, -0.008], r: 0.068 * BK }, { p: [0.250 * SW * s, 0.938, 0.010], r: 0.061 * BK }],
         { radial: 12, capStart: 'flat', capEnd: 'flat' }), 'metal', P.metalDeep, { mode: 'rigid', bone: 'fore' + S });
-      add(prim(new THREE.TorusGeometry(0.066, 0.0105, 6, 20), { pos: [0.247 * s, 1.112, -0.008], rot: [90, 0, 0] }),
-        'metal', P.metalHot, { mode: 'rigid', bone: 'fore' + S });
-      add(prim(new THREE.TorusGeometry(0.060, 0.0095, 6, 20), { pos: [0.250 * s, 0.944, 0.010], rot: [90, 0, 0] }),
-        'metal', P.metalHot, { mode: 'rigid', bone: 'fore' + S });
+      // rolled cuffs, as bands so each has a lit arris and an undercut
+      add(band({ cx: 0.247 * SW * s, cy: 1.116, cz: -0.008, R: 0.070 * BK, th: 0.0090, hh: 0.017, seg: 22, radial: 8 }),
+        'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { mode: 'rigid', bone: 'fore' + S });
+      add(band({ cx: 0.250 * SW * s, cy: 0.944, cz: 0.010, R: 0.064 * BK, th: 0.0085, hh: 0.015, seg: 22, radial: 8 }),
+        'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { mode: 'rigid', bone: 'fore' + S });
+      // a raised spine down the bracer: one more arris for the key to run along
+      add(tubeGeo([
+        { p: [0.247 * SW * s + 0.062 * BK * s, 1.110, -0.006], r: 0.0075, sx: 0.8, sz: 1.0 },
+        { p: [0.250 * SW * s + 0.058 * BK * s, 1.020, 0.002], r: 0.0080, sx: 0.8, sz: 1.0 },
+        { p: [0.250 * SW * s + 0.055 * BK * s, 0.948, 0.010], r: 0.0060, sx: 0.8, sz: 1.0 },
+      ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'metal', P.metalHot, { mode: 'rigid', bone: 'fore' + S });
     }
   }
 
   // ── legs / greaves / boots ───────────────────────────────────────────────
   for (const s of [1, -1]) {
     const S = s > 0 ? 'L' : 'R';
+    // KNEE DENSITY, same argument as the elbow: rings at 0.600 and 0.462 give a
+    // deep knee bend (the run clip reaches 86 degrees, attack3 reaches 64) three
+    // sections to spread over instead of one, and the 0.530 ring is widened into
+    // a patella so the bent leg has a knee cap rather than a crease.
     add(tubeGeo([
-      { p: [0.104 * s, 0.950, 0.004], r: 0.114 },
-      { p: [0.110 * s, 0.750, -0.002], r: 0.094 },
-      { p: [0.115 * s, 0.530, -0.008], r: 0.069 },
-      { p: [0.118 * s, 0.350, -0.016], r: 0.072 },
-      { p: [0.120 * s, 0.160, -0.026], r: 0.049 },
-    ], { radial: 12, capStart: 'flat', capEnd: 'flat' }), 'skin', P.skin, { only: 'body' });
+      { p: [0.104 * s, 0.950, 0.004], r: 0.114 * BK },
+      { p: [0.110 * s, 0.750, -0.002], r: 0.094 * BK },
+      { p: [0.113 * s, 0.600, -0.006], r: 0.076 * BK },
+      { p: [0.115 * s, 0.530, -0.006], r: 0.072 * BK },
+      { p: [0.117 * s, 0.462, -0.012], r: 0.070 * BK },
+      { p: [0.118 * s, 0.350, -0.016], r: 0.072 * BK },
+      { p: [0.120 * s, 0.160, -0.026], r: 0.049 * BK },
+      // Same argument as the arm: the leg answers to its own chain, so a torso
+      // twist can no longer smear the thigh and the pelvis cannot claim a shin.
+    ], { radial: 12, capStart: 'flat', capEnd: 'flat' }), 'skin', P.skin,
+      { only: ['pelvis', 'thigh' + S, 'shin' + S, 'foot' + S], bias: { pelvis: 0.85 } });
     if (F.greaves) {
       add(tubeGeo([
-        { p: [0.115 * s, 0.548, -0.004], r: 0.081, sz: 1.02 },
-        { p: [0.118 * s, 0.372, -0.014], r: 0.082, sz: 1.02 },
-        { p: [0.120 * s, 0.186, -0.024], r: 0.058, sz: 1.02 },
+        { p: [0.115 * s, 0.548, -0.004], r: 0.081 * BK, sz: 1.02 },
+        { p: [0.118 * s, 0.372, -0.014], r: 0.082 * BK, sz: 1.02 },
+        { p: [0.120 * s, 0.186, -0.024], r: 0.058 * BK, sz: 1.02 },
       ], { radial: 12, capStart: 'flat', capEnd: 'flat' }), 'metal', P.metal, { mode: 'rigid', bone: 'shin' + S });
-      add(prim(new THREE.SphereGeometry(1, 14, 10), { pos: [0.115 * s, 0.548, 0.006], scale: [0.084, 0.076, 0.086] }),
+      // knee cop + a crest running the length of the greave: the shin is the
+      // second-largest metal surface on the hero and it had one soft dome and
+      // one hexagonal ring on it.
+      add(prim(new THREE.SphereGeometry(1, 16, 10), { pos: [0.115 * s, 0.548, 0.006], scale: [0.084 * BK, 0.076, 0.086 * BK] }),
         'metal', P.metalHot, { mode: 'rigid', bone: 'shin' + S });
-      add(prim(new THREE.TorusGeometry(0.062, 0.0095, 6, 20), { pos: [0.120 * s, 0.190, -0.024], rot: [90, 0, 0] }),
-        'metal', P.metalHot, { mode: 'rigid', bone: 'shin' + S });
+      add(tubeGeo([
+        { p: [0.115 * s, 0.556, 0.070 * BK], r: 0.0115, sx: 0.8, sz: 1.0 },
+        { p: [0.118 * s, 0.400, 0.064 * BK], r: 0.0100, sx: 0.8, sz: 1.0 },
+        { p: [0.120 * s, 0.232, 0.030 * BK], r: 0.0065, sx: 0.8, sz: 1.0 },
+      ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'metal', P.metalHot, { mode: 'rigid', bone: 'shin' + S });
+      add(band({ cx: 0.120 * s, cy: 0.190, cz: -0.024, R: 0.062 * BK, th: 0.0085, hh: 0.016, seg: 22, radial: 8 }),
+        'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { mode: 'rigid', bone: 'shin' + S });
+      add(band({ cx: 0.115 * s, cy: 0.556, cz: -0.004, R: 0.085 * BK, th: 0.0085, hh: 0.014, seg: 24, radial: 8 }),
+        'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { mode: 'rigid', bone: 'shin' + S });
     }
     add(tubeGeo([
       { p: [0.120 * s, 0.118, -0.052], r: 0.052 },
@@ -981,6 +1521,10 @@ function buildParts(spec) {
       { p: [0.122 * s, 0.046, 0.152], r: 0.028, sx: 0.84 },
     ], { radial: 10, capStart: 'round', capEnd: 'round', capScale: 0.8 }), 'cloth', P.leather,
       { only: ['foot' + S, 'toe' + S, 'shin' + S] });
+    // boot cuff — an ink-to-metal break at the ankle so the leg does not run
+    // into the floor as one continuous tube
+    add(band({ cx: 0.120 * s, cy: 0.126, cz: -0.040, R: 0.056, ez: 1.15, th: 0.0080, hh: 0.014, seg: 20, radial: 8 }),
+      'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { only: ['foot' + S, 'shin' + S] });
   }
 
   // ── xiphos (AGENT-COMBAT can hide this: rig.setWeaponVisible(false)) ─────
@@ -1170,10 +1714,21 @@ export function buildHumanoid(spec_, ctx) {
   const K = spec.height / 1.90;
   const parts = buildParts(spec);
   if (K !== 1) for (const p of parts) p.g.scale(K, K, K);
+  // THE SHOULDER TEAR (§d). Measured by posing attack3 at t=0.17, where both
+  // arms go overhead: the torso's shoulder shelf reaches x 0.296 while the arm
+  // bone starts at 0.249, so ~47mm of TORSO sat outboard of the joint and
+  // picked up 30-50% arm weight from the distance kernel. Raising the arm then
+  // dragged that shelf with it and opened a stretched skin web from the chest
+  // to the elbow — the single worst deformation on the character.
+  // `only:'torso'` is the body set MINUS the arm chain, so torso vertices can
+  // no longer follow an arm at all. The seam that leaves is covered by the
+  // rigid deltoid cap, which belongs entirely to the arm bone.
+  const torsoNames = bodyNames.filter(n => !/^(arm|fore|hand)/.test(n));
   const bucketMap = new Map();
   for (const p of parts) {
     const rule = { ...(p.bind || {}) };
     if (rule.only === 'body') rule.only = bodyNames;
+    else if (rule.only === 'torso') rule.only = torsoNames;
     const P = p.g.getAttribute('position');
     const { SI, SW } = solveSkinWeights(P.array, segs, rule, byName);
     const col = paintPart(p.g, p.tint, p.ao, H, K);

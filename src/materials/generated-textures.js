@@ -27,7 +27,17 @@ const GRID_ROWS = 2;
 // maps with an unconstrained atlas was what turned Tartarus into fluorescent
 // orange/purple blocks. These profiles preserve the recipe colour while
 // borrowing brushwork, wear, grain, and a restrained amount of local chroma.
-const DEFAULT_COMPOSITE = Object.freeze({ detail: 0.26, chroma: 0.10 });
+// `detail` is the weight of the atlas's own structure (a ratio about its mean),
+// `chroma` the extra weight on that structure's colour deviation, and
+// `chromaGain` the §15 chroma expansion applied to the composited result. The
+// gain is a straight vibrancy pass on the albedo: it preserves luminance
+// exactly, so it adds colour without touching the value law.
+// 1.45: measured meanSaturation after the first pass at this step was
+// 0.246-0.258 across the three material shots, still far under §15's floor of
+// 0.42, and §15 is explicit that a frame reading flat and washed is the worse
+// failure. The gain preserves luma exactly, so there is no value-law cost to
+// spending the headroom.
+const DEFAULT_COMPOSITE = Object.freeze({ detail: 0.26, chroma: 0.10, chromaGain: 1.45 });
 
 const ATLASES = [
   {
@@ -112,7 +122,11 @@ const ATLASES = [
     // keys are isolated to reward architecture instead of repainting the room.
     name: 'arena-boons-v4', url: arenaBoonsV4Url,
     tiles: [
-      { col: 0, row: 0, name: 'expanded-tartarus-floor-v4', keys: ['floor.tartarus'], composite: { detail: 0.34, chroma: 0.07, sourceMix: 0.20 } },
+      // chromaGain above the 1.45 default: the ground plane is the one surface
+      // that pays a §9 value cut (see floor.tartarus's macroLevel), and HSL
+      // saturation is scale-invariant below mid-grey, so chroma bought back at
+      // the darker level costs nothing and is where §15's crimson has to live.
+      { col: 0, row: 0, name: 'expanded-tartarus-floor-v4', keys: ['floor.tartarus'], composite: { detail: 0.34, chroma: 0.07, sourceMix: 0.20, chromaGain: 1.62 } },
       { col: 1, row: 0, name: 'tartarus-rim-masonry-v4', keys: ['stone.tartarus.rim'], composite: { detail: 0.32, chroma: 0.06, sourceMix: 0.18 } },
       { col: 2, row: 0, name: 'divine-shrine-stone-v4', keys: ['shrine.divine'], composite: { detail: 0.30, chroma: 0.07, sourceMix: 0.17 } },
       { col: 0, row: 1, name: 'divine-door-gold-v4', keys: ['gold.divine'], composite: { detail: 0.30, chroma: 0.08, sourceMix: 0.18 } },
@@ -223,16 +237,54 @@ function sliceTile(image, tile, anisotropy, scale = 1) {
   texture.magFilter = THREE.LinearFilter;
   texture.anisotropy = anisotropy;
   texture.userData.generatedComposite = tile.composite || DEFAULT_COMPOSITE;
+  // a neutralised modulator must not gain chroma: the roster's hue identity is
+  // painted into VERTEX COLOUR by rig.js and the albedo only swings value
+  texture.userData.generatedIsModulator = !!tile.modulator;
   texture.needsUpdate = true;
   return texture;
 }
 
 /**
  * Composite generated brushwork over a procedural albedo without surrendering
- * the procedural palette. Generated luma is standardised per tile, then used
- * as a bounded value modulation; only a small, zero-centred chroma residual is
- * admitted. The result retains the source texture's grain and wear without
- * allowing a saturated atlas to repaint every material orange or violet.
+ * the procedural palette.
+ *
+ * ── WHAT WAS MEASURED, AND WHY THIS WAS REWRITTEN ─────────────────────────────
+ * The header above and the `sourceMix` note below both assume the atlases carry
+ * "the new oxblood/soot/wood palette". Decoded and averaged, cell by cell, they
+ * do not. The tiles bound to the two largest surfaces in the game are:
+ *
+ *   arena-boons-v4 (0,0) 'expanded-tartarus-floor-v4' -> floor.tartarus
+ *        mean rgb(30,22,24), HSL saturation 0.16
+ *   tartarus-materials-v2 (1,0) 'carved-bloodstone-v2' -> stone.tartarus + bay
+ *        + column + arch,  mean rgb(25,16,17), saturation 0.20
+ *
+ * Those are near-neutral dark greys. `sourceMix` was lerping 20% of the floor
+ * and 14% of every Tartarus wall TOWARDS a grey, and `chroma` (a residual
+ * centred on the source's own luma) could not put any back because the source
+ * has almost none. Measured on the shipped build, 04_material / 05_floor /
+ * 11_relief_detail returned meanSaturation 0.228 / 0.211 / 0.240 against
+ * ART_DIRECTION §15's floor of 0.42 — "the game has very faded colours", and
+ * this compositing step is a large part of where the colour went. §15 is
+ * explicit that chroma is ADDED, never removed, and it supersedes the earlier
+ * restraint notes that this function was written under.
+ *
+ * The rewrite keeps everything the old one was trying to keep and drops the
+ * only thing it was doing wrong:
+ *
+ *   1. The atlas is applied as a per-channel RATIO around ITS OWN MEAN. That
+ *      transfers all of its structure — value, wear, grain AND its local hue
+ *      shifts — while leaving the recipe's mean colour exactly where it was.
+ *      A grey tile can no longer grey a crimson floor; it can only mottle it.
+ *   2. `sourceMix` survives as a knob but now mixes toward a MEAN-CORRECTED
+ *      source, so a direct contribution from the authored art is still
+ *      possible and still cannot bleach the surface.
+ *   3. The old lerp-to-raw also cost (1 - sourceMix) of the PROCEDURAL layer's
+ *      local contrast — the atlas cell is 256 square upscaled to a 768-square
+ *      floor map, i.e. three times softer than the map it was diluting. The
+ *      ratio form multiplies instead of lerping, so 100% of the procedural
+ *      high frequency survives.
+ *   4. A final chroma expansion about the pixel's own luma (§15), which cannot
+ *      move luminance and therefore cannot touch the value law (§9).
  */
 export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) {
   if (typeof document === 'undefined' || !procedural?.image?.data || !generated?.image) return procedural;
@@ -249,40 +301,62 @@ export function compositeGeneratedAlbedo(procedural, generated, anisotropy = 8) 
   const source = ctx.getImageData(0, 0, width, height);
   const src = source.data;
 
-  let mean = 0;
-  for (let i = 0; i < src.length; i += 4) {
-    mean += src[i] * 0.2126 + src[i + 1] * 0.7152 + src[i + 2] * 0.0722;
-  }
   const pixels = Math.max(1, src.length / 4);
-  mean /= pixels;
-  let variance = 0;
+  // PER-CHANNEL means. The old code took only a luma mean, which is exactly why
+  // it could not tell a dark crimson tile from a dark grey one.
+  const sMean = [0, 0, 0];
+  const bMean = [0, 0, 0];
   for (let i = 0; i < src.length; i += 4) {
-    const luma = src[i] * 0.2126 + src[i + 1] * 0.7152 + src[i + 2] * 0.0722;
-    const d = luma - mean;
-    variance += d * d;
+    sMean[0] += src[i]; sMean[1] += src[i + 1]; sMean[2] += src[i + 2];
+    bMean[0] += base[i]; bMean[1] += base[i + 1]; bMean[2] += base[i + 2];
   }
-  const sigma = Math.max(18, Math.sqrt(variance / pixels));
+  for (let c = 0; c < 3; c++) { sMean[c] /= pixels; bMean[c] /= pixels; }
+
   const profile = generated.userData.generatedComposite || DEFAULT_COMPOSITE;
   const detail = profile.detail ?? DEFAULT_COMPOSITE.detail;
   const chroma = profile.chroma ?? DEFAULT_COMPOSITE.chroma;
   const sourceMix = Math.max(0, Math.min(0.25, profile.sourceMix ?? 0));
+  // §15. 1.0 leaves the recipe's chroma untouched; the default adds a third.
+  // Modulators (skin/cloth/hair) are neutralised on purpose — they must not
+  // fight the rig's vertex colour — so they opt out with chromaGain 1.
+  const chromaGain = profile.chromaGain
+    ?? (generated.userData.generatedIsModulator ? 1 : DEFAULT_COMPOSITE.chromaGain);
   const out = new Uint8Array(base.length);
 
+  // ratio = src / srcMean, so the tile contributes only its DEVIATION from its
+  // own average. Clamped: a jpeg cell that goes to near-black would otherwise
+  // punch a hole in the surface rather than shade it.
+  const inv = [1 / Math.max(6, sMean[0]), 1 / Math.max(6, sMean[1]), 1 / Math.max(6, sMean[2])];
+  // the mean-corrected source used by sourceMix: the atlas repainted into the
+  // recipe's own average colour, so a direct contribution is structure only
+  const corr = [bMean[0] * inv[0], bMean[1] * inv[1], bMean[2] * inv[2]];
+
+  const px = [0, 0, 0], ratio = [0, 0, 0];
   for (let i = 0; i < out.length; i += 4) {
-    const luma = src[i] * 0.2126 + src[i + 1] * 0.7152 + src[i + 2] * 0.0722;
-    const z = Math.max(-1.65, Math.min(1.65, (luma - mean) / sigma));
-    const valueMod = 1 + z * detail;
     for (let c = 0; c < 3; c++) {
-      // Chroma is centred around generated luma, so it cannot lift the whole
-      // surface or overwrite the recipe hue; it only introduces local colour.
-      const layered = base[i + c] * valueMod + (src[i + c] - luma) * chroma;
-      // A tightly-capped direct contribution is reserved for generated art
-      // that was authored against the live game reference. It lets the new
-      // oxblood/soot/wood palette read at gameplay distance while the recipe
-      // remains the dominant colour source and prevents atlas-wide repainting.
-      const v = layered * (1 - sourceMix) + src[i + c] * sourceMix;
-      out[i + c] = Math.max(0, Math.min(255, Math.round(v)));
+      ratio[c] = Math.max(0.30, Math.min(2.60, src[i + c] * inv[c]));
     }
+    // the achromatic part of the ratio triple, so `ratio - rLum` is exactly the
+    // atlas's local COLOUR deviation with its value deviation removed
+    const rLum = ratio[0] * 0.2126 + ratio[1] * 0.7152 + ratio[2] * 0.0722;
+    for (let c = 0; c < 3; c++) {
+      // `detail` is the weight of the atlas's structure, on the same 0..1 scale
+      // the tiles were already authored against.
+      const mod = 1 + (ratio[c] - 1) * detail + (ratio[c] - rLum) * chroma;
+      px[c] = base[i + c] * mod * (1 - sourceMix) + src[i + c] * corr[c] * sourceMix;
+    }
+    let r = px[0], g = px[1], b = px[2];
+    if (chromaGain !== 1) {
+      // expand chroma about the pixel's own luminance: hue and value are both
+      // invariant, so this cannot break §9's value law in either direction
+      const l = r * 0.2126 + g * 0.7152 + b * 0.0722;
+      r = l + (r - l) * chromaGain;
+      g = l + (g - l) * chromaGain;
+      b = l + (b - l) * chromaGain;
+    }
+    out[i] = Math.max(0, Math.min(255, Math.round(r)));
+    out[i + 1] = Math.max(0, Math.min(255, Math.round(g)));
+    out[i + 2] = Math.max(0, Math.min(255, Math.round(b)));
     out[i + 3] = 255;
   }
 

@@ -214,18 +214,34 @@ export const RAMPS = {
   // ---- Tartarus: blood-dark carved stone -----------------------------------
   'stone.tartarus': [
     S(0.00, '#0b0410'), S(0.16, '#1f0b18'), S(0.34, '#33121f'),
-    S(0.52, '#451a26'), S(0.70, '#5c2430'), S(0.85, '#6e2e37'),
+    S(0.52, '#481a27'), S(0.70, '#602332'), S(0.85, '#742a35'),
     // §2 puts Tartarus "stone light" at #8c3b46. The old top stops (#8b4f4c /
     // #ad7d6c) were a desaturated putty, and under a warm key that is exactly
     // what reads as PINK CHALK — the single-hue-family failure §9.6 bans, but
     // caused by the albedo rather than by the light.
-    S(0.94, '#8c3b46'), S(1.00, '#a1595c'),
+    // §15: #a1595c is saturation 0.29 — a LOWER chroma than §2's own #8c3b46
+    // (0.41), so the ramp desaturated on its way to its brightest stop. Same
+    // luma band, real blood-stone chroma.
+    S(0.94, '#8c3b46'), S(1.00, '#a44e56'),
   ],
   // cool glaze pass — mixed against the warm ramp for hue variety
+  // ── §15 VIBRANCY, MEASURED ────────────────────────────────────────────────
+  // The old stops ran #39434f / #556069 / #7b858a: HSL saturations of 0.16,
+  // 0.11 and 0.06, i.e. the top of this ramp was LITERALLY GREY. The wall's
+  // temperature selector averages ~0.45, so a bit under half of every Tartarus
+  // wall, bay, drum and voussoir was painted through a grey ramp — a bleach
+  // pass living in the albedo, exactly parallel to the grade-side one §15 was
+  // written about. Measured on the round-5 shot sheet the three material shots
+  // came back at meanSaturation 0.211-0.240 against §15's floor of 0.42.
+  // §15.3 is explicit that ink shadows are about HUE, never about low chroma:
+  // "a violet shadow should be a RICH violet". These stops hold the previous
+  // ramp's LUMA to within ~3 counts of 255 at every stop (so the value law and
+  // every exposure decision taken against it are untouched) and take the
+  // saturation from 0.06-0.16 to 0.18-0.41, in §2's ink hue band.
   'stone.tartarus.cool': [
-    S(0.00, '#06060c'), S(0.20, '#0f0e1a'), S(0.42, '#191a2a'),
-    S(0.64, '#262b3c'), S(0.82, '#39434f'), S(0.94, '#556069'),
-    S(1.00, '#7b858a'),
+    S(0.00, '#07060f'), S(0.20, '#130d24'), S(0.42, '#211a3e'),
+    S(0.64, '#342a58'), S(0.82, '#4c3d72'), S(0.94, '#6a5690'),
+    S(1.00, '#8f7bb0'),
   ],
   // §2 two-hue rule. The warm crimson ramp alone put every large surface on one
   // magenta-to-orange axis with no complement anywhere in the frame. The floor's
@@ -240,10 +256,19 @@ export const RAMPS = {
   // cold blue one — mottling that reads as a heat map rather than as stone, which is exactly what
   // the player called out. Real stone varies in VALUE and only slightly in hue. This is now the
   // same stone quarried cooler and duller, staying in the plum/taupe family the warm ramp lives in.
+  // §15 again, and it pays a value-law debt at the same time. The old top stops
+  // (#563748 / #6d4856 / #835a64) were a pale mauve at saturation 0.19-0.22,
+  // and 05_floor measured groundP90 0.466 against §9's 0.42 ceiling — the
+  // brightest tenth of the floor was blazing, and it was blazing in a
+  // near-neutral. Deepening the top of the cool ramp by ~6 counts of luma and
+  // pushing the hue to a true plum (saturation 0.25) darkens exactly the band
+  // that was over the ceiling while adding the chroma §15 demands. Still the
+  // same stone quarried cooler — the "heat map" failure this ramp records was
+  // caused by a BLUE-GREY slate, and this is not that.
   'floor.tartarus.cool': [
-    S(0.00, '#0c0812'), S(0.20, '#1a1020'), S(0.42, '#2b1a2c'),
-    S(0.62, '#3f273a'), S(0.80, '#563748'), S(0.93, '#6d4856'),
-    S(1.00, '#835a64'),
+    S(0.00, '#0b0714'), S(0.20, '#190f24'), S(0.42, '#2a1832'),
+    S(0.62, '#3d2444'), S(0.80, '#533355'), S(0.93, '#684265'),
+    S(1.00, '#7d5272'),
   ],
   // VALUE, NOT JUST HUE. The old ramp centred near #210e18 — about 1% linear
   // reflectance. No light rig can pull a 1%-albedo floor up to the 0.34-0.42
@@ -260,10 +285,16 @@ export const RAMPS = {
   // where §9.5 wants it — on edges, trim and emissives.
   // Warmer and slightly richer: a stone that owns a red-brown identity reads as stone under any
   // light, where a near-neutral plum just becomes whatever colour is shining on it.
+  // §15 chroma, and the top stops come DOWN in value. #ac5745/#c06b4e are an
+  // orange-tan at saturation 0.42 and luma 0.48 — the brightest tenth of the
+  // measured floor (groundP90 0.466 vs §9's 0.42 ceiling) and, under a warm
+  // key, a terracotta rather than the blood-stone §2 specifies. Every stop from
+  // the middle up is now both darker and more saturated: the mids go 0.377 ->
+  // 0.431 and 0.381 -> 0.443, the top 0.42 -> 0.44 at 11% less luma.
   'floor.tartarus': [
-    S(0.00, '#12080f'), S(0.18, '#23101a'), S(0.38, '#391a24'),
-    S(0.58, '#54262e'), S(0.76, '#743439'), S(0.90, '#93453f'),
-    S(0.97, '#ac5745'), S(1.00, '#c06b4e'),
+    S(0.00, '#12080f'), S(0.18, '#23101a'), S(0.38, '#3c1824'),
+    S(0.58, '#58232d'), S(0.76, '#7a2f36'), S(0.90, '#98403c'),
+    S(0.97, '#a4503f'), S(1.00, '#b45c46'),
   ],
 
   // The column shafts are a DIFFERENT stone from the wall: quarried paler, less
@@ -277,10 +308,15 @@ export const RAMPS = {
     // near-neutral putty that the key can only turn salmon.
     S(0.94, '#96685e'), S(1.00, '#b08578'),
   ],
+  // Same §15 correction as stone.tartarus.cool. #4d5a66 / #6c7a84 / #93a0a6
+  // measured saturation 0.14 / 0.10 / 0.06 — the paler column stone was the
+  // most desaturated surface in the starting biome. Luma is held to within ~5
+  // counts of 255 at every stop; saturation is roughly doubled, in §2's ink hue
+  // band, so a cool drum is a cold VIOLET stone instead of a grey one.
   'stone.tartarus.column.cool': [
-    S(0.00, '#0a0b14'), S(0.20, '#151824'), S(0.42, '#242a38'),
-    S(0.64, '#36404e'), S(0.82, '#4d5a66'), S(0.94, '#6c7a84'),
-    S(1.00, '#93a0a6'),
+    S(0.00, '#090a16'), S(0.20, '#17182c'), S(0.42, '#2a2a4a'),
+    S(0.64, '#403d69'), S(0.82, '#5c5589'), S(0.94, '#7f76a8'),
+    S(1.00, '#a89ec8'),
   ],
 
   // ---- Asphodel: obsidian + lava ------------------------------------------

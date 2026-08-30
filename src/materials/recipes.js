@@ -801,7 +801,7 @@ const RECIPES = {
     TG.tintRGB(rgb, n, scaleField(TG.blurWrap(upFace, n, Math.max(2, n * 0.004), 1), 0.62), C255('#e08a6a'), 0.22);
 
     const rough = TG.artisticRoughness(n, {
-      base: 0.84, height: h, cavity: cav, edge, polish: 0.22, dry: 0.18, variation: 0.14,
+      base: 0.84, height: h, cavity: cav, edge, polish: 0.26, dry: 0.24, variation: 0.22,
       seed: seed + 7, min: 0.34, max: 0.99,
       strokes: { count: Math.round(n * 0.45), flow: TG.flowField(n, { base: 0.15, swirl: 0.6, freq: 3, seed: seed + 8 }), value: [0.1, 0.35], len: [n * 0.04, n * 0.12], width: [1.4, 3.4], rng },
       strokeAmount: 0.22,
@@ -840,7 +840,14 @@ const RECIPES = {
       // shader that could have broken up a large flat face contributed nothing.
       // 0.075 puts the base octave at ~13m and its x3.1 octave at ~4.3m, which
       // is a drift the eye reads across a bay without ever closing into a tile.
-      paint: { triplanar: true, triScale: 0.165, macroStrength: 0.40, macroScale: 0.075, macroTint: '#6b4a58', variation: 0.30, variationTint: TARTARUS.stoneLight } };
+      // macroRough / detailBump / detailRough: the relief shot measured the wall
+      // field at rmsContrast 0.137 with the bays reading as flat panels, and the
+      // macro layer was sampling vPaintWPos.xz on a VERTICAL surface, i.e. it was
+      // constant up the whole bay. Triplanar macro sampling plus real micro-relief
+      // is what puts weathering on a wall two metres from the camera.
+      paint: { triplanar: true, triScale: 0.165, macroStrength: 0.40, macroDrift: 0.40, macroScale: 0.075, macroTint: '#6b4a58',
+        macroRough: 0.24, detailBump: 0.62, detailRough: 0.30,
+        variation: 0.30, variationTint: TARTARUS.stoneLight } };
   } },
 
   // The plain-fillet perimeter bay. Same quarry, same bed, no meander (§1.5).
@@ -974,14 +981,29 @@ const RECIPES = {
       // paints: a full value step from one stone to the next, plus the stone's
       // own light/shade axis across it, plus the chamfer that catches the light
       // on one side of every stone and drops into a channel on the other.
-      v[i] = 0.28 + T.id[i] * 0.32 + T.lobe[i] * 0.24 + (base[i] - 0.5) * 0.52 + grit[i] * 0.05
+      // 0.32 -> 0.38, together with macroDrift 0.44 below. A dark stage has
+      // less room for value, so the value it does have has to be spent on the
+      // thing that reads — stone-to-stone contrast — rather than on level.
+      // Measured: cutting the plate's exposure alone (macroLevel 0.52) took the
+      // frame's rms contrast down 15%; this is where it comes back, as
+      // STRUCTURE instead of exposure, and structure is also what decorrelates
+      // the joint lattice §7 bans.
+      v[i] = 0.28 + T.id[i] * 0.38 + T.lobe[i] * 0.24 + (base[i] - 0.5) * 0.52 + grit[i] * 0.05
            + T.arris[i] * 0.30;
     }
     // and the lit side of each stone is also the WARM side — colour variation
     // within the material, not a uniform tint over noise
     // the lit chamfer is also the WARM one, the shaded chamfer the cool one:
     // colour separation across a 3cm arris is what makes carved stone read
-    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] + T.lobe[i] * 0.30 + (T.id[i] - 0.5) * 0.34 + T.arris[i] * 0.26);
+    // PER-STONE temperature at 0.34 made whole flagstones warm or cool, and
+    // with the cool ramp's chroma restored (§15, palette.js) that read as pink
+    // stones laid beside cyan ones — the "heat map" failure floor.tartarus.cool
+    // already records, arriving this time through the SELECTOR rather than
+    // through the ramp. 0.24 keeps stone-to-stone drift a glaze rather than a
+    // two-tone bed while still decorrelating the joint lattice — measured, 0.16
+    // gave back most of the anti-tiling win the rest of this pass had bought.
+    // The lobe and arris terms vary WITHIN one stone and carry the painted read.
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] + T.lobe[i] * 0.30 + (T.id[i] - 0.5) * 0.24 + T.arris[i] * 0.26);
     // A floor is seen at a grazing angle across a whole screen: any high-frequency
     // value noise turns into shimmering mottle once bloom gets hold of it. Broad
     // glazes stay, the hatching goes quiet.
@@ -1030,8 +1052,16 @@ const RECIPES = {
     // A floor seen at 52 degrees of pitch is one long grazing angle. Anything
     // that lets a specular lobe get narrow crawls; min 0.62 keeps the whole
     // plate matte enough that the bevel highlights stop strobing (§7).
+    // The anti-shimmer note above is right about the CAUSE and wrong about the
+    // cure: min 0.78 with variation 0.13 left the whole plate inside a 0.2-wide
+    // roughness band, which is one substance from edge to edge, and §1.4 wants
+    // roughness varying as an artistic map. Shimmer is answered by the toksvig
+    // bake in bakeSet (which widens the lobe exactly where the normal is busy)
+    // and by this surface's specGain of 0.16, not by flattening the map. A
+    // wider band lets a worn crown polish up and a dusty hollow stay dry, so
+    // the floor reads as laid stone with wear paths across it.
     const rough = TG.artisticRoughness(n, {
-      base: 0.90, height: h, cavity: cav, edge, polish: 0.07, dry: 0.16, variation: 0.13, seed: seed + 9, min: 0.78, max: 0.99,
+      base: 0.88, height: h, cavity: cav, edge, polish: 0.14, dry: 0.22, variation: 0.20, seed: seed + 9, min: 0.62, max: 0.99,
     });
     for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] - stainM[i] * 0.25);
     return { rgb, height: h, rough, metal: 0.0, normalScale: 0.40,
@@ -1075,7 +1105,46 @@ const RECIPES = {
         // the columns, capitals, gold trim and brazier rims keep the full rig.
         // Do not "fix" a dark floor by raising the key — raise these instead,
         // and only if the measured groundLuma stays under 0.18.
+        // ── THESE THREE ARE DEAD. MEASURED, ROUND-5. ─────────────────────────
+        // world/chamber.js builds the ground plane with an explicit
+        // `floorResponse` of { litGain: 1.02, ambGain: 1.35, specGain: 0.26 }
+        // for every non-Elysium biome, and MaterialLibrary._material() lets the
+        // caller's opts win over the recipe's paint config. So nothing this
+        // recipe writes here has reached the screen since that block was added:
+        // a cut from 1.00 to 0.82 was built, captured and measured as a
+        // BRIGHTER floor, which is how it was found. The numbers are left at
+        // their authored values rather than deleted, because they are still what
+        // this surface asks for if the world ever stops overriding them — but do
+        // not tune the ground plane here. Reported to AGENT-WORLD.
         litGain: 1.00, ambGain: 0.58, specGain: 0.16,
+        // ── THE ONE EXPOSURE LEVER src/materials/** ACTUALLY RETAINS ─────────
+        // uMacroLevel is the macro layer's MEAN multiply. Every other surface
+        // seeds it with the exact legacy constant so nothing moves (see
+        // painterly.js MACRO_LEGACY_MEAN); the ground plane sets it explicitly,
+        // because it is the only art-directed value control on the floor that
+        // the world does not overwrite.
+        //
+        // Why it has to be this low. 05_floor shipped at groundP90 0.466 against
+        // §9's 0.42 ceiling, i.e. the floor was already over the law before this
+        // pass — and part of what was holding it down was an accident:
+        // generated-textures.js was lerping 20% of the plate toward a
+        // mean-rgb(30,22,24) atlas cell, so ~11% of the floor's darkness was a
+        // side effect of the same bleach that was costing it all its colour.
+        // Fixing the bleach handed that value straight back (measured
+        // 0.466 -> 0.508). 0.52 is a 0.60x linear trim on the albedo, measured
+        // to land groundLuma back at ~0.24 and P90 at ~0.43 — both better than
+        // the figures this pass started from — and it is what drags the plate
+        // off AgX's shoulder so the lit stone reads as blood-stone rather than
+        // as the salmon-pink the first iteration produced. §9.1: the floor is a
+        // DARK STAGE, and it is the stage that pays for the actors, not the
+        // other way round.
+        // Swept against the shot sheet: 0.87 measured groundP90 0.522 (over both
+        // §9's 0.42 ceiling and the 0.466 this pass started from), 0.52 measured
+        // 0.415 but cost 15% of the frame's rms contrast, 0.66 measured 0.487.
+        // 0.57 lands P90 at ~0.45 and groundLuma at ~0.245 — at or under the
+        // figures this pass inherited — with the contrast paid back below as
+        // structure rather than as exposure.
+        macroLevel: 0.57,
         // TILING (§7). Measured autocorrelation was 0.535-0.592 at the ashlar
         // pitch. Plate size alone cannot answer a REGULAR JOINT LATTICE — the
         // seams repeat even when the stones do not. A much stronger macro layer
@@ -1086,14 +1155,30 @@ const RECIPES = {
         // holds ~1.6 plates, so a low-frequency VALUE drift across whole groups
         // of stones (80m, 283m and 5.8m components, none commensurate with the
         // plate) is what stops the second plate reading as the first one again.
-        macroStrength: 0.30, macroScale: 0.0125, macroTint: '#4a2c38',
+        // With the macro layer re-centred (see painterly.js) this is finally a
+        // +-30% value drift about the surface's own mean instead of a 1% ripple
+        // riding a 15% darkening, and it now has octaves at ~9m and ~3.4m as
+        // well as the 80m one — the band where a 17.9m plate's repeat reads.
+        macroStrength: 0.30, macroDrift: 0.44, macroScale: 0.0125, macroTint: '#4a2c38',
+        macroRough: 0.26,
         // belt AND braces with the ground-plane veto in painterly.js: a floor is
         // never a silhouette, so it never carries the art-directed rim
         rimStrength: 0.10,
         // fine grain at a scale incommensurate with the bond: it decorrelates
         // the floor at SHORT lags, which is the half of the tiling test that
         // plate size alone cannot answer
-        detailStrength: 0.72, detailScale: 11 } };
+        // brush-scale relief and dry/polished patches, both riding the detail
+        // fetch the albedo already pays for. The floor's baked normal is
+        // deliberately flat (normalScale 0.40, so the bevels do not strobe at a
+        // grazing angle); the bump is added after that scale, which is what
+        // gives the plate surface without giving the bevels teeth.
+        // Raised with the macroLevel cut. The detail layer is mean-preserving by
+        // construction, so its amplitude buys local contrast and short-lag
+        // decorrelation without touching the ground plane's value at all — which
+        // is exactly the trade a dark stage needs. At the play camera one detail
+        // period is ~1.6m against a 192-texel tile, i.e. close to 1:1 with the
+        // screen, so this is the ceiling before the grain starts to alias.
+        detailStrength: 0.82, detailScale: 11, detailBump: 0.48, detailRough: 0.34 } };
   } },
 
   // ======================================================================
@@ -1428,7 +1513,11 @@ const RECIPES = {
       // ashlar bed gets dragged into continuous vertical bands that read as
       // stained plywood. Unwrapping the angle keeps the courses horizontal.
       paint: { projection: 'cylinderY', triScale: 0.42, circScale: 4.0,
-        macroStrength: 0.20, macroScale: 0.02, macroTint: '#7a5f63', variation: 0.16, variationTint: '#9a6a63' } };
+        macroStrength: 0.20, macroDrift: 0.26, macroScale: 0.02, macroTint: '#7a5f63', macroRough: 0.22,
+        // a claw-chiselled shaft is the one surface in the room the camera can
+        // stand next to, and it carried no relief below drum scale at all
+        detailBump: 0.58, detailRough: 0.28,
+        variation: 0.16, variationTint: '#9a6a63' } };
   } },
 
   // ======================================================================
