@@ -32,7 +32,11 @@ export const TIERS = {
   },
   med: {
     renderScale: 0.82, hdr: true,
-    shadows: true, shadowMap: 1024, shadowRadius: 1.3,
+    // Medium is the automatic tier for ordinary browser laptops. Dynamic
+    // shadow submission roughly doubled measured chamber calls (about
+    // 554 -> 1,106) while the authored materials already carry baked/AO
+    // shading, so reserve live shadow maps for opt-in High and Ultra.
+    shadows: false, shadowMap: 1024, shadowRadius: 1.3,
     ao: false, aoScale: 0.5, aoDirs: 4, aoSteps: 4,
     bloom: true, bloomMips: 4, bloomScale: 0.5,
     godrays: false, godraysScale: 0.25, godraysSamples: 20,

@@ -36,6 +36,105 @@ const _white = new THREE.Color(1, 1, 1);
 
 let _uid = 1;
 
+/** Authored boss-death time dilation by graphics tier. */
+export function bossDeathBeat(tier = 'high') {
+  // On browser-friendly tiers a time-scale drop is visually identical to the
+  // stutter the player is trying to avoid. The flash, dissolve and camera
+  // shake already sell the kill, so reserve a short flourish for opt-in tiers.
+  if (tier === 'low' || tier === 'med') return null;
+  return tier === 'ultra' ? { scale: 0.70, duration: 0.36 } : { scale: 0.76, duration: 0.28 };
+}
+
+/** Additive body dissolves are an opt-in visual tier, never a browser floor. */
+export function usesAdditiveDeathDissolve(tier = 'high') {
+  return tier === 'high' || tier === 'ultra';
+}
+
+/** One stable parameter set means every per-enemy clone shares program keys. */
+export function makeDeathDissolveMaterial(color = '#8ef0d0') {
+  return new THREE.MeshBasicMaterial({
+    color: new THREE.Color(color),
+    transparent: true, blending: THREE.AdditiveBlending,
+    depthWrite: false, toneMapped: false, fog: false,
+  });
+}
+
+/** Dispose a template and the hidden variant records that keep programs hot. */
+export function disposeDeathDissolveMaterial(material) {
+  if (!material) return;
+  const retained = material._deathDissolveWarmMaterials;
+  if (retained) for (const variant of retained) variant.dispose?.();
+  material._deathDissolveWarmMaterials = null;
+  material.dispose?.();
+}
+
+/**
+ * Compile both variants used by the roster before combat: ordinary Mesh for
+ * hounds/bloats and SkinnedMesh for humanoids. compileAsync waits for parallel
+ * driver linking when available; synchronous compile remains a boot-time
+ * fallback. Returns false so callers can disable the shell if warming fails.
+ */
+export async function prewarmDeathDissolve(ctx, material) {
+  const renderer = ctx?.renderer, scene = ctx?.scene, camera = ctx?.camera;
+  if (!renderer || !scene || !camera || !material) return false;
+
+  const positions = [-0.1, 0, 0, 0.1, 0, 0, 0, 0.2, 0];
+  const plainGeo = new THREE.BufferGeometry();
+  plainGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const skinGeo = plainGeo.clone();
+  skinGeo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  ], 4));
+  skinGeo.setAttribute('skinWeight', new THREE.Float32BufferAttribute([
+    1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0,
+  ], 4));
+
+  // Separate material records make compileAsync wait for both program
+  // variants instead of only the last currentProgram assigned to one record.
+  const skinMaterial = material.clone();
+  const plain = new THREE.Mesh(plainGeo, material);
+  const skinned = new THREE.SkinnedMesh(skinGeo, skinMaterial);
+  const bone = new THREE.Bone();
+  skinned.add(bone);
+  const skeleton = new THREE.Skeleton([bone]);
+  skinned.bind(skeleton);
+  const warmRoot = new THREE.Group();
+  warmRoot.name = 'warmup.enemy-death-dissolve';
+  warmRoot.add(plain, skinned);
+
+  let warmed = false;
+  try {
+    if (typeof renderer.compileAsync === 'function') {
+      try {
+        await renderer.compileAsync(warmRoot, camera, scene);
+        warmed = true;
+      } catch (_) {
+        // Some WebGL implementations expose parallel compile but reject it;
+        // the ordinary compiler is still safe here because gameplay has not
+        // started yet.
+        if (typeof renderer.compile === 'function') {
+          renderer.compile(warmRoot, camera, scene);
+          warmed = true;
+        }
+      }
+    } else if (typeof renderer.compile === 'function') {
+      renderer.compile(warmRoot, camera, scene);
+      warmed = true;
+    }
+  } finally {
+    warmRoot.clear();
+    skeleton.dispose?.();
+    plainGeo.dispose();
+    skinGeo.dispose();
+  }
+  // WebGLRenderer releases a cached program when its last material record is
+  // disposed. Keep the skinned variant record alive beside the plain template
+  // or the driver would discard exactly the program this warmup was for.
+  if (warmed) material._deathDissolveWarmMaterials = [skinMaterial];
+  else skinMaterial.dispose();
+  return warmed;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // SHARED-GEOMETRY RIG CLONE
 // ═══════════════════════════════════════════════════════════════════════════
@@ -381,6 +480,7 @@ export class Enemy {
     this._flashT = 0;
     this._leanX = 0; this._leanZ = 0; this._headYaw = 0;
     this._deathT = -1;
+    this._dissolveMat = null;
     this._tellHandle = null;
     this._knock = new THREE.Vector3();
     this._light = null;
@@ -399,6 +499,10 @@ export class Enemy {
     this.root.visible = false;
     ctx.scene.add(this.root);
     this.flashMat = mgr.flashMat;
+    if (mgr.dissolveMaterialTemplate) {
+      this._dissolveMat = mgr.dissolveMaterialTemplate.clone();
+      this._dissolveMat.color.setStyle(this.def.deathColor || '#8ef0d0');
+    }
     if (this.def.brain) this.brain = new Brain(this.def.brain, this);
     return this;
   }
@@ -589,6 +693,10 @@ export class Enemy {
     });
     ctx.events.emit('camera.shake', { amp: this.def.deathShake ?? 0.05, dur: 0.2, freq: 27 });
     ctx.audio?.sfx?.('enemyDeath', { pos: this.position });
+    if (this.def.boss) {
+      const beat = bossDeathBeat(ctx.quality?.tier || 'high');
+      if (beat) ctx.engine?.slowmo?.(beat.scale, beat.duration);
+    }
     if (this.def.onDied) this.def.onDied(this, info, ctx);
   }
 
@@ -646,20 +754,13 @@ export class Enemy {
     // silhouette stays readable for two frames of flash and then becomes the
     // wisps it is shedding.
     if (this.visual.setFlash) {
-      if (!this._dissolveMat) {
-        this._dissolveMat = new THREE.MeshBasicMaterial({
-          color: new THREE.Color(this.def.deathColor || '#8ef0d0'),
-          transparent: true, blending: THREE.AdditiveBlending,
-          depthWrite: false, toneMapped: false, fog: false,
-        });
-      }
       if (k < 0.16) this.visual.setFlash(this.flashMat);
-      else {
+      else if (this._dissolveMat) {
         const m = this._dissolveMat;
         m.opacity = 0.95 * (1 - k) * (1 - k);
         m.color.setStyle(this.def.deathColor || '#8ef0d0').lerp(_white, Math.max(0, 0.55 - k));
         this.visual.setFlash(m);
-      }
+      } else this.visual.setFlash(null);
     }
     if (this.visual.update) this.visual.update(dt * 0.35, this);
     if (k >= 1) { this._deathT = -1; this.despawn(); }

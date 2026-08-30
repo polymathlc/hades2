@@ -40,6 +40,7 @@ import {
 } from './recipes.js';
 import { BakePool } from './bakepool.js';
 import { compositeGeneratedAlbedo, loadGeneratedAlbedos } from './generated-textures.js';
+import { installPrebuilt } from './prebuild-cache.js';
 
 const clamp01 = TG.clamp01;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
@@ -56,6 +57,10 @@ const SHARED_SETS = [
   // every chamber asks for these whatever biome it is, and each one caught
   // blocking the main thread in the sync path is ~0.5s of black screen
   'obsidian', 'lava', 'bone', 'marble.elysium',
+  // Player.init builds these immediately after the material worker batch.
+  // Omitting them forced three synchronous main-thread bakes (119-265 ms in
+  // measured Low→High boots) even though the worker pool was already ready.
+  'characterrig.skin', 'characterrig.cloth', 'characterrig.hair',
   'characterrig.hound.hide', 'characterrig.hound.limbs', 'characterrig.hound.keratin',
   'shrine.divine', 'gold.divine',
 ];
@@ -193,10 +198,17 @@ export class MaterialLibrary {
     for (let i = 0; i < jobs.length; i++) {
       if (!raw[i]) continue;                       // pool failed -> lazy sync bake
       this.stats.cpu += raw[i].cpuMs || 0;
-      this.setCache.set(jobs[i].ck, this._install(raw[i]));
+      // A chamber may have synchronously requested this surface while its
+      // worker job was still in flight. Keep the live cache entry in that
+      // race: installing the late duplicate would leak its textures and
+      // replace materials already bound by the room.
+      installPrebuilt(this.setCache, jobs[i].ck, raw[i], result => this._install(result));
     }
     this.stats.ms += now() - t0;
   }
+
+  /** Begin warming every surface required by a future biome. */
+  prepareBiome(name) { return this.prebuild(this._bootSets(name)); }
 
   /** Turn a bake's raw byte buffers into the cached THREE texture set. */
   _install(b) {

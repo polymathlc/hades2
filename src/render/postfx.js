@@ -55,6 +55,13 @@ export class PostFX {
     this._tmpV = new THREE.Vector3();
     this._tmpV2 = new THREE.Vector3();
     this._tmpC = new THREE.Color();
+    // GPU luminance readback is synchronous. Ten samples per second are more
+    // than enough for the deliberately tiny +/-3% adaptation range and avoid
+    // placing a GPU/CPU fence in every rendered frame.
+    this._meterInterval = 0.10;
+    this._nextMeterAt = -Infinity;
+    this._lastMeterAt = null;
+    this._meterDt = 1 / 60;
     // 1x1 black so a disabled pass never binds an undefined sampler
     this.black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
     this.black.needsUpdate = true;
@@ -709,12 +716,14 @@ export class PostFX {
 
   /**
    * Centre-weighted geometric-mean metering. Runs inside the same render call
-   * that consumes it, so a headless capture is byte-identical every run: there
-   * is no frame-to-frame history to seed.
+   * that consumes it. Live play meters at 10 Hz because readRenderTargetPixels
+   * is a synchronous GPU fence; capture still meters every render so authored
+   * comparisons remain byte-identical.
    */
   _meter(ctx, src){
     const p = this.params.autoExposure;
     if(!p || !p.enabled || !this.lum || !this.lum.length){ this._adapt = 1; return; }
+    if(!this._meterDue(ctx)) return;
     const r = this.renderer;
     this.mLumInit.uniforms.tSrc.value = src.texture;
     this.mLumInit.uniforms.uTexel.value.set(1 / this.W, 1 / this.H);
@@ -737,13 +746,29 @@ export class PostFX {
     // adapt` entirely; keeping it out leaves that value as a real per-biome
     // stop bias applied on top of the adaptation.
     const want = THREE.MathUtils.clamp((p.target ?? 0.050) / Math.max(1e-5, avgL), p.min ?? 0.90, p.max ?? 1.15);
-    if(ctx.capture){
+    if(ctx.CAPTURE){
       this._adapt = want;                       // deterministic: converge instantly
     } else {
-      const dt = Math.min(0.1, (ctx.time && ctx.time.unscaledDt) || 1 / 60);
+      const dt = this._meterDt;
       this._adapt += (want - this._adapt) * (1 - Math.exp(-(p.speed ?? 2.2) * dt));
     }
     this.meteredLuma = avgL;
+  }
+
+  /** Public-by-convention for deterministic performance-contract tests. */
+  _meterDue(ctx){
+    if(ctx?.CAPTURE){ this._meterDt = 1 / 60; return true; }
+    const now = Number(ctx?.time?.unscaledT);
+    // A host without a monotonic clock is safer metering than silently never
+    // updating, though the real Engine always publishes unscaledT.
+    if(!Number.isFinite(now)){ this._meterDt = 1 / 60; return true; }
+    if(now + 1e-9 < this._nextMeterAt) return false;
+    const fallback = Number(ctx?.time?.unscaledDt) || 1 / 60;
+    this._meterDt = Math.min(0.25, Math.max(fallback,
+      this._lastMeterAt == null ? fallback : now - this._lastMeterAt));
+    this._lastMeterAt = now;
+    this._nextMeterAt = now + this._meterInterval;
+    return true;
   }
 
   _updateLightUV(ctx, cam, lig){

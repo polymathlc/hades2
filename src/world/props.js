@@ -335,8 +335,30 @@ export class Props {
         pos: [p.x, p.y + 0.2, p.z],
         flicker: 0.42, speed: 0.7 + (p.seed ?? 0) * 0.8, kind: 'practical',
       });
-      if (l) this._lights.push(l);
+      this.ownLight(ctx, l);
     }
+  }
+
+  /** Register a borrowed LightRig handle under this chamber's lifecycle. */
+  ownLight(ctx, light) {
+    if (!light) return null;
+    this.ctx = ctx || this.ctx;
+    if (this._lights.indexOf(light) < 0) this._lights.push(light);
+    return light;
+  }
+
+  /** Acquire a transient chamber light that dispose()/clear() will release. */
+  borrowLight(ctx, opts = {}) {
+    const light = ctx?.lighting?.acquireLight?.(opts) || null;
+    return this.ownLight(ctx, light);
+  }
+
+  releaseLights() {
+    const L = this.ctx?.lighting;
+    for (const light of this._lights) {
+      try { L?.releaseLight?.(light); } catch (e) { /* rig may be gone */ }
+    }
+    this._lights.length = 0;
   }
 
   // =========================================================================
@@ -439,9 +461,7 @@ export class Props {
   }
 
   dispose() {
-    const L = this.ctx && this.ctx.lighting;
-    for (const l of this._lights) { try { L && L.releaseLight && L.releaseLight(l); } catch (e) { /* rig may be gone */ } }
-    this._lights.length = 0;
+    this.releaseLights();
     for (const m of this._mats) m.dispose?.();
     for (const g of this._geo) g.dispose?.();
     this._mats.length = 0; this._geo.length = 0;

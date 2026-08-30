@@ -52,6 +52,32 @@ const _s = new THREE.Vector3();
 const _c = new THREE.Color();
 const _up = new THREE.Vector3(0, 1, 0);
 
+/** Upload only the live prefix of a dynamic instance attribute. */
+export function markDynamicRange(attribute, itemCount) {
+  if (!attribute || itemCount <= 0) return;
+  if (attribute.clearUpdateRanges && attribute.addUpdateRange) {
+    attribute.clearUpdateRanges();
+    attribute.addUpdateRange(0, itemCount * attribute.itemSize);
+  }
+  attribute.needsUpdate = true;
+}
+
+/** Earliest 2D segment/circle contact in [0,1], or -1 when it misses. */
+export function segmentCircleTOI(x0, z0, x1, z1, cx, cz, radius) {
+  const dx = x1 - x0, dz = z1 - z0;
+  const fx = x0 - cx, fz = z0 - cz;
+  const a = dx * dx + dz * dz;
+  const rr = radius * radius;
+  if (a <= 1e-12) return fx * fx + fz * fz <= rr ? 0 : -1;
+  if (fx * fx + fz * fz <= rr) return 0;
+  const b = 2 * (fx * dx + fz * dz);
+  const c = fx * fx + fz * fz - rr;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return -1;
+  const t = (-b - Math.sqrt(disc)) / (2 * a);
+  return t >= 0 && t <= 1 ? t : -1;
+}
+
 // ── the streak shader ──────────────────────────────────────────────────────
 // One instanced quad per ribbon segment. Each instance carries the segment's
 // two world endpoints plus the ribbon width and value at EACH end, and the
@@ -132,6 +158,21 @@ export class ProjectileSystem {
     this.live = [];
     this._seq = 1;
     this.count = 0;
+    // Reused by every projectile step. Contacts are insertion-sorted by time
+    // of impact so a non-piercing bolt cannot hit a farther target merely
+    // because that target appeared first in the entity array.
+    this._contactIndices = new Int32Array(MAX);
+    this._contactTimes = new Float64Array(MAX);
+  }
+
+  _ensureContactCapacity(n) {
+    if (n <= this._contactIndices.length) return;
+    let cap = this._contactIndices.length || MAX;
+    while (cap < n) cap *= 2;
+    // This is exceptional capacity growth, not a per-step allocation. MAX
+    // already exceeds the normal simultaneous-enemy budget.
+    this._contactIndices = new Int32Array(cap);
+    this._contactTimes = new Float64Array(cap);
   }
 
   init(ctx, combat) {
@@ -479,6 +520,8 @@ export class ProjectileSystem {
         continue;
       }
 
+      const prevX = p.x, prevY = p.y, prevZ = p.z;
+
       // ── integrate ──────────────────────────────────────────────────────
       if (p.kind === 4) {                                   // orbit
         p.orbA += p.orbW * dt;
@@ -537,39 +580,89 @@ export class ProjectileSystem {
       // Central cover is intentional ranged counterplay. Check every step so
       // fast rail bolts cannot tunnel through a thin stele between odd frames.
       if (p.solid && world && world.collide) {
-        _v.set(p.x, p.y, p.z);
-        world.collide(_v, p.radius);
-        if (Math.abs(_v.x - p.x) > 1e-4 || Math.abs(_v.z - p.z) > 1e-4) {
+        const endX = p.x, endY = p.y, endZ = p.z;
+        const sx = endX - prevX, sz = endZ - prevZ;
+        const travel = Math.hypot(sx, sz);
+        // Sampling spacing stays below the diameter of the projectile. A
+        // zero-width blocker expanded by collide(pos, radius) therefore cannot
+        // fit between samples. The 0.18 m ceiling makes a
+        // 42 m/s rail shot cost four checks at 60 Hz, not a new hot-path spike.
+        const stride = Math.max(0.035, Math.min(0.18, p.radius * 1.5));
+        const samples = Math.max(1, Math.ceil(travel / stride));
+        let hitWorld = false, sampleX = endX, sampleZ = endZ;
+        for (let s = 1; s <= samples; s++) {
+          const k = s / samples;
+          sampleX = prevX + sx * k; sampleZ = prevZ + sz * k;
+          _v.set(sampleX, prevY + (endY - prevY) * k, sampleZ);
+          world.collide(_v, p.radius);
+          if (Math.abs(_v.x - sampleX) > 1e-4 || Math.abs(_v.z - sampleZ) > 1e-4) {
+            p.x = _v.x; p.y = _v.y; p.z = _v.z; hitWorld = true;
+            break;
+          }
+        }
+        if (hitWorld) {
           if (p.bounces > 0) {
             p.bounces--;
-            const nx = _v.x - p.x, nz = _v.z - p.z;
+            const nx = _v.x - sampleX, nz = _v.z - sampleZ;
             const nl = Math.hypot(nx, nz) || 1;
             const d = (p.vx * nx / nl + p.vz * nz / nl);
             p.vx -= 2 * d * nx / nl; p.vz -= 2 * d * nz / nl;
-            p.x = _v.x; p.z = _v.z;
             this._wallFx(p, nx / nl, nz / nl);
-          } else { p.x = _v.x; p.z = _v.z; this._explode(p, targets); continue; }
+          } else { this._explode(p, targets); continue; }
         }
       }
 
       // ── entity hits ────────────────────────────────────────────────────
       const n = targets.length;
+      this._ensureContactCapacity(n);
+      let contacts = 0;
       for (let j = 0; j < n; j++) {
         const e = targets[j];
         if (!e || e.dead || e.alive === false || !e.position || e === p.source || e === p._lastHit) continue;
         const t = this.combat.hitboxes.teamOf(e);
         if (!(t & p.mask)) continue;
-        const ey1 = e.position.y + (e.height || 1.8);
-        if (p.y < e.position.y - 0.3 || p.y > ey1 + 0.3) continue;
-        const dx = e.position.x - p.x, dz = e.position.z - p.z;
         const rr = p.radius + (e.radius || 0.5);
-        if (dx * dx + dz * dz > rr * rr) continue;
+        const hitT = segmentCircleTOI(prevX, prevZ, p.x, p.z, e.position.x, e.position.z, rr);
+        if (hitT < 0) continue;
+        const hitY = prevY + (p.y - prevY) * hitT;
+        const ey1 = e.position.y + (e.height || 1.8);
+        if (hitY < e.position.y - 0.3 || hitY > ey1 + 0.3) continue;
 
+        // Stable insertion sort into reusable typed scratch. Most steps have
+        // zero or one contact, while piercing shots still resolve near-to-far.
+        let at = contacts;
+        while (at > 0 && this._contactTimes[at - 1] > hitT) {
+          this._contactTimes[at] = this._contactTimes[at - 1];
+          this._contactIndices[at] = this._contactIndices[at - 1];
+          at--;
+        }
+        this._contactTimes[at] = hitT;
+        this._contactIndices[at] = j;
+        contacts++;
+      }
+
+      const endX = p.x, endY = p.y, endZ = p.z;
+      for (let j = 0; j < contacts; j++) {
+        const e = targets[this._contactIndices[j]];
+        // An earlier piercing contact can kill another queued target through
+        // chained effects. Do not resolve a now-invalid or newly-friendly hit.
+        if (!e || e.dead || e.alive === false || !e.position || e === p.source || e === p._lastHit) continue;
+        if (!(this.combat.hitboxes.teamOf(e) & p.mask)) continue;
+        const hitT = this._contactTimes[j];
+        const hitX = prevX + (endX - prevX) * hitT;
+        const hitY = prevY + (endY - prevY) * hitT;
+        const hitZ = prevZ + (endZ - prevZ) * hitT;
+        p.x = hitX; p.y = hitY; p.z = hitZ;
+        const dx = e.position.x - hitX, dz = e.position.z - hitZ;
         const dl = Math.hypot(dx, dz) || 1;
         this.combat.projectileHit(p, e, dx / dl, dz / dl);
         if (p.lodgedTarget) { p.hits++; p._lastHit = e; break; }
+        if (!p.alive) break;
         p.hits++; p._lastHit = e;
         if (p.hits >= p.pierce) { this._explode(p, targets); break; }
+        // A piercing bolt continues to its integrated endpoint after resolving
+        // this contact; subsequent targets use the same swept step.
+        p.x = endX; p.y = endY; p.z = endZ;
       }
     }
     this.count = this.live.length;
@@ -679,11 +772,19 @@ export class ProjectileSystem {
     this.coreMesh.count = ci;
     this.glowMesh.count = gi;
     this.ribMesh.count = ri;
-    if (ci) { this.coreMesh.instanceMatrix.needsUpdate = true; this.coreMesh.instanceColor.needsUpdate = true; }
-    if (gi) { this.glowMesh.instanceMatrix.needsUpdate = true; this.glowMesh.instanceColor.needsUpdate = true; }
+    // WebGLAttributes otherwise uploads each maximum-sized buffer (including
+    // all 3,072 possible ribbon segments) even when only one bolt is alive.
+    if (ci) {
+      markDynamicRange(this.coreMesh.instanceMatrix, ci);
+      markDynamicRange(this.coreMesh.instanceColor, ci);
+    }
+    if (gi) {
+      markDynamicRange(this.glowMesh.instanceMatrix, gi);
+      markDynamicRange(this.glowMesh.instanceColor, gi);
+    }
     if (ri) {
-      this._ribA.needsUpdate = true; this._ribB.needsUpdate = true;
-      this._ribCol.needsUpdate = true; this._ribFade.needsUpdate = true; this._ribW.needsUpdate = true;
+      markDynamicRange(this._ribA, ri); markDynamicRange(this._ribB, ri);
+      markDynamicRange(this._ribCol, ri); markDynamicRange(this._ribFade, ri); markDynamicRange(this._ribW, ri);
     }
   }
 
