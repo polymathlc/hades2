@@ -9,7 +9,8 @@ import { HomeBase, HOME_ALTAR_POS, HOME_MIRROR_POS, TitanBloodDrop } from '../sr
 import { RunState } from '../src/game/run.js';
 import { Audio } from '../src/audio/index.js';
 import { CONTROL_ROWS } from '../src/core/controls.js';
-import { BIOMES } from '../src/world/biomes.js';
+import { BIOMES, ARCHETYPES } from '../src/world/biomes.js';
+import { World } from '../src/world/chamber.js';
 import { Kit } from '../src/world/kit.js';
 import { Engine } from '../src/core/engine.js';
 import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
@@ -603,6 +604,25 @@ assert.ok(!controlText.includes('debug') && !controlText.includes('map'));
 assert.ok(controlText.includes('approach an arm at home'));
 assert.ok(controlText.includes('view current boons') && controlText.includes('b / tab'));
 assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
+
+// Combat chambers are exactly 50% larger than the preceding arena plans and
+// expose no prop colliders: only the radial boundary may constrain movement.
+{
+  const expected = {
+    rotunda: 24.6, oblong: 25.8, cruciform: 25.8, terrace: 24.0,
+    causeway: 27.3, hypostyle: 24.9, ossuary: 24.6,
+  };
+  for (const [id, radius] of Object.entries(expected)) assert.equal(ARCHETYPES[id].radius, radius, `${id} arena is not 50% larger`);
+  const world = new World();
+  world.bounds.r = 24.6;
+  world.profile.fill(24.6);
+  world.colliders.push({ kind: 'circle', x: 22, z: 0, r: 1 });
+  world._finishColliders(null, {});
+  assert.equal(world.colliders.length, 0, 'decorative arena blockers survived the clear-floor contract');
+  const edge = new THREE.Vector3(40, 0, 0);
+  world.collide(edge, 0.6);
+  assert.ok(edge.x < 24.0 && edge.x > 23.0, 'arena boundary stopped constraining movement');
+}
 
 // Boon decisions expose slot replacement before confirmation, and the same
 // focus path works for keyboard and gamepad instead of trapping pad users.

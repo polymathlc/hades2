@@ -52,11 +52,10 @@ function cdamp(cur, vel, target, smoothTime, dt, maxSpeed = Infinity) {
 // FRAMING (integration pass). Three numbers here decide whether the frame has
 // a composition at all:
 //
-//   distance/fov  — the arena plans were rescaled to ~25m across so the CHAMBER
-//                   fits this lens. 17.5m at fov 38 shows ~21m of width and
-//                   ~13m of height at the player's plane: the colonnade reaches
-//                   both frame edges, the hero is ~1/8 of frame height, and the
-//                   room reads as a room instead of an unbounded floor.
+//   distance/fov  — the camera follows the hero's LOCAL combat field instead
+//                   of trying to show the full 48-55m chamber. This keeps the
+//                   avatar and telegraphs readable while the larger arena can
+//                   extend beyond the frame for flanking and kiting.
 //   lookHeight    — the single most consequential value in the whole rig. At
 //                   1.10 the camera aims at the hero's waist, the horizon sits
 //                   dead centre and BOTH halves of the frame are floor: the

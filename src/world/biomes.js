@@ -252,17 +252,16 @@ export function isBiome(name) { return !!BIOMES[name]; }
  * chamber.js consumes these; biomes.js owns them so a designer can read the
  * whole vocabulary of the game's rooms in one place.
  */
-// ROOM SCALE. The arena now has a genuine combat field rather than a compact
-// presentation disc: common chambers are 32-35m across and the causeway is
-// nearly 37m. Camera, spawn rings, lighting and collision derive from the live
-// bounds, so the extra radius becomes playable flanking and kiting space while
-// the architecture still frames the far side of the screen.
+// ROOM SCALE. Every combat plan is 50% larger than the previous 32-37m field:
+// common chambers are now roughly 48-52m across and the causeway reaches 55m.
+// Camera, spawn rings, lighting and collision derive from these live bounds,
+// so the extra radius becomes real flanking and kiting space.
 export const ARCHETYPES = {
   rotunda: {
     id: 'rotunda',
     title: 'The Rotunda',
     shape: 'circle',
-    radius: 16.4,
+    radius: 24.6,
     doors: 3,
     peristyle: { count: 18, order: 'doric', h: 8.9, gapAtDoors: true },
     wall: { arcs: 'back', height: 5.4, storeys: 2 },
@@ -274,7 +273,7 @@ export const ARCHETYPES = {
     id: 'oblong',
     title: 'The Long Hall',
     shape: 'oblong',
-    radius: 17.2,
+    radius: 25.8,
     aspect: 0.66,
     doors: 2,
     peristyle: { count: 20, order: 'corinthian', h: 8.6, sides: true },
@@ -287,7 +286,7 @@ export const ARCHETYPES = {
     id: 'cruciform',
     title: 'The Cross Chamber',
     shape: 'cruciform',
-    radius: 17.2,
+    radius: 25.8,
     doors: 3,
     peristyle: { count: 12, order: 'doric', h: 7.2, atCorners: true },
     wall: { arcs: 'back', height: 5.0, storeys: 1 },
@@ -299,7 +298,7 @@ export const ARCHETYPES = {
     id: 'terrace',
     title: 'The Raised Dais',
     shape: 'circle',
-    radius: 16.0,
+    radius: 24.0,
     doors: 2,
     peristyle: { count: 16, order: 'corinthian', h: 8.8 },
     wall: { arcs: 'back', height: 6.4, storeys: 2 },
@@ -311,7 +310,7 @@ export const ARCHETYPES = {
     id: 'causeway',
     title: 'The Causeway',
     shape: 'causeway',
-    radius: 18.2,
+    radius: 27.3,
     aspect: 0.42,
     doors: 2,
     peristyle: { count: 14, order: 'doric', h: 6.8, sides: true },
@@ -325,7 +324,7 @@ export const ARCHETYPES = {
     id: 'hypostyle',
     title: 'The Pillared Hall',
     shape: 'rounded-square',
-    radius: 16.6,
+    radius: 24.9,
     doors: 3,
     peristyle: { count: 16, order: 'corinthian', h: 9.2, grid: true },
     wall: { arcs: 'back', height: 6.8, storeys: 2 },
@@ -337,7 +336,7 @@ export const ARCHETYPES = {
     id: 'ossuary',
     title: 'The Ossuary Shelf',
     shape: 'lobed',
-    radius: 16.4,
+    radius: 24.6,
     doors: 2,
     peristyle: { count: 12, order: 'doric', h: 6.4, ruined: true },
     wall: { arcs: 'back', height: 4.6, storeys: 1, ruined: true },

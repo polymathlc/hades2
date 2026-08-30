@@ -246,7 +246,7 @@ export class Spawner {
     // the sides so nothing materialises directly in the hero's blind spot
     const base = this.rng.range(0, TAU);
     const a = base + (index / Math.max(1, count)) * TAU * 0.86;
-    const ring = clamp(R * 0.66, 7.4, 16.2) + this.rng.range(-1.5, 1.5);
+    const ring = clamp(R * 0.68, 9.0, 23.5) + this.rng.range(-1.8, 1.8);
     const x = Math.cos(a) * ring, z = Math.sin(a) * ring;
     const e = this.mgr.spawn(kind, { x, z }, {
       depth: this.depth, wave: this.wave, minPlayerDist: 6.0,
