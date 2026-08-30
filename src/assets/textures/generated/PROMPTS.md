@@ -1,8 +1,8 @@
 # Generated texture atlas prompts
 
-These four project-bound atlases were produced with the built-in OpenAI image-generation tool.
+These nine project-bound atlases were produced with the built-in OpenAI image-generation tool.
 Every prompt requested an exact 3-column by 2-row, 1536×1024 atlas. At runtime, the game slices
-the 512×512 cells, closes opposite seams, and maps them to all 30 named material recipes.
+the 512×512 cells, closes opposite seams, and maps them to the named material recipes.
 
 ## Tartarus atlas
 
@@ -16,6 +16,51 @@ Color palette: #07060f, #120b1e, #241238, #3a1d52, #ff5a3c, #8c3b46, #5a2331, #2
 Materials/textures: deliberate directional strokes, value variation within each material, darkened crevices, hand-painted highlights, consistent texel density.
 Constraints: no text, no symbols, no UI, no border, no separator lines, no watermark, no logos, no objects casting shadows, no single focal object. Keep every tile edge-to-edge and seamless; preserve an exact 3 columns by 2 rows layout.
 Avoid: photoreal grunge, generic noise, muddy brown, neutral gray shadows, visible repetition, perspective, vignette, scene lighting.
+```
+
+## Hephaestus, forge and divine gates v6 atlas
+
+Reference image: `god-portraits-v1.jpg` was used only to match the portrait cell's painterly mythic visual language. The generated output is stored as `hephaestus-forge-gates-v6-atlas.png`.
+
+```text
+Use the supplied 5x2 Greek deity portrait atlas only as the visual style reference for the portrait cell: painterly mythic game art, strong readable silhouette, dramatic rim light, rich but controlled color, and no copied character.
+
+Create one exact 3-column by 2-row game asset atlas, landscape 3:2 overall, with six equal square cells aligned edge-to-edge.
+
+Top-left: a head-and-shoulders portrait of Hephaestus, Greek god of the forge, mature powerful craftsman, soot-dark hair and beard, bronze-and-iron laurel, warm ember light from below, cool steel rim light, subtle hammer-and-anvil motif behind him, dignified and distinct from Ares, centered face, painterly mythic action-game portrait matching the supplied reference atlas.
+Top-middle: seamless Crossroads carved blue-black slate surface with restrained Greek meander relief, worn edges, pale mineral veins, high readability, low visual noise.
+Top-right: seamless divine gate surface of aged dark bronze and black stone, radial engraved channels and small neutral medallion sockets suitable for overlaying a god emblem in code, no built-in deity logo.
+Bottom-left: seamless forge-blackened hammered iron, blue-steel highlights, soot, shallow dents, readable roughness.
+Bottom-middle: seamless molten bronze and ember-cracked volcanic surface, warm glowing fissures but mostly dark solid material, controlled bloom.
+Bottom-right: seamless tempered steel weapon-inlay surface, layered folded-metal grain, bronze rivets, faint ember seams and celestial blue accents.
+
+Composition constraints: exact equal cells, no gutters, no borders, no frames, no labels, no letters, no numbers, no watermark, no perspective floor planes. Only the top-left cell contains a person; the other five are flat front-facing tileable material swatches. Keep all important portrait details well inside its cell so atlas cropping is safe.
+```
+
+## Tartarus materials v2 atlas
+
+Image 1 was the live-game screenshot supplied as a visual reference for palette, materials, and
+on-screen texel scale only; the generated deliverable is a new flat material atlas, not an edit.
+
+```text
+Use case: stylized-concept
+Asset type: exact 3-column by 2-row game texture atlas containing six seamless square albedo textures
+Input images: Image 1 is a visual reference for the current Tartarus game scene, palette, materials, and on-screen scale only; do not recreate the scene.
+Primary request: Generate a darker, richer second-pass Tartarus material atlas that adds clearly readable surface texture without the fluorescent orange/purple clipping visible in earlier versions.
+Composition/framing: one exact 3:2 landscape atlas, three equal square cells across and two equal square cells down, crisp cell boundaries, no gutters, no frames, no labels, each cell filled edge-to-edge and designed to tile seamlessly on all four edges.
+Top row left-to-right:
+1. ancient near-black oxblood flagstone floor, irregular Greek masonry joints, broad worn brush variation, sparse dried-ichor staining, restrained plum undertones;
+2. carved dark bloodstone architecture, deep chisel cuts, shallow Greek meander and palmette relief distributed evenly, charcoal-crimson faces and muted violet recesses;
+3. weathered underworld guardian-statue stone surface only, smoky black marble with fine age cracks, rubbed edges and sparse dull bronze mineral veins, no creature or sculpture.
+Bottom row left-to-right:
+4. blackened hammered bronze brazier metal, soot-dark body, small worn-gold edge flecks, subtle old verdigris collected in pits;
+5. charred ancient timber, long hand-adzed grain, split fibers, deep umber-black and plum shadows, restrained warm worn ridges;
+6. Tartarus rubble stone, broken crimson-black aggregate, chipped planes, bone dust and dark mortar, evenly distributed with no focal rock.
+Style/medium: hand-painted mythic action-game texture, confident directional brushwork, readable at an isometric gameplay camera, tactile material separation, rich dark values with selective midtone detail; not photographic and not flat vector art.
+Lighting/mood: neutral material reference lighting only; no baked spotlight, no glow, no volumetric rays, no vignette.
+Color palette: ink black #08070d, charcoal plum #18121f, muted oxblood #4b202a, dark crimson #6d2935, restrained bronze #8d6936, worn gold #c8a45c, subtle verdigris #3f746c.
+Constraints: surfaces only; exact 3-by-2 grid; every cell is a square; seamless edges; no text, no UI, no border, no separator line, no watermark, no logos, no isolated objects, no cast shadows, no scene perspective, no bright orange fields, no electric violet fields.
+Avoid: fluorescent colors, near-white highlights, generic noisy grunge, obvious repetition, perspective, baked directional lighting, large motifs, characters, statues, braziers, logs, or rubble objects—the cells must remain flat material swatches.
 ```
 
 ## Asphodel and Elysium atlas
@@ -57,3 +102,68 @@ Constraints: surfaces only—no faces, eyes, hair silhouettes, hands, bodies, ga
 Avoid: photoreal skin pores, body parts, cloth folds forming clothing, generic noise, muddy brown, neutral gray shadows, perspective, vignette, scene lighting.
 ```
 
+## Creatures and props v3 atlas
+
+Image 1 was the live-game screenshot supplied as a visual reference for palette, materials, and
+on-screen texel scale only; the generated deliverable is a new flat material atlas, not an edit.
+
+```text
+Use case: stylized-concept
+Asset type: exact 3-column by 2-row game texture atlas containing six seamless square albedo textures.
+Input images: Image 1 is a visual reference for the current live Tartarus scene, its dark oxblood/blackened-bronze palette, painterly material language, and isometric gameplay texel scale only. Do not recreate or edit the scene.
+Primary request: Generate a focused third-pass texture atlas that upgrades the Ember Hound enemies and the weakest Tartarus props while remaining dark, tactile, and non-emissive.
+Composition/framing: one exact 3:2 landscape atlas, three equal square cells across and two equal square cells down, crisp cell boundaries, no gutters, no frames, no labels, every cell filled edge-to-edge and designed to tile seamlessly on all four edges.
+Top row left-to-right:
+1. Ember Hound body hide: short coarse oxblood-black fur over scarred leathery skin, broad directional brush clumps, charcoal recesses, restrained burnt-crimson ridges, no glow;
+2. Ember Hound lower-limb hide: near-black soot fur with long downward strands, worn dark-red hock patches, subtle dusty paws, no body parts or silhouette;
+3. Ember Hound horn and spine keratin: layered smoky-black horn grain with aged ivory edge wear and sparse muted bronze cracks, no isolated horns.
+Bottom row left-to-right:
+4. Tartarus amphora and censer ceramic: dark fired clay with uneven hand-painted oxblood slip, fine crazing, soot in pores, sparse worn geometric brush marks distributed evenly;
+5. Tartarus blackened forged iron: blue-black hammer marks, deep plum oxidation, tiny restrained rusty edge wear, extremely low reflectance, no bright metal;
+6. Tartarus ancient timber: charred umber-black hand-adzed grain, split fibers, old crimson resin staining, muted worn ridges.
+Style/medium: premium hand-painted mythic action-game material art, confident directional brushwork, readable at an isometric gameplay camera, simplified macro detail with tactile micro detail, rich dark values and selective muted midtone accents; not photographic, not flat vector.
+Lighting/mood: neutral material reference lighting only, even exposure; no baked spotlight, no glow, no flame, no volumetric rays, no vignette.
+Color palette: ink black #08070d, charcoal plum #18121f, deep oxblood #4b202a, dark crimson #6d2935, soot brown #2b1b1b, muted ivory #b9aa8e, restrained bronze #79613a, subtle cold iron #26313b.
+Constraints: flat material surfaces only; exact 3-by-2 grid; every cell square; seamless edges; no text, UI, border, separator line, watermark, logos, isolated objects, cast shadows, scene perspective, characters, dogs, body parts, amphora objects, chains, logs, bright orange fields, electric violet fields, or near-white highlights.
+Avoid: fluorescent color, generic noisy grunge, obvious repetition, perspective, baked directional lighting, large focal motifs, glossy plastic, emissive edges.
+```
+
+## Expanded arena and divine boons v4 atlas
+
+```text
+Use case: stylized-concept
+Asset type: exact 3-column by 2-row game texture atlas containing six seamless square albedo textures for a larger mythic underworld arena and divine boon architecture.
+Primary request: Create a fourth-pass material atlas for EREBUS — Descent. The arena is being enlarged, so every surface needs broad, readable macro variation that will not look repetitive across a 35-metre play space. The lower row supplies distinct crafted surfaces for shrine and boon-door geometry.
+Composition/framing: one exact 3:2 landscape atlas, three equal square cells across and two equal square cells down, crisp cell boundaries, no gutters, no frames, no labels; every cell filled edge-to-edge and designed to tile seamlessly on all four edges.
+Top row left-to-right:
+1. expanded Tartarus arena floor: very dark oxblood-black irregular Greek flagstones, varied slab scale, broad soot and dried-ichor sweeps, thin charcoal-plum joints, restrained warm worn edges;
+2. monumental arena rim masonry: near-black bloodstone blocks with chipped curb edges, deep mortar, sparse dull bronze mineral seams and broad hand-painted value shifts;
+3. divine shrine stone: charcoal-plum volcanic stone with shallow distributed laurel, starburst, crescent, wave, and thunder relief fragments, worn and partially erased so no single god dominates.
+Bottom row left-to-right:
+4. divine door gold: blackened hammered gold and bronze leaf, repeated small laurel and meander chasing, dark oxidized recesses, restrained sharp worn-gold flecks;
+5. expanded Asphodel floor: charred basalt paving, irregular cracked plates, ember-red hairline seams with large calm black fields, no glowing lava pools;
+6. expanded Elysium floor: aged warm ivory marble paving, irregular large slabs, muted lavender veins, sparse worn laurel-green and old-gold inlay fragments.
+Style/medium: premium hand-painted mythic action-game texture, bold directional brushwork, simplified macro forms readable from an isometric camera, tactile micro detail, ink-dark colored crevices, rich controlled values; not photographic, not flat vector.
+Lighting/mood: neutral material-reference lighting only and even exposure; no baked spotlight, no glow, no volumetric rays, no vignette.
+Color palette: ink #08070d, charcoal plum #18121f, oxblood #4b202a, dark crimson #6d2935, restrained bronze #80663c, worn gold #c3a25b, Asphodel ember #8f2f1d, Elysium ivory #cfc5af, lavender #70657f, laurel #456c55.
+Constraints: flat material surfaces only; exact 3-by-2 grid; every cell square; seamless edges; no text, UI, borders, separator lines, watermark, logos, isolated objects, cast shadows, scene perspective, characters, gods, faces, doors, columns, lightning bolts, waves, or large focal symbols.
+Avoid: fluorescent orange or violet fields, near-white highlights, glossy plastic, generic noisy grunge, obvious repetition, baked directional lighting, photoreal rubble, large motifs.
+```
+
+## Asphodel visibility v5 atlas
+
+```text
+Create one production-ready seamless material texture atlas for a stylized isometric Greek-underworld action game, EXACTLY a 3-column by 2-row grid of six equal rectangular cells, 1536x1024 landscape. Every cell is a flat orthographic square material swatch, edge-to-edge, no perspective, no objects, no lighting direction, no cast shadows, no text, no borders, no gutters, no frames, no labels. Hand-painted dark-fantasy gouache brushwork with restrained detail at gameplay scale, strong material readability, and seamless/tileable opposite edges.
+
+The full palette is visibility-first Asphodel: mid-value charcoal blue-gray and muted slate-plum bases, warm ash-gray joints, sparse ember red and antique gold accents, restrained cool turquoise-gray mineral edges. Avoid near-black large fields and avoid saturated orange covering the surface. Maintain broad quiet midtone areas so white/gold player characters and enemy silhouettes read clearly.
+
+Exact cell order:
+Top-left: readable cooled basalt arena flagstones, broad irregular slabs in charcoal blue-gray, pale warm ash mortar, sparse hairline ember-red cracks, no glowing flood.
+Top-center: carved Asphodel basalt wall masonry, muted slate-plum stone blocks with broad midtone faces, soot-dark recesses, faint Greek meander chisel wear, subtle warm edges.
+Top-right: cooled obsidian architecture and rock, blue-black glassy mineral planes lifted into dark steel midtones, restrained desaturated cyan-gray edge fractures, mostly matte, no mirror reflections.
+Bottom-left: controlled lava surface, deep burgundy and ember-red crust fields with sparse thin molten antique-gold veins, mostly dark calm surface, no white-hot yellow, no bloom.
+Bottom-center: pale volcanic ash, pumice and bone-dust rubble ground, warm gray, taupe and desaturated lavender fragments, broad quiet field, subtle soot, readable against dark floors.
+Bottom-right: blackened Asphodel bronze and forged iron, dark warm-gray metal with hammered brush marks, muted copper wear, restrained cool edge highlights, no bright reflections.
+
+Consistent painterly scale across all cells. Cells must be visually distinct. No creatures, people, faces, skulls, weapons, architecture silhouettes, UI, logos, watermark, letters or numbers. No photorealism, no glossy 3D render, no neon, no purple/orange posterization, no black crush, no overexposure.
+```

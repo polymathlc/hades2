@@ -12,8 +12,9 @@ import {
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
+import { CONTROL_ROWS } from '../core/controls.js';
 
-const QUALITY = ['low', 'med', 'high', 'ultra'];
+const QUALITY = ['auto', 'low', 'med', 'high', 'ultra'];
 
 export class Menus {
   constructor(ui) {
@@ -24,7 +25,10 @@ export class Menus {
     this.sel = 0;
     this.hit = [];                 // [{x,y,w,h,act,i}]
     this.settingsOpen = false;
-    this.settings = { quality: 'high', master: 0.8, music: 0.7, sfx: 0.9, shake: true };
+    this.controlsOpen = false;
+    this.boonsOpen = false;
+    this.boonSel = 0;
+    this.settings = { quality: 'auto', master: 0.8, music: 0.7, sfx: 0.9, shake: true };
     this.summary = { depth: 1, biome: 'tartarus', kills: 0, damage: 0, time: 0, boons: [], killedBy: 'the Underworld' };
   }
 
@@ -34,17 +38,19 @@ export class Menus {
     this.t0 = this.ui.now();
     this.sel = 0;
     this.settingsOpen = false;
+    this.controlsOpen = false;
+    this.boonsOpen = false;
     this.ui.dirty = true;
   }
 
   get modal() { return this.screen === 'title' || this.screen === 'pause' || this.screen === 'death' || this.screen === 'victory'; }
 
   items() {
-    if (this.settingsOpen) return [{ label: 'Back', act: 'back' }];
+    if (this.settingsOpen || this.controlsOpen || this.boonsOpen) return [{ label: 'Back', act: 'back' }];
     switch (this.screen) {
-      case 'title': return [{ label: 'Descend', act: 'start' }, { label: 'Settings', act: 'settings' }, { label: 'Credits', act: 'credits' }];
-      case 'pause': return [{ label: 'Resume', act: 'resume' }, { label: 'Settings', act: 'settings' }, { label: 'Abandon Run', act: 'abandon' }];
-      case 'death': return [{ label: 'Rise Again', act: 'start' }, { label: 'Settings', act: 'settings' }];
+      case 'title': return [{ label: 'Descend', act: 'start' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }, { label: 'Credits', act: 'credits' }];
+      case 'pause': return [{ label: 'Resume', act: 'resume' }, { label: 'Current Boons', act: 'boons' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }, { label: 'Abandon Run', act: 'abandon' }];
+      case 'death': return [{ label: 'Rise Again', act: 'start' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }];
       case 'victory': return [{ label: 'Descend Again', act: 'start' }];
       default: return [];
     }
@@ -53,8 +59,10 @@ export class Menus {
   activate(act) {
     const ui = this.ui;
     switch (act) {
-      case 'settings': this.settingsOpen = true; this.sel = 0; break;
-      case 'back': this.settingsOpen = false; this.sel = 0; break;
+      case 'settings': this.settingsOpen = true; this.controlsOpen = false; this.boonsOpen = false; this.sel = 0; break;
+      case 'controls': this.controlsOpen = true; this.settingsOpen = false; this.boonsOpen = false; this.sel = 0; break;
+      case 'boons': this.boonsOpen = true; this.settingsOpen = false; this.controlsOpen = false; this.boonSel = 0; this.sel = 0; break;
+      case 'back': this.settingsOpen = false; this.controlsOpen = false; this.boonsOpen = false; this.sel = 0; break;
       case 'resume': ui.screen('game'); break;
       case 'start': ui.screen('game'); ui.ctx?.events?.emit?.('run.start', {}); break;
       case 'abandon': ui.screen('title'); ui.ctx?.events?.emit?.('run.abandon', {}); break;
@@ -65,6 +73,12 @@ export class Menus {
   }
 
   key(dir) {
+    if (this.boonsOpen) {
+      const n = this.ui.ctx?.boons?.list?.().length || 0;
+      if (n) this.boonSel = (this.boonSel + dir + n) % n;
+      this.ui.dirty = true;
+      return;
+    }
     const n = this.items().length + (this.settingsOpen ? 5 : 0);
     if (!n) return;
     this.sel = (this.sel + dir + n) % n;
@@ -74,7 +88,11 @@ export class Menus {
   click(x, y) {
     for (const h of this.hit) {
       if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) {
-        if (h.act === 'setting') this._bump(h.key, 1);
+        if (h.act === 'boon-select') { this.boonSel = h.boonIndex; this.ui.dirty = true; }
+        else if (h.act === 'setting') {
+          if (h.kind === 'slider' && h.sliderW && x >= h.sliderX && x <= h.sliderX + h.sliderW) this._setVolume(h.key, clamp01((x - h.sliderX) / h.sliderW));
+          else this._bump(h.key, 1);
+        }
         else this.activate(h.act);
         return true;
       }
@@ -85,7 +103,11 @@ export class Menus {
   move(x, y) {
     for (let i = 0; i < this.hit.length; i++) {
       const h = this.hit[i];
-      if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) { if (this.sel !== h.i) { this.sel = h.i; this.ui.dirty = true; } return; }
+      if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) {
+        if (h.boonIndex != null) { if (this.boonSel !== h.boonIndex) { this.boonSel = h.boonIndex; this.ui.dirty = true; } }
+        else if (this.sel !== h.i) { this.sel = h.i; this.ui.dirty = true; }
+        return;
+      }
     }
   }
 
@@ -94,6 +116,13 @@ export class Menus {
     if (key === 'quality') { const i = QUALITY.indexOf(s.quality); s.quality = QUALITY[(i + d + QUALITY.length) % QUALITY.length]; this.ui.ctx?.events?.emit?.('quality.request', { tier: s.quality }); }
     else if (key === 'shake') { s.shake = !s.shake; this.ui.ctx?.events?.emit?.('settings.shake', { on: s.shake }); }
     else { s[key] = Math.round(((s[key] + 0.1 * d) % 1.05) * 10) / 10; if (s[key] < 0) s[key] = 1; this.ui.ctx?.events?.emit?.('settings.volume', { channel: key, value: s[key] }); }
+    this.ui.dirty = true;
+  }
+
+  _setVolume(key, value) {
+    if (!['master', 'music', 'sfx'].includes(key)) return;
+    this.settings[key] = Math.round(clamp01(value) * 100) / 100;
+    this.ui.ctx?.events?.emit?.('settings.volume', { channel: key, value: this.settings[key] });
     this.ui.dirty = true;
   }
 
@@ -149,7 +178,8 @@ export class Menus {
     laurel(g, cx, ty + size * 0.36, size * 1.55, { side: -1, leaves: 13, from: Math.PI * 0.50, to: Math.PI * 0.06, leafLen: 0.16 });
     g.restore();
 
-    if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.52);
+    if (this.controlsOpen) this._controls(g, W, H, S, t, H * 0.49, Math.min(650 * S, W * 0.78));
+    else if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.52);
     else this._menu(g, W, H, S, t, H * 0.62, a);
 
     g.save(); g.globalAlpha = a * 0.5;
@@ -163,7 +193,8 @@ export class Menus {
   _panelScreen(g, W, H, S, t, age, title, sub) {
     const a = ease.out(clamp01(age / 0.35));
     this._scrim(g, W, H, a);
-    const w = 460 * S, h = (this.settingsOpen ? 400 : 330) * S;
+    const w = (this.boonsOpen ? 1040 : this.controlsOpen ? 700 : 460) * S;
+    const h = (this.boonsOpen ? 620 : this.controlsOpen ? 520 : this.settingsOpen ? 400 : 360) * S;
     const x = (W - w) / 2, y = (H - h) / 2 + (1 - a) * -16 * S;
     g.save(); g.globalAlpha = a;
     frame(g, {
@@ -172,7 +203,8 @@ export class Menus {
       sweep: (t * 0.2) % 1, glowAlpha: 0.26,
       fill: { top: '#1c1229', mid: '#120b1e', bot: '#0a0612' },
     });
-    tracked(g, title.toUpperCase(), W / 2, y + 62 * S, {
+    const panelTitle = this.boonsOpen ? 'Current Boons' : title;
+    tracked(g, panelTitle.toUpperCase(), W / 2, y + 62 * S, {
       size: 27 * S, track: 0.26, weight: 700, align: 'center', gold: true, sweep: (t * 0.2) % 1,
       shadow: '#06030c', shadowDy: 3 * S,
     });
@@ -181,7 +213,9 @@ export class Menus {
     rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(0.5, rgba(PAL.gold, 0.65)); rg.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = rg; g.fillRect(W / 2 - rw / 2, y + 76 * S, rw, Math.max(1, 1.2 * S));
     g.restore();
-    if (this.settingsOpen) this._settings(g, W, H, S, t, y + 110 * S, w - 90 * S);
+    if (this.boonsOpen) this._boonArchive(g, W, H, S, t, x + 34 * S, y + 96 * S, w - 68 * S, h - 128 * S);
+    else if (this.controlsOpen) this._controls(g, W, H, S, t, y + 108 * S, w - 76 * S);
+    else if (this.settingsOpen) this._settings(g, W, H, S, t, y + 110 * S, w - 90 * S);
     else this._menu(g, W, H, S, t, y + 130 * S, a);
   }
 
@@ -242,7 +276,8 @@ export class Menus {
     }
     g.restore();
 
-    if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.66);
+    if (this.controlsOpen) this._controls(g, W, H, S, t, H * 0.57, Math.min(650 * S, W * 0.78));
+    else if (this.settingsOpen) this._settings(g, W, H, S, t, H * 0.66);
     else this._menu(g, W, H, S, t, H * 0.70, a);
   }
 
@@ -276,11 +311,58 @@ export class Menus {
   }
 
   // ═══════════════════════════════════════════════════════ SETTINGS ═══════
+  _boonArchive(g, W, H, S, t, x, y, w, h) {
+    const records = [...(this.ui.ctx?.boons?.list?.() || [])].sort((a, b) => {
+      const order = { attack: 0, special: 1, cast: 2, dash: 3, call: 4, passive: 5, forge: 6 };
+      return (order[a.slot] ?? 9) - (order[b.slot] ?? 9) || String(a.boon?.name || '').localeCompare(String(b.boon?.name || ''));
+    });
+    if (!records.length) {
+      tracked(g, 'NO BOONS CLAIMED THIS DESCENT', W / 2, y + h * .42, { size: 15 * S, track: .25, weight: 700, align: 'center', color: rgba(PAL.parchDim, .65) });
+      tracked(g, 'PASS THROUGH A GOD GATE TO BEGIN YOUR BUILD', W / 2, y + h * .42 + 28 * S, { size: 9 * S, track: .18, weight: 600, align: 'center', color: rgba(PAL.goldHi, .7), font: bodyFont() });
+      this._menu(g, W, H, S, t, y + h - 4 * S, 1, 0);
+      return;
+    }
+    this.boonSel = Math.max(0, Math.min(records.length - 1, this.boonSel));
+    const leftW = w * .48, gap = 22 * S, rightX = x + leftW + gap, rightW = w - leftW - gap;
+    const visible = 10, start = Math.max(0, Math.min(records.length - visible, this.boonSel - 4));
+    const rowH = Math.min(40 * S, (h - 58 * S) / visible);
+    tracked(g, `CURRENT BUILD · ${records.length} BOON${records.length === 1 ? '' : 'S'}`, x, y + 12 * S, { size: 10 * S, track: .22, weight: 700, align: 'left', color: rgba(PAL.goldHi, .86) });
+    for (let j = 0; j < Math.min(visible, records.length - start); j++) {
+      const i = start + j, rec = records[i], boon = rec.boon || rec, info = GOD_INFO[rec.god] || GOD_INFO.zeus;
+      const ry = y + 27 * S + j * rowH, on = i === this.boonSel;
+      plaqueRect(g, x, ry, leftW, rowH - 4 * S, 5 * S);
+      g.fillStyle = on ? rgba(info.color, .20) : rgba('#090611', .64); g.fill();
+      g.strokeStyle = on ? rgba(info.color, .95) : rgba(PAL.bronze, .34); g.lineWidth = (on ? 1.5 : .8) * S; g.stroke();
+      godEmblem(g, x + 19 * S, ry + (rowH - 4 * S) / 2, 10 * S, rec.god, { glowA: on ? .35 : .14, glowR: 1.6 });
+      tracked(g, String(boon.name || 'Boon').toUpperCase(), x + 38 * S, ry + 15 * S, { size: 10.4 * S, track: .11, weight: 700, align: 'left', color: on ? '#fff0c6' : rgba(PAL.parch, .76) });
+      tracked(g, `${String(rec.slot || 'passive').toUpperCase()} · ${String(rec.rarity || 'common').toUpperCase()} · LV ${rec.level || 1}`, x + 38 * S, ry + 29 * S, { size: 7.2 * S, track: .13, weight: 600, align: 'left', color: RARITY[rec.rarity]?.text || info.color, font: bodyFont() });
+      this.hit.push({ x, y: ry, w: leftW, h: rowH - 4 * S, act: 'boon-select', boonIndex: i });
+    }
+    if (start > 0) tracked(g, '▲ MORE', x + leftW - 6 * S, y + 15 * S, { size: 7.5 * S, track: .15, weight: 700, align: 'right', color: rgba(PAL.parchDim, .65) });
+    if (start + visible < records.length) tracked(g, '▼ MORE', x + leftW - 6 * S, y + h - 22 * S, { size: 7.5 * S, track: .15, weight: 700, align: 'right', color: rgba(PAL.parchDim, .65) });
+
+    const rec = records[this.boonSel], boon = rec.boon || rec, info = GOD_INFO[rec.god] || GOD_INFO.zeus;
+    plaqueRect(g, rightX, y + 27 * S, rightW, h - 56 * S, 8 * S);
+    g.fillStyle = rgba('#10091b', .88); g.fill(); g.strokeStyle = rgba(info.color, .72); g.lineWidth = 1.4 * S; g.stroke();
+    godEmblem(g, rightX + rightW / 2, y + 91 * S, 31 * S, rec.god, { glowA: .48, glowR: 2.0 });
+    tracked(g, info.name.toUpperCase(), rightX + rightW / 2, y + 142 * S, { size: 11 * S, track: .25, weight: 700, align: 'center', color: info.color });
+    tracked(g, String(boon.name || 'BOON').toUpperCase(), rightX + rightW / 2, y + 177 * S, { size: 18 * S, track: .14, weight: 700, align: 'center', color: '#ffe9a8' });
+    tracked(g, `${String(rec.rarity || 'common').toUpperCase()} · ${String(rec.slot || 'passive').toUpperCase()} · LEVEL ${rec.level || 1}`, rightX + rightW / 2, y + 203 * S, { size: 9 * S, track: .20, weight: 700, align: 'center', color: RARITY[rec.rarity]?.text || info.color });
+    let desc = '';
+    try { desc = boon.text?.(rec.values || {}) || ''; } catch (e) { desc = ''; }
+    const lines = wrap(g, desc, rightW - 54 * S, { size: 11 * S, weight: 500, font: bodyFont() });
+    g.font = `500 ${11 * S}px ${bodyFont()}`; g.fillStyle = rgba(PAL.parch, .84); g.textAlign = 'center';
+    for (let i = 0; i < Math.min(8, lines.length); i++) g.fillText(lines[i], rightX + rightW / 2, y + 244 * S + i * 18 * S);
+    const gods = boon.gods?.map(k => GOD_INFO[k]?.name || k).join(' + ');
+    tracked(g, gods ? `DUO · ${gods}`.toUpperCase() : info.title.toUpperCase(), rightX + rightW / 2, y + h - 47 * S, { size: 8.5 * S, track: .18, weight: 600, align: 'center', color: rgba(info.color, .82) });
+    tracked(g, '↑ ↓ SELECT · B / ESC BACK', W / 2, y + h - 8 * S, { size: 8 * S, track: .20, weight: 600, align: 'center', color: rgba(PAL.parchDim, .66), font: bodyFont() });
+  }
+
   _settings(g, W, H, S, t, y0, width) {
     const s = this.settings;
     const w = width || 420 * S, cx = W / 2, x = cx - w / 2;
     const rows = [
-      { key: 'quality', label: 'Quality', kind: 'cycle', value: s.quality.toUpperCase() },
+      { key: 'quality', label: 'Graphics Quality', kind: 'cycle', value: s.quality === 'auto' ? `AUTO (${(this.ui.ctx?.quality?.tier || 'med').toUpperCase()})` : s.quality.toUpperCase() },
       { key: 'master', label: 'Master Volume', kind: 'slider', value: s.master },
       { key: 'music', label: 'Music', kind: 'slider', value: s.music },
       { key: 'sfx', label: 'Effects', kind: 'slider', value: s.sfx },
@@ -291,7 +373,8 @@ export class Menus {
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i], y = y0 + i * step;
       const on = this.sel === i;
-      this.hit.push({ x, y: y - 14 * S, w, h: 26 * S, act: 'setting', key: r.key, i });
+      const sliderX = x + w * 0.52, sliderW = w * 0.48 - 34 * S;
+      this.hit.push({ x, y: y - 14 * S, w, h: 26 * S, act: 'setting', key: r.key, kind: r.kind, sliderX, sliderW, i });
       if (on) { g.fillStyle = rgba(PAL.gold, 0.08); g.fillRect(x - 8 * S, y - 15 * S, w + 16 * S, 28 * S); }
       tracked(g, r.label.toUpperCase(), x, y, {
         size: 12 * S, track: 0.26, weight: 600, align: 'left',
@@ -321,6 +404,28 @@ export class Menus {
     }
     g.restore();
     this._menu(g, W, H, S, t, y0 + rows.length * step + 26 * S, 1, rows.length);
+  }
+
+  // ═══════════════════════════════════════════════════════ CONTROLS ═══════
+  _controls(g, W, H, S, t, y0, width) {
+    const w = width || 640 * S, x = W / 2 - w / 2;
+    const actionX = x, keyboardX = x + w * 0.33, padX = x + w * 0.72;
+    tracked(g, 'ACTION', actionX, y0, { size: 9 * S, track: 0.30, weight: 700, align: 'left', color: rgba(PAL.goldHi, 0.82) });
+    tracked(g, 'KEYBOARD & MOUSE', keyboardX, y0, { size: 9 * S, track: 0.24, weight: 700, align: 'left', color: rgba(PAL.goldHi, 0.82) });
+    tracked(g, 'GAMEPAD', padX, y0, { size: 9 * S, track: 0.30, weight: 700, align: 'left', color: rgba(PAL.goldHi, 0.82) });
+    const step = 27 * S;
+    g.save();
+    for (let i = 0; i < CONTROL_ROWS.length; i++) {
+      const [action, keyboard, pad] = CONTROL_ROWS[i], y = y0 + 26 * S + i * step;
+      if (i % 2 === 0) { g.fillStyle = rgba(PAL.gold, 0.045); g.fillRect(x - 8 * S, y - 16 * S, w + 16 * S, 23 * S); }
+      tracked(g, action.toUpperCase(), actionX, y, { size: 10.5 * S, track: 0.16, weight: 700, align: 'left', color: rgba(PAL.parch, 0.86) });
+      tracked(g, keyboard.toUpperCase(), keyboardX, y, { size: 10.5 * S, track: 0.09, weight: 500, align: 'left', color: rgba(PAL.parchDim, 0.82), font: bodyFont() });
+      tracked(g, pad.toUpperCase(), padX, y, { size: 10.5 * S, track: 0.09, weight: 500, align: 'left', color: rgba(PAL.parchDim, 0.82), font: bodyFont() });
+    }
+    g.restore();
+    const noteY = y0 + 26 * S + CONTROL_ROWS.length * step + 12 * S;
+    tracked(g, 'ATTACKS AIM AT THE CURSOR OR RIGHT STICK', W / 2, noteY, { size: 9 * S, track: 0.24, weight: 600, align: 'center', color: rgba(PAL.goldHi, 0.74) });
+    this._menu(g, W, H, S, t, noteY + 38 * S, 1, 0);
   }
 }
 

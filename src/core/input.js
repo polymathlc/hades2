@@ -2,8 +2,8 @@ import * as THREE from 'three';
 const KEYMAP = {
   KeyW:'up', KeyS:'down', KeyA:'left', KeyD:'right',
   ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right',
-  Space:'dash', ShiftLeft:'dash', KeyE:'special', KeyQ:'cast', KeyR:'summon',
-  KeyF:'interact', Escape:'pause', Tab:'map', KeyG:'debug',
+  Space:'dash', ShiftLeft:'dash', KeyQ:'cast', KeyR:'summon',
+  KeyE:'interact', KeyF:'interact', Escape:'pause', KeyH:'help',
 };
 export class Input {
   constructor(){
@@ -19,7 +19,7 @@ export class Input {
   }
   attach(dom){
     this.dom = dom;
-    const kd = (e)=>{ const a=KEYMAP[e.code]; if(!a) return; if(e.code==='Tab'||e.code==='Space') e.preventDefault();
+    const kd = (e)=>{ const a=KEYMAP[e.code]; if(!a || !this.enabled) return; if(e.code==='Space') e.preventDefault();
       if(!this._down.has(a)){ this._down.add(a); this._pressed.add(a); } this.usingGamepad=false; };
     const ku = (e)=>{ const a=KEYMAP[e.code]; if(!a) return; if(this._down.has(a)){ this._down.delete(a); this._released.add(a);} };
     addEventListener('keydown',kd); addEventListener('keyup',ku);
@@ -28,10 +28,12 @@ export class Input {
       this.pointerPx.set(e.clientX-r.left, e.clientY-r.top);
       this.pointer.set((this.pointerPx.x/r.width)*2-1, -(this.pointerPx.y/r.height)*2+1); this.usingGamepad=false; };
     dom.addEventListener('pointermove',pm);
-    dom.addEventListener('pointerdown',(e)=>{ pm(e);
-      const a = e.button===0?'attack': e.button===2?'special':'cast';
+    dom.addEventListener('pointerdown',(e)=>{ if(!this.enabled) return; pm(e);
+      const a = e.button===0?'attack': e.button===2?'special':e.button===1?'cast':null;
+      if(!a) return;
       if(!this._down.has(a)){ this._down.add(a); this._pressed.add(a);} });
-    addEventListener('pointerup',(e)=>{ const a = e.button===0?'attack': e.button===2?'special':'cast';
+    addEventListener('pointerup',(e)=>{ const a = e.button===0?'attack': e.button===2?'special':e.button===1?'cast':null;
+      if(!a) return;
       if(this._down.has(a)){ this._down.delete(a); this._released.add(a);} });
     dom.addEventListener('contextmenu',e=>e.preventDefault());
     addEventListener('gamepadconnected',()=>{ this.usingGamepad=true; });

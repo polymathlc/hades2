@@ -632,13 +632,11 @@ export class World {
 
     // The brazier ring is decided here so the glaze can paint the light pools
     // exactly where the practicals will stand.
-    // The HEARTH: a low, wide ceremonial bowl standing at the head of the
-    // arena on the focal axis. Three jobs — it gives the middle distance of the
-    // floor a landmark instead of ten metres of nothing, it puts a warm pool
-    // and a real cast shadow into the play space, and it is a fire the camera
-    // can see from a low angle (the rim braziers are all at the perimeter).
+    // The hearth now stands beyond the playable rim. Combat ground must remain
+    // completely clear: enemies cannot path around a decorative bowl if they
+    // are already pressed against the arena boundary.
     const hearthA = this.focalAngle;
-    const hearthR = R * 0.44;
+    const hearthR = this.radiusAt(hearthA) + 1.8;
     G.hearth = { x: Math.cos(hearthA) * hearthR, z: Math.sin(hearthA) * hearthR };
 
     const pools = this._brazierAnchors(G);
@@ -722,6 +720,15 @@ export class World {
       return [r, g, b];
     };
 
+    // A single incident-light response cannot serve ink-dark Tartarus and
+    // naturally pale Elysium marble.  The ivory map already contributes far
+    // more value; giving it the same 1.02/1.35 gains as crimson stone drives
+    // the whole stage into the display shoulder and erases its brushwork.
+    // This costs nothing at runtime (the material already exists) and keeps
+    // the adjustment attached to the surface instead of dimming actors or FX.
+    const floorResponse = B.id === 'elysium'
+      ? { litGain: 0.23, ambGain: 0.31, specGain: 0.06 }
+      : { litGain: 1.02, ambGain: 1.35, specGain: 0.26 };
     const floorMat = this._M(B.mats.floor, {
       vertexColors: true,
       // §9.1 asks for the floor to keep a small share of the KEY (so the stage
@@ -748,7 +755,7 @@ export class World {
       // the indirect share (which is uniform, and therefore cannot create a
       // hot spot) puts the ashlar back without touching the lit pools, and
       // groundLuma still lands ~0.10 against §9.1's 0.18 ceiling.
-      litGain: 1.02, ambGain: 1.35, specGain: 0.26,
+      ...floorResponse,
       // §1.4 "painted texture": floor.tartarus authors an 11x8 ashlar bond with
       // real seam ink, chipping, ichor stains and bone dust — and then projects
       // it at triScale 0.035, i.e. ONE 28.6m period across a 25m arena. Every
@@ -1182,7 +1189,7 @@ export class World {
     // built architecture in the FOREGROUND band §1.1 wants at high value. Its
     // indirect share is lifted so the curb, the coping and the parapet read as
     // a described edge instead of dissolving into the apron.
-    const stone = this._M(B.mats.wall, { variation: 0.22, litGain: 0.60, ambGain: 0.95, specGain: 1.30 });
+    const stone = this._M(B.mats.rim || B.mats.wall, { variation: 0.22, litGain: 0.60, ambGain: 0.95, specGain: 1.30 });
 
     // ---- the curb: a moulded stone edge all the way round ----------------
     // This is the island's LIT TOP EDGE. Without it the floor stops at a razor
@@ -1894,6 +1901,16 @@ export class World {
       }
     }
 
+    // Peristyles are scenery, not combat cover. Normalize every plan's column
+    // layout onto an exterior ring so hypostyle grids and side files cannot
+    // create pockets that pin melee enemies against the boundary.
+    for (const c of cols) {
+      const a = Math.atan2(c.z, c.x);
+      const rr = this.radiusAt(a) + 0.9;
+      c.x = Math.cos(a) * rr;
+      c.z = Math.sin(a) * rr;
+    }
+
     // ---- ONE BAY IN FOUR HAS FALLEN (§1.5, §1.8) --------------------------
     // A rotationally symmetric colonnade gives the chamber no FRONT: every
     // heading looks the same, so the player cannot orient and the frame has no
@@ -1962,19 +1979,13 @@ export class World {
     let ci = -1;
     for (const c of cols) {
       ci++;
-      if (A.peristyle.ruined && f() < 0.22) {
-        // a broken shaft: a stump plus a fallen drum nearby
-        fallBay(c);
-        continue;
-      }
-      // one regular bay in four, and never an ornate one: the ruin has to be
-      // legible as a deliberate gap in the rhythm, not as random attrition
-      if (!c.ornate && ci % 4 === 2) { fallBay(c); continue; }
+      // Ruined plans keep missing columns as silhouette gaps, but never spill
+      // solid drums or capitals back onto the playable floor.
+      if ((A.peristyle.ruined && f() < 0.22) || (!c.ornate && ci % 4 === 2)) continue;
       qq.setFromEuler(new THREE.Euler(0, f() * TAU, 0));
       m.compose(new THREE.Vector3(c.x, this.heightAt(c.x, c.z), c.z), qq, one);
       const far = depthOf(c.x, c.z) < 0.46;
       batch.addTemplate(c.ornate ? (far ? ornateFar : ornate) : (far ? plainFar : plain), m, { name: 'colonnade' });
-      this.colliders.push({ kind: 'circle', x: c.x, z: c.z, r: per.h * 0.075 * 1.45 });
       G.keepOut.push({ x: c.x, z: c.z, r: per.h * 0.075 * 2.2 });
       G.slots.push({ x: c.x, z: c.z, w: 1.0, spread: 2.4 });
     }
@@ -2085,8 +2096,11 @@ export class World {
     // metal (marble.elysium: metal = gMask * 0.8). §9.5 wants the highlight on
     // ornament, and this statue HAS ornament: `statue.trim` is a separate mesh
     // on gold.leaf and it keeps its lobe. The stone body does not need one.
-    const statueMat = { mat: 'marble.elysium', matOpts: { tint: '#6a5f73', litGain: 0.22, ambGain: 0.34,
-      specGain: 0.80, envMapIntensity: 0.20, variation: 0.14, variationTint: '#5a2331', triScale: 0.42 } };
+    const deity = B.props.focalStatue;
+    const statueTint = ({ hades: '#5d5268', poseidon: '#675d67', zeus: '#746c7d' })[deity] || '#6a5f73';
+    const statueVein = ({ hades: '#482138', poseidon: '#285365', zeus: '#6a522c' })[deity] || '#5a2331';
+    const statueMat = { mat: 'marble.elysium', matOpts: { tint: statueTint, litGain: 0.22, ambGain: 0.34,
+      specGain: 0.80, envMapIntensity: 0.20, variation: 0.14, variationTint: statueVein, triScale: 0.42 } };
 
     // Statues stand on the wall arc between the doors, facing the arena.
     const kinds = B.props.statues;
@@ -2096,7 +2110,7 @@ export class World {
     const gaps = G.bays;
     const spots = gaps.slice(1, 1 + Math.min(kinds.length, 3)).map((g2, i) => ({ a: g2.a, kind: kinds[i % kinds.length] }));
     for (const s of spots) {
-      const rr = this.radiusAt(s.a) - 4.0;
+      const rr = this.radiusAt(s.a) + 1.6;
       // SIZED TO THE LENS. A figure whose head leaves the top of the play
       // camera's frame is not "monumental", it is cropped: §14's critic read the
       // focal hound as "cropped into the corner", and no lighting work fixes a
@@ -2109,7 +2123,6 @@ export class World {
       m.compose(new THREE.Vector3(x, 0, z), qq, one);
       batch.addTemplate(st, m, { name: 'statue' });
       st.clear();
-      this.colliders.push({ kind: 'circle', x, z, r: 1.15 });
       G.keepOut.push({ x, z, r: 2.2 });
       G.slots.push({ x, z, w: 1.4, spread: 2.6 });
       placed.push({ x, z });
@@ -2117,7 +2130,7 @@ export class World {
 
     // The focal statue: bigger, standing in the WIDEST bay of the back wall.
     const fa = G.focalAngle;
-    if (A.focal === 'throne' && this.dais) {
+    if (A.focal === 'throne' && this.dais && !deity) {
       const d = this.dais;
       const th = kit.geo('throne', () => {
         const p = new Parts();
@@ -2131,20 +2144,19 @@ export class World {
         return faceted(p.merge());
       });
       const tm = new THREE.Mesh(th, this._M(B.mats.wall));
-      tm.position.set(d.x, d.h, d.z);
+      const tr = this.radiusAt(fa) + 2.0;
+      tm.position.set(Math.cos(fa) * tr, 0, Math.sin(fa) * tr);
       tm.rotation.y = faceIn(fa);
       tm.castShadow = true; tm.receiveShadow = true;
       this.root.add(tm);
-      this.colliders.push({ kind: 'circle', x: d.x, z: d.z, r: 1.8 });
     } else {
-      const rr = this.radiusAt(fa) - 5.6;
-      const st = kit.statue(B.props.focalStatue, { scale: 1.42, plinth: true, plinthH: 1.05, plinthW: 3.0, ...statueMat });
+      const rr = this.radiusAt(fa) + 2.0;
+      const st = kit.statue(deity, { scale: 1.34, plinth: true, plinthH: 1.05, plinthW: 3.0, ...statueMat });
       qq.setFromEuler(new THREE.Euler(0, faceIn(fa), 0));
       const x = Math.cos(fa) * rr, z = Math.sin(fa) * rr;
       m.compose(new THREE.Vector3(x, 0, z), qq, one);
       batch.addTemplate(st, m, { name: 'statue.focal' });
       st.clear();
-      this.colliders.push({ kind: 'circle', x, z, r: 2.0 });
       G.keepOut.push({ x, z, r: 3.4 });
       G.slots.push({ x, z, w: 2.0, spread: 3.4 });
     }
@@ -2175,16 +2187,14 @@ export class World {
         a = 120 * DEG + (240 * DEG) * (i / n);
         r = this.bounds.r * 0.74;
       }
-      // snap on to this room's own brazier ring: the authored practicals were
-      // laid out for a 16u circle and would otherwise stand inside a wall or
-      // out over the void in a cruciform / causeway plan.
-      const rMax = this.radiusAt(a) - 3.2;
-      r = Math.min(r, rMax);
-      r = Math.max(r, this.bounds.r * 0.42);
       // never in a doorway
       for (const d of this.doorAngles) {
         if (Math.abs(((a - d + Math.PI * 3) % TAU) - Math.PI) < 14 * DEG) a = d + 17 * DEG;
       }
+      // Fire bowls light the rim from outside the collision boundary. They
+      // remain visible and still own their practical lights, but no longer
+      // occupy a point an enemy can be clamped against.
+      r = this.radiusAt(a) + 0.9;
       out.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, rad: 6.4, light: src ? i : -1 });
     }
     return out;
@@ -2205,7 +2215,6 @@ export class World {
         x: p.x, y: this.heightAt(p.x, p.z) + flameLocal.y + 0.10, z: p.z,
         seed: (i * 0.371 + 0.13) % 1, scale: 1.0,
       });
-      this.colliders.push({ kind: 'circle', x: p.x, z: p.z, r: 0.95 });
       G.keepOut.push({ x: p.x, z: p.z, r: 2.0 });
       G.slots.push({ x: p.x, z: p.z, w: 0.7, spread: 2.8 });
     });
@@ -2220,7 +2229,6 @@ export class World {
         z: G.hearth.z, seed: 0.83, scale: 1.0,
       });
       hb.clear();
-      this.colliders.push({ kind: 'circle', x: G.hearth.x, z: G.hearth.z, r: 1.25 });
       G.keepOut.push({ x: G.hearth.x, z: G.hearth.z, r: 2.6 });
       G.slots.push({ x: G.hearth.x, z: G.hearth.z, w: 0.8, spread: 3.0 });
     }
@@ -2395,12 +2403,6 @@ export class World {
     this.doors.build(ctx, kit, { anchors, biome: B, rng });
     for (const a of anchors) {
       G.keepOut.push({ x: a.x, z: a.z, r: 4.6 });
-      // the jambs are solid
-      for (const s of [-1, 1]) {
-        const px = a.x + Math.cos(a.angle + Math.PI / 2) * s * 2.9;
-        const pz = a.z + Math.sin(a.angle + Math.PI / 2) * s * 2.9;
-        this.colliders.push({ kind: 'circle', x: px, z: pz, r: 1.0 });
-      }
     }
     if (this._clearedPending) this.doors.setSealed(false);
   }
@@ -2409,50 +2411,47 @@ export class World {
   // SCATTER
   // =========================================================================
   _buildScatter(ctx, G) {
-    const { B, kit, rng, f } = G;
-    const R = this.bounds.r;
-    const [wa0, wa1] = G.wallArc || [130 * DEG, 320 * DEG];
-
-    // Slots hug the wall base and the column feet; the PLAY AREA gets nothing.
-    // §1.8: negative space is used, not filled — a rogue-lite arena that is
-    // full of clutter is unreadable, and a clean centre is what lets the
-    // character read as the subject.
-    const slots = G.slots.slice();
-    for (let i = 0; i < 16; i++) {
-      const a = wa0 + (wa1 - wa0) * ((i + 0.5) / 16);
-      const rr = this.radiusAt(a) - 1.6 - f() * 1.4;
-      slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 2.4, spread: 2.0 });
-    }
-    // the FAR mid-ring: a hall this size cannot have a ten-metre band of
-    // nothing between the emblem and the colonnade. Debris goes on the far
-    // side only — the near half stays clear so the play space reads (§1.8).
-    for (let i = 0; i < 7; i++) {
-      const a = 135 * DEG + (170 * DEG) * ((i + 0.5) / 7) + (f() - 0.5) * 0.2;
-      const rr = R * (0.50 + f() * 0.22);
-      slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 1.5, spread: 2.2 });
-    }
-    // a few pieces spilled toward the near rim so the foreground has texture
-    for (let i = 0; i < 6; i++) {
-      const a = 320 * DEG + (170 * DEG) * ((i + 0.5) / 6);
-      const rr = this.radiusAt(a) - 2.4 - f() * 1.6;
-      slots.push({ x: Math.cos(a) * rr, z: Math.sin(a) * rr, w: 1.1, spread: 1.8 });
-    }
-
-    const keepOut = G.keepOut.slice();
-    keepOut.push({ x: 0, z: 0, r: R * 0.40 });      // the play area stays clean
-
-    const cols = this.props.scatter(kit, {
-      rng, slots, mix: B.props.mix,
-      count: Math.round(58 * (B.props.density ?? 1)),
-      keepOut,
-      inside: (x, z, r) => this.insideXZ(x, z, r + 1.1),
-      root: this.root,
+    // Three deliberately placed steles break the longest firing lanes. They
+    // sit in the middle band, with broad gaps on every side, rather than among
+    // perimeter architecture where knockback used to pin players and enemies.
+    const { B } = G;
+    const stone = this._M(B.mats.column, { variation: 0.22, litGain: 0.43, ambGain: 0.54, specGain: 1.05 });
+    const trim = this._M(B.mats.leaf, { emissiveIntensity: 0.02, litGain: 0.36, ambGain: 0.42, specGain: 1.55 });
+    const baseGeo = this._keep(new THREE.CylinderGeometry(1.02, 1.10, 0.28, 10));
+    const bodyGeo = this._keep(new THREE.BoxGeometry(1.72, 2.30, 0.64));
+    const capGeo = this._keep(new THREE.BoxGeometry(2.02, 0.24, 0.82));
+    const blocks = (x, z, r) => G.keepOut.some(k => {
+      const rr = r + (k.r || 0) + 0.55;
+      return (x - k.x) * (x - k.x) + (z - k.z) * (z - k.z) < rr * rr;
     });
-    for (const c of cols) this.colliders.push(c);
+    let built = 0;
+    for (let probe = 0; probe < 24 && built < 3; probe++) {
+      const a = 0.32 + probe * (TAU / 24);
+      const ring = 5.5 + (probe % 2) * 0.75;
+      const x = Math.cos(a) * ring, z = Math.sin(a) * ring;
+      if (!this.insideXZ(x, z, 3.0) || blocks(x, z, 1.02)) continue;
+      const root = new THREE.Group();
+      root.name = `combat.cover.${built + 1}`;
+      root.position.set(x, this.heightAt(x, z), z);
+      root.rotation.y = a + Math.PI * 0.5;
+      const base = new THREE.Mesh(baseGeo, stone); base.position.y = 0.14;
+      const body = new THREE.Mesh(bodyGeo, stone); body.position.y = 1.43;
+      const cap = new THREE.Mesh(capGeo, trim); cap.position.y = 2.58;
+      for (const m of [base, body, cap]) { m.castShadow = true; m.receiveShadow = true; }
+      root.add(base, body, cap); this.root.add(root);
+      this.colliders.push({ kind: 'circle', x, z, r: 1.02, combatCover: true });
+      G.keepOut.push({ x, z, r: 1.85 });
+      built++;
+    }
   }
 
   // =========================================================================
   _finishColliders(ctx, G) {
+    // Perimeter architecture remains non-solid so it cannot form knockback
+    // traps. Only the sparse, explicitly tagged central firing cover survives.
+    for (let i = this.colliders.length - 1; i >= 0; i--) {
+      if (!this.colliders[i]?.combatCover) this.colliders.splice(i, 1);
+    }
     // A coarse uniform grid so collide() and raycastWalk() stay O(1)-ish even
     // with a hundred solids in a hypostyle hall.
     const R = this.bounds.r + 4;
@@ -2565,7 +2564,11 @@ export class World {
         const rr = c.r + radius;
         const d2 = dx * dx + dz * dz;
         if (d2 < rr * rr) {
-          const d = Math.sqrt(d2) || 1e-5;
+          // An actor can materialise at the exact centre of a circular solid.
+          // With a zero direction the usual radial push is also zero, leaving
+          // it trapped forever; choose a deterministic exit in that one case.
+          if (d2 < 1e-10) { pos.x = c.x + rr; pos.z = c.z; continue; }
+          const d = Math.sqrt(d2);
           const k = (rr - d) / d;
           pos.x += dx * k; pos.z += dz * k;
         }

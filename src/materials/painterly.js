@@ -231,6 +231,12 @@ uniform vec3  uInkFloor;      // ink ramp hue, scene-linear
 uniform float uInkFloorLevel; // scene-linear radiance at full fill
 
 float gPaintLit = 1.0;
+// Set in the map fragment, consumed by the normal and roughness fragments,
+// which three.js emits AFTER it. Micro-relief and roughness break-up therefore
+// cost nothing beyond the detail/macro fetches the albedo already pays for.
+vec2  gPaintBump   = vec2( 0.0 );   // tangent-space micro-normal xy
+float gPaintDRough = 0.0;           // detail-scale roughness modulation
+float gPaintMRough = 0.0;           // macro-scale roughness modulation
 
 float paintHash13( vec3 p ){
   p = fract( p * 0.1031 );
@@ -381,10 +387,54 @@ uniform sampler2D tPaintDetail;
 uniform sampler2D tPaintMacro;
 uniform float uDetailScale;
 uniform float uDetailStrength;
+uniform float uDetailBump;
+uniform float uDetailRough;
 uniform float uMacroScale;
 uniform float uMacroStrength;
 uniform vec3  uMacroTint;
+uniform vec3  uMacroLevel;    // the MEAN multiply, held at the legacy constant
+uniform vec3  uMacroTintDir;  // luminance-normalised hue direction
+uniform float uMacroRough;
 `;
+
+// ---------------------------------------------------------------------------
+// Macro-layer calibration
+// ---------------------------------------------------------------------------
+// The macro texture's old per-channel means, times the shader's `* 2.0`. These
+// three numbers are what the whole layer evaluated to before the encoding was
+// re-centred (library.js _macro carries the derivation), and they are kept here
+// so uMacroLevel can reproduce the EXACT mean multiply every shipped material
+// already had. The change to the macro layer is therefore a pure variance
+// change: no surface in the game moves in average brightness, and any value-law
+// measurement taken before it is still valid after it.
+const MACRO_LEGACY_MEAN = [0.9964, 0.9100, 0.9336];
+
+/** The legacy mean multiply for a (tint, strength) pair, or an explicit override. */
+function macroLegacyLevel(tint, strength, override) {
+  if (Array.isArray(override)) return new THREE.Vector3(override[0], override[1], override[2]);
+  if (typeof override === 'number') return new THREE.Vector3(override, override, override);
+  const t = [tint.r, tint.g, tint.b];
+  const v = t.map((c, i) => 1 + strength * (MACRO_LEGACY_MEAN[i] * (0.5 + 0.85 * c) - 1));
+  return new THREE.Vector3(v[0], v[1], v[2]);
+}
+
+/**
+ * The macro tint as a LUMINANCE-NORMALISED direction, blended halfway to white.
+ * The old code multiplied by the tint itself, which is why the layer was mostly
+ * a darkening: #4a2c38 is 3.6% luminance, so `mix(1, tint*1.7, 0.5)` is a 0.54
+ * grey multiply wearing a hue. Normalising means the hue drift is a HUE drift —
+ * colour variation within one material (§1.4), not an exposure cut hiding in a
+ * colour uniform.
+ */
+function macroHueDirection(tint) {
+  const lum = Math.max(1e-4, 0.2126 * tint.r + 0.7152 * tint.g + 0.0722 * tint.b);
+  const k = 0.55;
+  return new THREE.Vector3(
+    1 + (tint.r / lum - 1) * k,
+    1 + (tint.g / lum - 1) * k,
+    1 + (tint.b / lum - 1) * k,
+  );
+}
 
 // ---------------------------------------------------------------------------
 // The patch
@@ -460,17 +510,35 @@ export function painterly(mat, o = {}) {
   }
   if (tri) U.uTriSharp = { value: p.triSharp ?? 6.0 };
   if (useDetail || useMacro) {
+    const macroTint = col(p.macroTint || '#ffffff');
+    const macroStrength = useMacro ? (p.macroStrength ?? 0.55) : 0;
+    // AMPLITUDE IS NOW A SEPARATE KNOB FROM THE MEAN, and it has to be, because
+    // the old `macroStrength` was doing both jobs at once and the variance half
+    // of it was ~1% (see MACRO_LEGACY_MEAN). Reading the shipped strengths as a
+    // drift amplitude directly would hand a recipe that never set one — and so
+    // inherited 0.55 — a +-55% blotch it was never authored against. The legacy
+    // MEAN still comes from macroStrength so no surface moves in average
+    // brightness; the drift is capped unless a recipe opts in explicitly.
+    const macroDrift = useMacro ? (p.macroDrift ?? Math.min(macroStrength, 0.24)) : 0;
     U.tPaintDetail    = { value: p.detail || null };
     U.tPaintMacro     = { value: p.macro || null };
     U.uDetailScale    = { value: p.detailScale ?? 7.0 };
     U.uDetailStrength = { value: useDetail ? (p.detailStrength ?? 0.55) : 0 };
+    // Micro-relief and roughness break-up ride the detail fetch. Defaults are
+    // deliberately non-zero: every world-projected surface in the game wants
+    // them, and a surface that does not can set them to 0 in its recipe.
+    U.uDetailBump     = { value: useDetail ? (p.detailBump ?? 0.50) : 0 };
+    U.uDetailRough    = { value: useDetail ? (p.detailRough ?? 0.26) : 0 };
     U.uMacroScale     = { value: p.macroScale ?? 0.018 };
-    U.uMacroStrength  = { value: useMacro ? (p.macroStrength ?? 0.55) : 0 };
-    U.uMacroTint      = { value: col(p.macroTint || '#ffffff') };
+    U.uMacroStrength  = { value: macroDrift };
+    U.uMacroTint      = { value: macroTint };
+    U.uMacroLevel     = { value: macroLegacyLevel(macroTint, macroStrength, p.macroLevel) };
+    U.uMacroTintDir   = { value: macroHueDirection(macroTint) };
+    U.uMacroRough     = { value: useMacro ? (p.macroRough ?? 0.20) : 0 };
   }
 
   const key = [
-    'paint2', o.variant || 'env', proj, stoch ? 's' : '-', useDetail ? 'd' : '-', useMacro ? 'm' : '-',
+    'paint3', o.variant || 'env', proj, stoch ? 's' : '-', useDetail ? 'd' : '-', useMacro ? 'm' : '-',
     p.variation ? 'v' : '-', p.contourStrength > 0 ? 'c' : '-',
   ].join(':');
 
@@ -542,26 +610,58 @@ export function painterly(mat, o = {}) {
       #include <map_fragment>
     `;
     if (useMacro) {
-      // Large-scale value + hue drift. Two incommensurate scales so the drift
-      // itself never repeats on the same period as the albedo.
+      // ── LARGE-SCALE VALUE + HUE DRIFT, WITH ENERGY WHERE THE EYE READS ─────
+      // Three things changed here and each was measured, not guessed.
+      //
+      // (1) MEAN vs VARIANCE. The old expression folded a 0.85 exposure cut and
+      //     a 1% ripple into one multiply (see MACRO_LEGACY_MEAN). uMacroLevel
+      //     now carries that exact mean and `md` carries a real, zero-mean
+      //     deviation — at the floor's strength 0.30 a +-30% value drift, 1-sigma
+      //     about +-11%. Same average surface, an actual painted drift on it.
+      //
+      // (2) SCALE. The old octaves were 1x, 0.283x and 3.1x of macroScale: for
+      //     the floor that is 80m, 283m and 26m. Across a 12m play frame the
+      //     first two are a gradient and a constant, so nothing in the layer
+      //     operated at the 3-10m band where a 17.9m plate's repeat is legible.
+      //     8.9x and 23.5x put octaves at ~9m and ~3.4m on the floor (~1.5m and
+      //     ~0.57m on the wall, which is weathering-patch scale).
+      //
+      // (3) PROJECTION. It sampled vPaintWPos.xz on EVERY surface, so on a
+      //     vertical wall the entire macro layer was constant in Y — the one
+      //     term that could break up a tall flat bay was a vertical smear.
+      //     Triplanar materials now sample it triplanar.
+      const M = (k, off) => (tri
+        ? `paintTriSample( tPaintMacro, vPaintWPos * ( uMacroScale * ${k} ) + ${off}, pBW, 1.0 ).rgb`
+        : `texture2D( tPaintMacro, vPaintWPos.xz * ( uMacroScale * ${k} ) + ${off} ).rgb`);
       mapFrag += /* glsl */`
         {
-          vec3 mc = texture2D( tPaintMacro, vPaintWPos.xz * uMacroScale ).rgb;
-          vec3 m2 = texture2D( tPaintMacro, vPaintWPos.xz * uMacroScale * 0.283 + 0.31 ).rgb;
-          vec3 m3 = texture2D( tPaintMacro, vPaintWPos.xz * uMacroScale * 3.1 - 0.62 ).rgb;
-          vec3 m = ( mc * 0.5 + m2 * 0.34 + m3 * 0.16 ) * 2.0;
-          m = mix( vec3( 1.0 ), m * mix( vec3( 1.0 ), uMacroTint * 1.7, 0.5 ), uMacroStrength );
+          vec3 mA = ${M('1.0', '0.0')};
+          vec3 mB = ${M('8.9', '0.37')};
+          vec3 mC = ${M('23.5', '-0.61')};
+          float md = clamp( ( ( mA.r - 0.5 ) * 1.15 + ( mB.b - 0.5 ) * 0.80
+                            + ( mC.b - 0.5 ) * 0.55 ) * 1.55, -1.0, 1.0 );
+          gPaintMRough = ( mA.g - 0.5 ) * 1.10 + ( mB.g - 0.5 ) * 0.85;
+          vec3 m = uMacroLevel * ( 1.0 + md * uMacroStrength );
+          // the SHADED patches take the biome's hue; the lit ones stay on the
+          // recipe's own colour. A wash that tinted both equally is a filter,
+          // not weathering.
+          m *= mix( vec3( 1.0 ), uMacroTintDir, clamp( -md, 0.0, 1.0 ) * uMacroStrength * 0.9 );
           diffuseColor.rgb *= m;
         }
       `;
     }
     if (useDetail) {
       const dcoord = tri ? null : (planar || cyl) ? 'pUV * uDetailScale' : 'vMapUv * uDetailScale';
+      // R is the value grain the albedo always used (byte-identical content, so
+      // the painted tone is unchanged); GB and A are the micro-normal and the
+      // roughness modulation that the same fetch now also carries.
       mapFrag += tri ? /* glsl */`
         {
-          float dfade = 1.0 - smoothstep( 8.0, 34.0, length( vPaintWPos - cameraPosition ) );
-          vec3 d = paintTriSample( tPaintDetail, pWP, pBW, uDetailScale ).rgb * 2.0;
-          diffuseColor.rgb *= mix( vec3( 1.0 ), d, uDetailStrength * dfade );
+          float dfade = 1.0 - smoothstep( 8.0, 40.0, length( vPaintWPos - cameraPosition ) );
+          vec4 dS = paintTriSample( tPaintDetail, pWP, pBW, uDetailScale );
+          diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( dS.r * 2.0 ), uDetailStrength * dfade );
+          gPaintBump   = ( dS.gb - 0.5 ) * 2.0 * uDetailBump * dfade;
+          gPaintDRough = ( dS.a - 0.5 ) * 2.0 * uDetailRough * dfade;
         }
       ` : `
         {
@@ -569,10 +669,13 @@ export function painterly(mat, o = {}) {
           // 34 units left the far floor carrying no high-frequency signal at all,
           // which is exactly the condition under which a short-lag autocorrelation
           // reads as a lattice
-          float dfade = 1.0 - smoothstep( 16.0, 66.0, length( vPaintWPos - cameraPosition ) );
-          vec3 d = texture2D( tPaintDetail, ${dcoord} ).rgb * 2.0;
-          vec3 d2 = texture2D( tPaintDetail, ${dcoord} * 0.41 + 0.27 ).rgb * 2.0;
-          diffuseColor.rgb *= mix( vec3( 1.0 ), d * 0.6 + d2 * 0.4, uDetailStrength * dfade );
+          float dfade = 1.0 - smoothstep( 16.0, 72.0, length( vPaintWPos - cameraPosition ) );
+          vec4 dS = texture2D( tPaintDetail, ${dcoord} );
+          vec4 d2 = texture2D( tPaintDetail, ${dcoord} * 0.41 + 0.27 );
+          float dv = dS.r * 1.2 + d2.r * 0.8;                 // mean 1.0, as before
+          diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( dv ), uDetailStrength * dfade );
+          gPaintBump   = ( ( dS.gb - 0.5 ) + ( d2.gb - 0.5 ) * 0.45 ) * 2.0 * uDetailBump * dfade;
+          gPaintDRough = ( ( dS.a - 0.5 ) * 0.70 + ( d2.a - 0.5 ) * 0.50 ) * 2.0 * uDetailRough * dfade;
         }
       `;
     }
@@ -589,11 +692,23 @@ export function painterly(mat, o = {}) {
     if (!DBG.noMaps) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', mapFrag);
 
     if (worldProj && !DBG.noMaps) {
+      // gPaintBump is the detail layer's micro-relief, added AFTER normalScale
+      // so a recipe that deliberately flattens its baked normal (the floor runs
+      // 0.40) still gets brush-scale surface. It is what turns the detail layer
+      // from a value grain painted on glass into something the key can catch.
       const normalFrag = tri ? /* glsl */`
             vec3 wn = paintTriNormal( normalMap, pWP, pBW, 1.0, pGN, normalScale );
+            {
+              // any stable tangent frame will do for an isotropic grain
+              vec3 tUp = mix( vec3( 0.0, 1.0, 0.0 ), vec3( 1.0, 0.0, 0.0 ), step( 0.9, abs( wn.y ) ) );
+              vec3 tU = normalize( cross( wn, tUp ) );
+              vec3 tV = cross( wn, tU );
+              wn = normalize( wn + tU * gPaintBump.x + tV * gPaintBump.y );
+            }
       ` : cyl ? /* glsl */`
             vec3 mn = paintStochNormal( normalMap );
             mn.xy *= normalScale;
+            mn.xy += gPaintBump;
             vec3 pN = normalize( vPaintWNrm );
             vec3 pT = cross( pN, vec3( 0.0, 1.0, 0.0 ) );
             float pTl = length( pT );
@@ -603,6 +718,7 @@ export function painterly(mat, o = {}) {
       ` : /* glsl */`
             vec3 mn = paintStochNormal( normalMap );
             mn.xy *= normalScale;
+            mn.xy += gPaintBump;
             vec3 wn = normalize( vec3( mn.x, mn.z, mn.y ) );
       `;
       shader.fragmentShader = shader.fragmentShader
@@ -621,6 +737,18 @@ export function painterly(mat, o = {}) {
           #ifdef USE_ROUGHNESSMAP
             roughnessFactor *= ${S('roughnessMap', '.g')};
           #endif
+          ${(useDetail || useMacro) ? `
+          // §1.4: "roughness should vary as an ARTISTIC map, not as a physical
+          // one." The baked ORM already varies with the height field, but every
+          // recipe clamps it into a narrow band (the floor shipped min 0.78 /
+          // max 0.99) so the whole plate is one sheen and reads as one
+          // substance. Two extra bands of variation, from maps we are already
+          // sampling: brush-scale dry/polished patches from the detail layer,
+          // and weathering-scale ones from the macro layer. This is the
+          // cheapest device in the file for making one material read as several.
+          roughnessFactor = clamp(
+            roughnessFactor * ( 1.0 + gPaintDRough + gPaintMRough * uMacroRough ), 0.045, 1.0 );
+          ` : ''}
         `)
         .replace('#include <metalnessmap_fragment>', `
           float metalnessFactor = metalness;

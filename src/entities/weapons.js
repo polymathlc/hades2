@@ -45,7 +45,7 @@ export const WEAPONS = {
   // ═══════════════════════════════════════════════════════ STYGIAN BLADE ═══
   // The metronome. 3 hits in ~1.1s, tiny commitment on 1-2, a real one on 3.
   blade: {
-    id: 'blade', name: 'Stygian Blade', kind: 'melee',
+    id: 'blade', name: 'Stygian Blade', kind: 'melee', character: 'zagreus',
     palette: { core: '#fffdf0', body: GOLD, glow: EMBER },
     buffer: 0.24, moveScale: 0.30, critChance: 0.08, critMul: 1.9,
     combo: [
@@ -103,7 +103,7 @@ export const WEAPONS = {
   // Reach and patience. Pokes are capsules, not arcs — the hitbox is a LINE,
   // so spacing, not sweeping, is the skill. The throw is the payoff.
   spear: {
-    id: 'spear', name: 'Eternal Spear', kind: 'melee',
+    id: 'spear', name: 'Eternal Spear', kind: 'melee', character: 'zagreus',
     palette: { core: '#f4ffff', body: VERD, glow: RIM },
     buffer: 0.26, moveScale: 0.38, critChance: 0.10, critMul: 2.0,
     combo: [
@@ -136,6 +136,19 @@ export const WEAPONS = {
         sfx: 'spear.spin',
       }),
     ],
+    // DASH-STRIKE: a longer, narrower commitment than the Blade's dashcut.
+    // The Spear should turn a dash into precise reach, not another circular
+    // clear. It uses the normal Attack slot so Olympian riders, crit chance
+    // and Hermes' post-dash payoff all remain part of the player's build.
+    dashAttack: step({
+      name: 'dashthrust', windup: 0.080, active: 0.065, recovery: 0.205,
+      hitbox: { shape: 'capsule', radius: 0.70, length: 4.65, offset: [0.45, 0], maxTargets: 4, pierce: 4 },
+      damage: 21, type: 'physical', knockback: 5.4, poise: 16, hitstop: 74,
+      shake: { amp: 0.105, dur: 0.18, freq: 33 },
+      root: { distance: 1.75, ease: 2.35 },
+      vfx: { call: 'thrust', length: 5.0, width: 0.38, y: 1.08, color: RIM },
+      sfx: 'spear.poke2',
+    }),
     // CHARGED THROW: hold to wind, release to throw. The spear sticks where it
     // lands and is RECALLED — the recall is its own damaging projectile.
     charge: {
@@ -163,7 +176,7 @@ export const WEAPONS = {
   // still. Damage and pierce scale continuously; the full charge is a POWER
   // SHOT with its own colour, its own sound and a much bigger payload.
   bow: {
-    id: 'bow', name: 'Heart-Seeking Bow', kind: 'ranged',
+    id: 'bow', name: 'Heart-Seeking Bow', kind: 'ranged', character: 'zagreus',
     palette: { core: '#ffffff', body: GOLD, glow: RIM },
     buffer: 0.20, moveScale: 0.55, critChance: 0.14, critMul: 2.35,
     charge: {
@@ -197,7 +210,7 @@ export const WEAPONS = {
   // The only weapon with a defensive state. Block absorbs damage in a frontal
   // arc, REFLECTS projectiles back doubled, and charges the bash while held.
   shield: {
-    id: 'shield', name: 'Shield of Chaos', kind: 'melee',
+    id: 'shield', name: 'Shield of Chaos', kind: 'melee', character: 'zagreus',
     palette: { core: '#ffffff', body: '#c9b8ff', glow: RIM },
     buffer: 0.24, moveScale: 0.34, critChance: 0.06, critMul: 1.8,
     combo: [
@@ -241,6 +254,204 @@ export const WEAPONS = {
       color: '#c9b8ff', sfx: 'shield.rush',
     },
   },
+
+  // ═════════════════════════════════════════════════════ TWIN FISTS ════════
+  fists: {
+    id: 'fists', name: 'Twin Fists of Malphon', kind: 'melee', character: 'zagreus',
+    palette: { core: '#fff8dd', body: '#c97945', glow: '#ffcf5a' },
+    buffer: 0.30, moveScale: 0.22, critChance: 0.12, critMul: 2.0,
+    combo: [
+      step({ name: 'jab1', windup: 0.06, active: 0.05, recovery: 0.10,
+        hitbox: { shape: 'box', halfLength: 1.05, halfWidth: 0.58, offset: [1.0, 0], maxTargets: 2 }, damage: 9,
+        knockback: 1.8, poise: 6, hitstop: 36, root: { distance: 0.42, ease: 2.8 },
+        vfx: { call: 'thrust', length: 2.1, width: 0.25, y: 1.04, color: '#ffcf5a' }, sfx: 'shield.bash1' }),
+      step({ name: 'jab2', windup: 0.055, active: 0.05, recovery: 0.10,
+        hitbox: { shape: 'box', halfLength: 1.08, halfWidth: 0.6, offset: [1.02, 0], maxTargets: 2 }, damage: 10,
+        knockback: 2.0, poise: 7, hitstop: 39, root: { distance: 0.45, ease: 2.8 },
+        vfx: { call: 'thrust', length: 2.15, width: 0.26, y: 1.08, color: '#fff8dd' }, sfx: 'shield.bash1' }),
+      step({ name: 'jab3', windup: 0.07, active: 0.055, recovery: 0.12,
+        hitbox: { shape: 'arc', radius: 1.65, arcDeg: 110, offset: [0.35, 0], maxTargets: 3 }, damage: 12,
+        knockback: 2.8, poise: 9, hitstop: 44, root: { distance: 0.52, ease: 2.7 },
+        vfx: { call: 'slash', arc: 116, radius: 1.75, width: 0.29, y: 1.0, color: '#c97945', spin: 1 }, sfx: 'blade.swing1' }),
+      step({ name: 'jab4', windup: 0.10, active: 0.07, recovery: 0.19,
+        hitbox: { shape: 'box', halfLength: 1.45, halfWidth: 0.78, offset: [1.35, 0], maxTargets: 4 }, damage: 20,
+        knockback: 6.0, poise: 20, hitstop: 72, root: { distance: 1.05, ease: 2.6 },
+        vfx: { call: 'thrust', length: 2.9, width: 0.44, y: 1.12, color: '#ffcf5a' }, sfx: 'shield.bash2' }),
+    ],
+    dashAttack: step({ name: 'dashupper', windup: 0.055, active: 0.06, recovery: 0.14,
+      hitbox: { shape: 'box', halfLength: 1.45, halfWidth: 0.72, offset: [1.35, 0], maxTargets: 4 }, damage: 17,
+      knockback: 4.8, poise: 16, hitstop: 62, root: { distance: 1.25, ease: 2.8 },
+      vfx: { call: 'thrust', length: 2.9, width: 0.4, y: 1.05, color: '#fff8dd' }, sfx: 'shield.rush' }),
+    special: step({ name: 'uppercut', windup: 0.12, active: 0.075, recovery: 0.22,
+      hitbox: { shape: 'arc', radius: 2.05, arcDeg: 145, offset: [0.45, 0], maxTargets: 5 }, damage: 27,
+      knockback: 9.0, poise: 31, hitstop: 94, root: { distance: 1.0, ease: 2.5 },
+      vfx: { call: 'slash', arc: 152, radius: 2.15, width: 0.48, y: 1.12, color: '#ffcf5a', spin: -1 }, sfx: 'blade.lunge' }),
+  },
+
+  // ═══════════════════════════════════════════════════ ADAMANT RAIL ════════
+  rail: {
+    id: 'rail', name: 'Adamant Rail', kind: 'ranged', character: 'zagreus',
+    palette: { core: '#fff4cf', body: '#80566f', glow: '#ff9b42' },
+    buffer: 0.20, moveScale: 0.62, critChance: 0.09, critMul: 2.05,
+    magazine: { capacity: 6, reload: 1.35 },
+    charge: { action: 'attack', minHold: 0.04, fullHold: 0.48, windup: 0.035, recovery: 0.16, recoveryFull: 0.23,
+      tell: { color: '#ff9b42' }, projectile: { kind: 'straight', speed: 34, speedFull: 42, radius: 0.16, life: 1.05,
+        damage: 7, damageFull: 14, pierce: 1, pierceFull: 1, type: 'physical', knockback: 1.0, knockbackFull: 2.0,
+        hitstop: 22, hitstopFull: 38, color: '#fff4cf', colorFull: '#ff9b42', size: 0.62, sizeFull: 0.92,
+        coreSize: 0.55, coreSizeFull: 0.9, hero: true },
+      shake: { amp: 0.03, dur: 0.08, freq: 40 }, shakeFull: { amp: 0.08, dur: 0.15, freq: 34 }, sfx: 'bow.loose', sfxFull: 'bow.power' },
+    special: step({ name: 'bombard', windup: 0.26, active: 0.10, recovery: 0.42,
+      hitbox: { shape: 'ring', radius: 3.15, innerRadius: 0.6, arcDeg: 360, maxTargets: 8 }, damage: 25, type: 'fire',
+      knockback: 6.0, poise: 32, hitstop: 82, shake: { amp: 0.17, dur: 0.28, freq: 25 },
+      vfx: { call: 'shockwave', radius: 3.2, color: '#ff9b42', life: 0.46 }, sfx: 'shield.rush' }),
+  },
+
+  // ═══════════════════════════════════════════════════ WITCH'S STAFF ══════
+  // Melinoe's teaching arm: measured staff strings at reach, then an Omega
+  // orb on Special. The charge is mobile but deliberately punishable.
+  staff: {
+    id: 'staff', name: "Witch's Staff", kind: 'melee', character: 'melinoe',
+    palette: { core: '#e9ffe8', body: '#68cfae', glow: '#f3a45d' },
+    buffer: 0.25, moveScale: 0.42, critChance: 0.09, critMul: 2.0,
+    combo: [
+      step({ name: 'staff1', windup: 0.12, active: 0.065, recovery: 0.19,
+        hitbox: { shape: 'capsule', radius: 0.66, length: 3.15, offset: [0.30, 0], maxTargets: 4, pierce: 4 },
+        damage: 16, type: 'arcane', knockback: 3.8, poise: 11, hitstop: 58,
+        shake: { amp: 0.075, dur: 0.15, freq: 34 }, root: { distance: 0.72, ease: 2.2 },
+        vfx: { call: 'thrust', length: 3.45, width: 0.33, y: 1.04, color: '#68cfae' }, sfx: 'spear.poke1' }),
+      step({ name: 'staff2', windup: 0.11, active: 0.075, recovery: 0.21,
+        hitbox: { shape: 'arc', radius: 2.75, arcDeg: 175, offset: [0.25, 0], maxTargets: 6 },
+        damage: 20, type: 'arcane', knockback: 5.2, poise: 16, hitstop: 70,
+        shake: { amp: 0.10, dur: 0.18, freq: 31 }, root: { distance: 0.82, ease: 2.1 },
+        vfx: { call: 'slash', arc: 184, radius: 2.8, width: 0.46, y: 1.0, color: '#f3a45d', spin: -1 }, sfx: 'blade.swing2' }),
+      step({ name: 'staff3', windup: 0.19, active: 0.09, recovery: 0.29,
+        hitbox: { shape: 'ring', radius: 3.15, innerRadius: 0.35, arcDeg: 360, maxTargets: 10 },
+        damage: 29, type: 'arcane', knockback: 7.0, poise: 26, hitstop: 92,
+        shake: { amp: 0.15, dur: 0.25, freq: 28 }, root: { distance: 0.45, ease: 2.0 },
+        vfx: { call: 'shockwave', radius: 3.2, color: '#68cfae', life: 0.38 }, sfx: 'blade.sweep' }),
+    ],
+    charge: { action: 'special', minHold: 0.10, fullHold: 0.78, windup: 0.10, recovery: 0.28,
+      tell: { color: '#68cfae' }, projectile: { kind: 'straight', speed: 21, speedFull: 34, radius: 0.34, life: 1.35,
+        damage: 18, damageFull: 54, pierce: 2, pierceFull: 7, type: 'arcane', knockback: 3.5, knockbackFull: 8.0,
+        hitstop: 52, hitstopFull: 96, color: '#68cfae', colorFull: '#f3a45d', size: 1.1, sizeFull: 2.1,
+        coreSize: 0.8, coreSizeFull: 1.7, hero: true, onExpire: 'burst' },
+      shake: { amp: 0.08, dur: 0.15, freq: 33 }, shakeFull: { amp: 0.17, dur: 0.26, freq: 27 }, sfx: 'bow.loose', sfxFull: 'bow.power' },
+  },
+
+  // ═══════════════════════════════════════════════════ SISTER BLADES ══════
+  blades: {
+    id: 'blades', name: 'Sister Blades', kind: 'melee', character: 'melinoe',
+    palette: { core: '#f7fff0', body: '#8bd7be', glow: '#ff8a65' },
+    buffer: 0.29, moveScale: 0.24, critChance: 0.15, critMul: 2.15,
+    combo: [
+      step({ name: 'knife1', windup: 0.075, active: 0.055, recovery: 0.135,
+        hitbox: { shape: 'arc', radius: 1.9, arcDeg: 105, offset: [0.35, 0], maxTargets: 3 }, damage: 11,
+        knockback: 2.1, poise: 7, hitstop: 42, root: { distance: 0.65, ease: 2.5 },
+        vfx: { call: 'slash', arc: 112, radius: 2.0, width: 0.28, y: 1.0, color: '#8bd7be', spin: 1 }, sfx: 'blade.swing1' }),
+      step({ name: 'knife2', windup: 0.065, active: 0.055, recovery: 0.14,
+        hitbox: { shape: 'arc', radius: 2.0, arcDeg: 118, offset: [0.38, 0], maxTargets: 3 }, damage: 12,
+        knockback: 2.4, poise: 8, hitstop: 46, root: { distance: 0.72, ease: 2.5 },
+        vfx: { call: 'slash', arc: 124, radius: 2.08, width: 0.3, y: 1.05, color: '#ff8a65', spin: -1 }, sfx: 'blade.swing2' }),
+      step({ name: 'knife3', windup: 0.13, active: 0.075, recovery: 0.22,
+        hitbox: { shape: 'box', halfLength: 1.7, halfWidth: 0.78, offset: [1.45, 0], maxTargets: 5 }, damage: 23,
+        knockback: 5.2, poise: 18, hitstop: 76, root: { distance: 1.75, ease: 2.7 },
+        vfx: { call: 'thrust', length: 3.2, width: 0.42, y: 1.02, color: '#f7fff0' }, sfx: 'blade.lunge' }),
+    ],
+    dashAttack: step({ name: 'shadowcut', windup: 0.055, active: 0.055, recovery: 0.145,
+      hitbox: { shape: 'arc', radius: 2.15, arcDeg: 135, offset: [0.45, 0], maxTargets: 4 }, damage: 16,
+      knockback: 3.2, poise: 11, hitstop: 55, root: { distance: 1.15, ease: 2.6 },
+      vfx: { call: 'slash', arc: 142, radius: 2.25, width: 0.33, y: 1.06, color: '#8bd7be', spin: -1 }, sfx: 'blade.dashcut' }),
+    charge: { action: 'special', minHold: 0.06, fullHold: 0.54, windup: 0.06, recovery: 0.19,
+      tell: { color: '#ff8a65' }, projectile: { kind: 'straight', speed: 33, speedFull: 48, radius: 0.18, life: 1.15,
+        damage: 13, damageFull: 36, pierce: 1, pierceFull: 4, type: 'physical', knockback: 1.8, knockbackFull: 4.2,
+        hitstop: 38, hitstopFull: 70, color: '#8bd7be', colorFull: '#ff8a65', size: 0.8, sizeFull: 1.35,
+        coreSize: 0.7, coreSizeFull: 1.1, hero: true, crit: 0.08, critFull: 0.28 },
+      shake: { amp: 0.04, dur: 0.1, freq: 36 }, shakeFull: { amp: 0.1, dur: 0.18, freq: 31 }, sfx: 'bow.loose', sfxFull: 'bow.power' },
+  },
+
+  // ═══════════════════════════════════════════════════ UMBRAL FLAMES ══════
+  flames: {
+    id: 'flames', name: 'Umbral Flames', kind: 'ranged', character: 'melinoe',
+    palette: { core: '#eefff8', body: '#55c7a5', glow: '#ff7a4f' },
+    buffer: 0.22, moveScale: 0.70, critChance: 0.08, critMul: 1.85,
+    charge: { action: 'attack', minHold: 0.04, fullHold: 0.62, windup: 0.04, recovery: 0.15, recoveryFull: 0.22,
+      tell: { color: '#55c7a5' }, projectile: { kind: 'homing', speed: 20, speedFull: 29, radius: 0.24, life: 1.75,
+        damage: 10, damageFull: 30, pierce: 1, pierceFull: 3, type: 'arcane', knockback: 1.4, knockbackFull: 3.6,
+        hitstop: 34, hitstopFull: 64, color: '#55c7a5', colorFull: '#ff7a4f', size: 0.82, sizeFull: 1.55,
+        coreSize: 0.72, coreSizeFull: 1.3, hero: true, onExpire: 'burst' },
+      shake: { amp: 0.035, dur: 0.1, freq: 36 }, shakeFull: { amp: 0.10, dur: 0.18, freq: 31 }, sfx: 'bow.loose', sfxFull: 'charge.full' },
+    special: step({ name: 'orbit', windup: 0.13, active: 0.12, recovery: 0.22,
+      hitbox: { shape: 'ring', radius: 3.25, innerRadius: 1.05, arcDeg: 360, maxTargets: 10 }, damage: 21, type: 'arcane',
+      knockback: 4.4, poise: 20, hitstop: 65, shake: { amp: 0.11, dur: 0.2, freq: 30 },
+      vfx: { call: 'shockwave', radius: 3.3, color: '#ff7a4f', life: 0.44 }, sfx: 'blade.sweep' }),
+  },
+
+  // ═══════════════════════════════════════════════════ MOONSTONE AXE ══════
+  axe: {
+    id: 'axe', name: 'Moonstone Axe', kind: 'melee', character: 'melinoe',
+    palette: { core: '#e8fff5', body: '#75bca9', glow: '#ff9a62' },
+    buffer: 0.28, moveScale: 0.20, critChance: 0.07, critMul: 2.25,
+    combo: [
+      step({ name: 'hew1', windup: 0.22, active: 0.10, recovery: 0.30,
+        hitbox: { shape: 'arc', radius: 3.15, arcDeg: 185, offset: [0.45, 0], maxTargets: 7 }, damage: 31,
+        knockback: 8.8, poise: 34, hitstop: 105, shake: { amp: 0.18, dur: 0.28, freq: 27 }, root: { distance: 0.85, ease: 2.0 },
+        vfx: { call: 'slash', arc: 192, radius: 3.25, width: 0.68, y: 1.12, color: '#75bca9', spin: 1 }, sfx: 'blade.lunge' }),
+      step({ name: 'hew2', windup: 0.28, active: 0.12, recovery: 0.38,
+        hitbox: { shape: 'ring', radius: 3.7, innerRadius: 0.55, arcDeg: 360, maxTargets: 12 }, damage: 48,
+        knockback: 12.0, poise: 48, hitstop: 132, shake: { amp: 0.26, dur: 0.36, freq: 24 }, root: { distance: 1.05, ease: 1.9 },
+        vfx: { call: 'shockwave', radius: 3.75, color: '#ff9a62', life: 0.52 }, sfx: 'shield.rush' }),
+    ],
+    special: step({ name: 'moonwall', windup: 0.16, active: 0.11, recovery: 0.25,
+      hitbox: { shape: 'arc', radius: 2.8, arcDeg: 230, offset: [0.2, 0], maxTargets: 9 }, damage: 25, type: 'arcane',
+      knockback: 10, poise: 40, hitstop: 90, shake: { amp: 0.16, dur: 0.25, freq: 28 },
+      vfx: { call: 'slash', arc: 240, radius: 2.9, width: 0.72, y: 1.15, color: '#e8fff5', spin: -1 }, sfx: 'shield.block' }),
+  },
+
+  // ═════════════════════════════════════════════════════ ARGENT SKULL ══════
+  skull: {
+    id: 'skull', name: 'Argent Skull', kind: 'ranged', character: 'melinoe',
+    palette: { core: '#f5fff4', body: '#9fc9ba', glow: '#ff8359' },
+    buffer: 0.24, moveScale: 0.58, critChance: 0.11, critMul: 2.15,
+    charge: { action: 'attack', minHold: 0.05, fullHold: 0.48, windup: 0.05, recovery: 0.24, recoveryFull: 0.31,
+      tell: { color: '#ff8359' }, projectile: { kind: 'straight', speed: 25, speedFull: 37, radius: 0.38, life: 1.15,
+        damage: 18, damageFull: 50, pierce: 1, pierceFull: 2, type: 'arcane', knockback: 5.2, knockbackFull: 10.5,
+        hitstop: 58, hitstopFull: 105, color: '#9fc9ba', colorFull: '#ff8359', size: 1.25, sizeFull: 2.25,
+        coreSize: 1.0, coreSizeFull: 1.8, hero: true, onExpire: 'burst' },
+      shake: { amp: 0.08, dur: 0.15, freq: 32 }, shakeFull: { amp: 0.2, dur: 0.3, freq: 25 }, sfx: 'bow.loose', sfxFull: 'shield.rush' },
+    special: step({ name: 'skullrush', windup: 0.10, active: 0.09, recovery: 0.23,
+      hitbox: { shape: 'box', halfLength: 2.0, halfWidth: 1.0, offset: [1.65, 0], maxTargets: 7 }, damage: 23, type: 'arcane',
+      knockback: 8.2, poise: 31, hitstop: 82, root: { distance: 2.4, ease: 2.8 }, shake: { amp: 0.15, dur: 0.24, freq: 29 },
+      vfx: { call: 'thrust', length: 4.1, width: 0.68, y: 0.92, color: '#ff8359' }, sfx: 'shield.rush' }),
+  },
+
+  // ═════════════════════════════════════════════════════ BLACK COAT ════════
+  coat: {
+    id: 'coat', name: 'Black Coat', kind: 'melee', character: 'melinoe',
+    palette: { core: '#eafff7', body: '#476e67', glow: '#76f0c3' },
+    buffer: 0.25, moveScale: 0.32, critChance: 0.10, critMul: 2.0,
+    combo: [
+      step({ name: 'gauntlet1', windup: 0.09, active: 0.06, recovery: 0.15,
+        hitbox: { shape: 'box', halfLength: 1.3, halfWidth: 0.72, offset: [1.25, 0], maxTargets: 3 }, damage: 14,
+        knockback: 3.2, poise: 12, hitstop: 50, root: { distance: 0.7, ease: 2.5 },
+        vfx: { call: 'thrust', length: 2.6, width: 0.38, y: 1.03, color: '#76f0c3' }, sfx: 'shield.bash1' }),
+      step({ name: 'gauntlet2', windup: 0.08, active: 0.06, recovery: 0.16,
+        hitbox: { shape: 'box', halfLength: 1.4, halfWidth: 0.78, offset: [1.32, 0], maxTargets: 4 }, damage: 15,
+        knockback: 3.6, poise: 13, hitstop: 54, root: { distance: 0.78, ease: 2.5 },
+        vfx: { call: 'thrust', length: 2.8, width: 0.4, y: 1.06, color: '#ff9a62' }, sfx: 'shield.bash1' }),
+      step({ name: 'gauntlet3', windup: 0.16, active: 0.085, recovery: 0.25,
+        hitbox: { shape: 'ring', radius: 2.7, innerRadius: 0.4, arcDeg: 360, maxTargets: 8 }, damage: 29,
+        knockback: 7.8, poise: 30, hitstop: 91, root: { distance: 1.1, ease: 2.3 },
+        vfx: { call: 'shockwave', radius: 2.75, color: '#76f0c3', life: 0.36 }, sfx: 'shield.bash2' }),
+    ],
+    dashAttack: step({ name: 'jetpunch', windup: 0.07, active: 0.07, recovery: 0.17,
+      hitbox: { shape: 'box', halfLength: 1.75, halfWidth: 0.82, offset: [1.6, 0], maxTargets: 5 }, damage: 20,
+      knockback: 6.5, poise: 21, hitstop: 72, root: { distance: 1.55, ease: 2.8 },
+      vfx: { call: 'thrust', length: 3.5, width: 0.5, y: 1.04, color: '#76f0c3' }, sfx: 'shield.rush' }),
+    special: step({ name: 'rockets', windup: 0.15, active: 0.09, recovery: 0.25,
+      hitbox: { shape: 'ring', radius: 3.1, innerRadius: 0.8, arcDeg: 360, maxTargets: 10 }, damage: 24, type: 'arcane',
+      knockback: 6.4, poise: 27, hitstop: 78, shake: { amp: 0.14, dur: 0.22, freq: 29 },
+      vfx: { call: 'shockwave', radius: 3.15, color: '#ff9a62', life: 0.40 }, sfx: 'blade.sweep' }),
+  },
 };
 
 export const WEAPON_IDS = Object.keys(WEAPONS);
@@ -258,11 +469,15 @@ export class WeaponRuntime {
   constructor(combat, wielder, weaponId = 'blade') {
     this.combat = combat; this.ctx = combat.ctx; this.actor = wielder;
     this.equip(weaponId);
-    this.state = 'idle';        // idle | attack | charge | block | rush
+    this.state = 'idle';        // idle | attack | dashAttack | charge | block | rush | reload
     this.step = null; this.stepIndex = -1;
     this.t = 0; this.dur = 0;
     this.hbId = 0; this.fired = false;
     this.queued = false; this.buffer = 0;
+    // A dash-strike is an attack buffered during the hero's dash. It stays a
+    // separate intent until the runtime consumes the attack buffer so the
+    // same-frame Dash+Attack case cannot accidentally fall back to cut1.
+    this.dashQueued = false;
     this.charge = 0; this.holding = false;
     this.rootDone = 0;
     this.stuck = null;           // the thrown spear waiting to be recalled
@@ -273,15 +488,23 @@ export class WeaponRuntime {
     const w = WEAPONS[id] || WEAPONS.blade;
     this.weapon = w; this.weaponId = w.id;
     this.state = 'idle'; this.step = null; this.stepIndex = -1; this.charge = 0;
-    this.ctx?.events.emit('weapon.equipped', { id: w.id, name: w.name, actor: this.actor });
+    this.ammoMax = w.magazine?.capacity || 0;
+    this.ammo = this.ammoMax;
+    this.reloadT = 0; this._reloadQueued = false;
+    this.ctx?.events.emit('weapon.equipped', { id: w.id, name: w.name, actor: this.actor, ammo: this.ammo, maxAmmo: this.ammoMax });
+    if (this.ammoMax) this.ctx?.events.emit('weapon.ammo', { weapon: w.id, current: this.ammo, max: this.ammoMax, actor: this.actor });
     return w;
   }
 
   get busy() { return this.state !== 'idle' && this.state !== 'block'; }
   /** Recovery is dash-cancellable from the step's `cancel` mark. */
-  get cancellable() { return this.state !== 'attack' || (this.step && this.t >= this.step.cancel); }
+  get cancellable() {
+    const committedStrike = this.state === 'attack' || this.state === 'dashAttack';
+    return !committedStrike || (this.step && this.t >= this.step.cancel);
+  }
   get moveScale() {
     if (this.state === 'idle') return 1;
+    if (this.state === 'reload') return 0.46;
     if (this.state === 'block' || this.state === 'charge') return this.weapon.moveScale;
     if (this.step && this.t >= this.step.cancel) return this.weapon.moveScale;
     return 0.06;
@@ -291,18 +514,36 @@ export class WeaponRuntime {
   press(action) {
     const w = this.weapon;
     if (action === 'attack') {
+      this.actionSlot = 'attack';
+      if (this.weaponId === 'rail' && this.ammo <= 0) { if (this.state === 'idle') this._beginReload(); return; }
       if (w.charge && w.charge.action === 'attack') { this.holding = true; if (!this.busy) this._beginCharge(); return; }
       if (this.state === 'attack') { this.queued = true; return; }
+      if (this.state === 'dashAttack') return;
       this.buffer = w.buffer;
       return;
     }
     if (action === 'special') {
+      this.actionSlot = 'special';
+      // A second Special press recalls the thrown spear. This must precede
+      // charge/busy handling or the input simply starts another throw charge.
+      if (this.weaponId === 'spear' && this.stuck) { this.recall(); return; }
       if (w.block) { this._beginBlock(); return; }
       if (w.charge && w.charge.action === 'special') { this.holding = true; if (!this.busy) this._beginCharge(); return; }
       if (w.special && !this.busy) this._beginStep(w.special, -1);
       return;
     }
     if (action === 'dash' && this.cancellable) this.cancel();
+  }
+  /** Promote the live attack buffer to this arm's authored dash-strike. */
+  queueDashAttack() {
+    if (!this.weapon.dashAttack) return false;
+    // Once the dashcut has begun, repeated input is a normal combo request.
+    // Re-arming dash intent here could survive the active move and turn a
+    // later standing Attack into an unexplained second dashcut.
+    if (this.state === 'dashAttack') return false;
+    this.dashQueued = true;
+    this.buffer = Math.max(this.buffer, this.weapon.buffer);
+    return true;
   }
   release(action) {
     const w = this.weapon;
@@ -311,23 +552,45 @@ export class WeaponRuntime {
     else if (this.state === 'block') this._endBlock();
   }
   cancel() {
+    const cancelledReload = this.state === 'reload';
     if (this.hbId) { this.combat.hitboxes.cancel(this.hbId); this.hbId = 0; }
-    this.state = 'idle'; this.step = null; this.queued = false; this.charge = 0;
+    this.state = 'idle'; this.step = null; this.queued = false; this.dashQueued = false; this.charge = 0;
+    this.reloadT = 0; this._reloadQueued = false;
+    if (cancelledReload) this.ctx.events.emit('weapon.reload.cancel', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: this.actor });
   }
 
   // ───────────────────────────────────────────────────────────── update ────
   update(dt) {
-    if (this.buffer > 0) this.buffer -= dt;
+    // A dash-strike is released after the movement dash, not inside it. Pause
+    // its short input buffer while the actor is still dashing; both states run
+    // on the same fixed clock, so this preserves intent without beginning the
+    // hitbox, root motion or weapon animation under the dash animation.
+    const waitingForDashExit = this.dashQueued && this.actor?.state === 'dash';
+    if (this.buffer > 0 && !waitingForDashExit) {
+      this.buffer = Math.max(0, this.buffer - dt);
+      if (this.buffer <= 0) this.dashQueued = false;
+    }
     if (this.blockT > 0) this.blockT -= dt;
+    const actionDt = this.actor === this.ctx.player && this.actionSlot === 'attack'
+      ? dt * (this.ctx.boons?.mods?.attackSpeed || 1) : dt;
 
     switch (this.state) {
       case 'idle':
-        if (this.buffer > 0 && this.weapon.combo) { this.buffer = 0; this._beginStep(this.weapon.combo[0], 0); }
+        if (this.buffer > 0 && this.dashQueued && this.weapon.dashAttack) {
+          if (this.actor?.state === 'dash') break;
+          this.buffer = 0;
+          this._beginDashAttack(this.weapon.dashAttack);
+        } else if (this.buffer > 0 && this.weapon.combo) {
+          this.buffer = 0;
+          this._beginStep(this.weapon.combo[0], 0);
+        }
         break;
-      case 'attack': this._stepAttack(dt); break;
-      case 'charge': this._stepCharge(dt); break;
+      case 'attack': this._stepAttack(actionDt); break;
+      case 'dashAttack': this._stepAttack(actionDt); break;
+      case 'charge': this._stepCharge(actionDt); break;
       case 'rush': this._stepRush(dt); break;
       case 'block': this._stepBlock(dt); break;
+      case 'reload': this._stepReload(dt); break;
     }
   }
 
@@ -341,7 +604,13 @@ export class WeaponRuntime {
       this._beginStep(this.weapon.combo[this.stepIndex + 1], this.stepIndex + 1);
       return;
     }
-    if (this.t >= s.dur) { this.state = 'idle'; this.step = null; this.queued = false; }
+    if (this.t >= s.dur) {
+      if (this._reloadQueued) { this._beginReload(); return; }
+      this.state = 'idle'; this.step = null; this.queued = false;
+      // Completion is a hard input boundary. No dash intent from this attack
+      // may affect the next standing press.
+      this.dashQueued = false;
+    }
   }
 
   _rootMotion(dt, s) {
@@ -361,7 +630,7 @@ export class WeaponRuntime {
 
   _beginStep(s, idx) {
     this.state = 'attack'; this.step = s; this.stepIndex = idx;
-    this.t = 0; this.fired = false; this.queued = false; this.rootDone = 0;
+    this.t = 0; this.fired = false; this.queued = false; this.dashQueued = false; this.rootDone = 0;
     this.dur = s.dur;
     const A = this.actor;
     this.ctx.events.emit('weapon.step', { weapon: this.weaponId, step: s.name, actor: A, dur: s.dur, t0: s.t0, t1: s.t1 });
@@ -374,6 +643,16 @@ export class WeaponRuntime {
   _fire(s) {
     const A = this.actor, C = this.combat;
     const hb = s.hitbox;
+    const slot = s === this.weapon.special ? 'special' : 'attack';
+    const { mods, rider } = this._boon(slot);
+    const slotMul = slot === 'special' ? (mods?.specialMul || 1) : (mods?.attackMul || 1);
+    const forge = this._forge();
+    const forgeActionMul = slot === 'special' ? (forge?.specialMul || 1) : (forge?.attackMul || 1);
+    const dashBonus = slot === 'attack' && A._boonPostDash && rider?.postDashBonus ? rider.postDashBonus : 0;
+    if (dashBonus) A._boonPostDash = false;
+    const damage = s.damage * slotMul * forgeActionMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus;
+    const forgeMul = mods?.forgeMul || 1;
+    const color = rider?.color || (s.vfx && s.vfx.color) || this.weapon.palette.body;
     if (hb) {
       this.hbId = C.hitboxes.spawn({
         shape: hb.shape, owner: A, source: A,
@@ -381,23 +660,112 @@ export class WeaponRuntime {
         length: hb.length, halfWidth: hb.halfWidth, halfLength: hb.halfLength,
         offset: hb.offset, maxTargets: hb.maxTargets ?? 6, pierce: hb.pierce ?? 255,
         t0: 0, t1: s.t1 - s.t0, life: s.t1 - s.t0 + 0.02,
-        damage: s.damage, type: s.type || 'physical', knockback: s.knockback,
+        damage, type: rider?.type || s.type || 'physical', knockback: s.knockback + (rider?.knockback || 0) + (mods?.knockback || 0),
         poiseDamage: s.poise, hitstop: s.hitstop, shake: s.shake ? s.shake.amp : 0,
-        status: s.status, crit: s.crit || 0,
-        color: (s.vfx && s.vfx.color) || this.weapon.palette.body,
+        status: rider?.status || (this.weaponId === 'blade' && forge?.ember ? 'burn' : s.status),
+        statusStacks: rider?.stacks || (this.weaponId === 'blade' && forge?.ember ? Math.round(forge.ember * forgeMul) : 1), statusPower: rider?.statusPower || 0,
+        crit: (s.crit || 0) + (this.weapon.critChance || 0) + (rider?.critChance || 0),
+        expose: rider?.expose || 0, boonGod: rider?.god, boonSlot: slot,
+        color,
         tag: this.weaponId + ':' + s.name,
       });
+      // Olympian riders own the primary hit's status. Emberbrand is a second
+      // forge proc so it remains live beside Shock, Weak, Doom, Chill or an
+      // existing Burn rider instead of silently losing to `rider.status`.
+      if (this.weaponId === 'blade' && forge?.ember && rider?.status) {
+        C.hitboxes.spawn({
+          shape: hb.shape, owner: A, source: A,
+          radius: hb.radius, innerRadius: hb.innerRadius, arcDeg: hb.arcDeg,
+          length: hb.length, halfWidth: hb.halfWidth, halfLength: hb.halfLength,
+          offset: hb.offset, maxTargets: hb.maxTargets ?? 6, pierce: hb.pierce ?? 255,
+          t0: 0, t1: s.t1 - s.t0, life: s.t1 - s.t0 + 0.02,
+          damage: 0.01, type: 'fire', knockback: 0, poiseDamage: 0, hitstop: 0,
+          status: 'burn', statusStacks: Math.max(1, Math.round(forge.ember * forgeMul)),
+          color: '#ff9b42', tag: 'forge:blade-ember',
+        });
+      }
+      if (forge?.nova) {
+        C.hitboxes.spawn({ shape: 'circle', owner: A, source: A, follow: false,
+          x: A.position.x + A.facing.x * 0.8, z: A.position.z + A.facing.y * 0.8,
+          radius: 2.6, t0: 0, t1: 0.08, life: 0.10, maxTargets: 10,
+          damage: forge.nova * forgeMul, type: 'fire', knockback: 3.5,
+          status: 'burn', statusStacks: 1, color: '#ff9b42', tag: `forge:${this.weaponId}-nova` });
+        this.ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x + A.facing.x * 0.8, 0.07, A.position.z + A.facing.y * 0.8), { radius: 2.6, color: '#ff9b42', life: 0.30 });
+        this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'nova' });
+      }
     }
-    this._playVfx(s);
+    this._playVfx(s, rider, slot);
+    const bladeFinisher = this.weaponId === 'blade' && slot === 'attack' && this.weapon.combo && this.stepIndex === this.weapon.combo.length - 1;
+    if (bladeFinisher && forge?.wave) {
+      C.projectiles.fire({
+        x: A.position.x + A.facing.x * 1.0, y: 0.85, z: A.position.z + A.facing.y * 1.0,
+        dx: A.facing.x, dz: A.facing.y, kind: 'straight', speed: 12, radius: 0.52, life: 0.85,
+        damage: forge.wave * forgeMul, type: 'fire', pierce: 4, knockback: 3.2, hitstop: 0.06,
+        color: '#ff9b42', size: 1.25, coreSize: 0.42, status: 'burn', statusStacks: 2,
+        source: A, hero: true, onExpire: 'burst', tag: 'forge:blade-wave',
+      });
+      this.ctx.vfx?.beam?.(this.combat._v3a.set(A.position.x, 0.18, A.position.z), this.combat._v3b.set(A.position.x + A.facing.x * 4.8, 0.18, A.position.z + A.facing.y * 4.8), { color: '#ff9b42', width: 0.5, life: 0.24 });
+      this.ctx.events.emit('forge.triggered', { weapon: 'blade', effect: 'wave' });
+    }
+    if (bladeFinisher && forge?.echo) {
+      C.hitboxes.spawn({ shape: 'circle', owner: A, source: A, follow: false,
+        x: A.position.x, z: A.position.z, radius: 3.2, t0: 0, t1: 0.10, life: 0.12,
+        maxTargets: 12, damage: forge.echo * forgeMul, type: 'fire', knockback: 4.0,
+        status: 'burn', statusStacks: 1, color: '#ffb15c', tag: 'forge:blade-echo' });
+      this.ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x, 0.07, A.position.z), { radius: 3.2, color: '#ff9b42', life: 0.38 });
+      this.ctx.events.emit('forge.triggered', { weapon: 'blade', effect: 'echo' });
+    }
+    if (slot === 'special' && rider?.deflect) C.activateDeflect(A, rider.deflect, rider.color);
+    if (slot === 'special' && rider?.god === 'zeus') {
+      C.hitboxes.spawn({ shape: 'circle', owner: A, source: A, follow: false,
+        x: A.position.x, z: A.position.z, radius: 3.2, t0: 0, t1: 0.08, life: 0.10,
+        maxTargets: 10, damage: Math.max(1, (rider.bonus || 0) * 0.55), type: 'lightning',
+        knockback: 2.2, status: 'shock', statusStacks: 1, crit: rider.critChance || 0,
+        color, boonGod: 'zeus', boonSlot: 'special', tag: 'boon:thunder-flourish' });
+      this.ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x, 0.08, A.position.z), { radius: 3.2, color, life: 0.32 });
+    }
     this.ctx.audio?.sfx?.(s.sfx + '.hit', { pos: A.position, gain: 0.5 });
   }
 
-  _playVfx(s) {
+  /** A real third action state, not a standing Attack pasted onto Dash. */
+  _beginDashAttack(s) {
+    this.state = 'dashAttack'; this.step = s; this.stepIndex = -2;
+    this.t = 0; this.fired = false; this.queued = false; this.dashQueued = false; this.rootDone = 0;
+    this.dur = s.dur;
+    const A = this.actor;
+    this.ctx.events.emit('weapon.dashAttack', {
+      weapon: this.weaponId, step: s.name, actor: A, dur: s.dur, t0: s.t0, t1: s.t1,
+    });
+    // Preserve generic weapon-step listeners such as cloth/audio accents while
+    // exposing the dedicated event and state to animation/gameplay systems.
+    this.ctx.events.emit('weapon.step', { weapon: this.weaponId, step: s.name, actor: A, dur: s.dur, t0: s.t0, t1: s.t1, dashAttack: true });
+    A.onWeaponState?.('dashAttack', s);
+    this.ctx.audio?.sfx?.(s.sfx, { pos: A.position });
+    const color = s.vfx?.color || this.weapon.palette.glow || this.weapon.palette.body;
+    this.ctx.vfx?.shockwave?.(A.position.clone().setY(0.05), { radius: 1.55, color, life: 0.24 });
+    this.ctx.vfx?.burst?.(A.position.clone().setY(0.8), {
+      count: 10, color, speed: 7.5, spread: 0.58, kind: 'chev',
+    });
+    if (s.shake) this.ctx.events.emit('camera.shake', { amp: s.shake.amp * 0.42, dur: 0.10, freq: 38 });
+  }
+
+  _boon(slot) {
+    if (this.actor !== this.ctx.player) return { mods: null, rider: null };
+    const mods = this.ctx.boons?.mods || null;
+    return { mods, rider: mods?.rider?.[slot] || null };
+  }
+
+  _forge() {
+    if (this.actor !== this.ctx.player) return null;
+    return this.ctx.boons?.mods?.forge?.[this.weaponId] || null;
+  }
+
+  _playVfx(s, rider = null, slot = 'attack') {
     const v = s.vfx; if (!v) return;
     const A = this.actor, ctx = this.ctx;
     const P = this.combat._v3a.set(A.position.x, v.y ?? 1.05, A.position.z);
     const D = this.combat._v3b.set(A.facing.x, 0, A.facing.y);
-    const col = v.color || this.weapon.palette.body;
+    const col = rider?.color || v.color || this.weapon.palette.body;
     if (v.call === 'slash') {
       ctx.vfx?.slash?.(P, D, { arc: v.arc ?? 130, radius: v.radius ?? 2.3, width: v.width ?? 0.44, color: col, glow: this.weapon.palette.glow, spin: v.spin });
     } else if (v.call === 'shockwave') {
@@ -407,6 +775,27 @@ export class WeaponRuntime {
       // tell you the hitbox is a line before the damage number does
       const b = this.combat._v3b.set(A.position.x + A.facing.x * (v.length ?? 3.8), v.y ?? 1.08, A.position.z + A.facing.y * (v.length ?? 3.8));
       ctx.vfx?.beam?.(P, b, { color: col, width: v.width ?? 0.30, life: 0.20 });
+    }
+    if (rider) this._playBoonFx(rider, P, D, slot);
+  }
+
+  _playBoonFx(rider, pos, dir, slot) {
+    const ctx = this.ctx, col = rider.color || '#f2c14e';
+    const tier = rider.tier || 1;
+    const kind = {
+      zeus: 'sparkFine', poseidon: 'wisp', athena: 'shard', aphrodite: 'mote',
+      ares: 'rune', artemis: 'chev', dionysus: 'wisp', hermes: 'chev',
+      hecate: 'rune', selene: 'star',
+    }[rider.god] || 'spark';
+    ctx.vfx?.burst?.(pos, {
+      count: (slot === 'special' ? 15 : 9) + tier * 3, color: col,
+      speed: slot === 'special' ? 9 : 6.5, spread: rider.god === 'poseidon' ? 1.15 : 0.65,
+      kind, dir,
+    });
+    if (['poseidon', 'athena', 'dionysus', 'selene'].includes(rider.god)) {
+      ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.07, this.actor.position.z), {
+        radius: (slot === 'special' ? 2.6 : 1.8) + tier * 0.12, color: col, life: 0.32,
+      });
     }
   }
 
@@ -433,10 +822,23 @@ export class WeaponRuntime {
   }
   _releaseCharge() {
     const c = this.weapon.charge; if (!c) { this.state = 'idle'; return; }
-    const full = this.charge >= 0.999;
+    let full = this.charge >= 0.999;
+    let power = this.charge;
+    if (full && this.actor === this.ctx.player && this.actor.characterId === 'melinoe') {
+      const cost = this.weapon.omegaCost || 20;
+      if ((this.actor.mana || 0) < cost) {
+        full = false; power = 0.78;
+        this.ctx.ui?.toast?.('NOT ENOUGH MAGICK FOR Ω MOVE', { color: '#86e6c1', dur: 1.4 });
+      } else {
+        this.actor.mana -= cost;
+        this.ctx.ui?.setMana?.(this.actor.mana, this.actor.maxMana);
+        this.ctx.events.emit('magick.spent', { amount: cost, source: 'omega', weapon: this.weaponId, action: c.action });
+        this.ctx.events.emit('weapon.omega', { weapon: this.weaponId, action: c.action, actor: this.actor });
+      }
+    }
     this._fullPing = false;
     if (this.weaponId === 'shield') return this._beginRush(full);
-    this._loose(c, this.charge, full);
+    this._loose(c, power, full);
     this.state = 'attack';
     this.step = { name: 'loose', t0: 0, t1: 0.01, dur: (full ? (c.recoveryFull ?? c.recovery) : c.recovery), cancel: c.recovery * 0.3, chain: 1e9, root: null, sfx: '' };
     this.t = 0; this.fired = true; this.stepIndex = -1; this.queued = false;
@@ -444,32 +846,104 @@ export class WeaponRuntime {
   _loose(c, k, full) {
     const A = this.actor, P = c.projectile;
     const lerp = (a, b) => a + ((b ?? a) - a) * k;
-    const col = full && P.colorFull ? P.colorFull : P.color;
-    const id = this.combat.projectiles.fire({
+    const slot = c.action === 'special' ? 'special' : 'attack';
+    const { mods, rider } = this._boon(slot);
+    const slotMul = slot === 'special' ? (mods?.specialMul || 1) : (mods?.attackMul || 1);
+    const col = rider?.color || (full && P.colorFull ? P.colorFull : P.color);
+    const dashBonus = slot === 'attack' && A._boonPostDash && rider?.postDashBonus ? rider.postDashBonus : 0;
+    if (dashBonus) A._boonPostDash = false;
+    const forge = this._forge();
+    const forgeMul = mods?.forgeMul || 1;
+    const forgeActionMul = slot === 'special' ? (forge?.specialMul || 1) : (forge?.attackMul || 1);
+    const homing = full && ((this.weaponId === 'spear' ? forge?.homing : 0) || (this.weaponId === 'bow' ? forge?.homing : 0));
+    const blastRadius = full ? (forge?.blast || 0) : 0;
+    const spec = {
       x: A.position.x + A.facing.x * 0.7, y: 1.12, z: A.position.z + A.facing.y * 0.7,
       dx: A.facing.x, dz: A.facing.y,
-      kind: P.kind, speed: lerp(P.speed, P.speedFull), radius: P.radius, life: P.life,
-      damage: lerp(P.damage, P.damageFull), type: P.type,
+      kind: homing ? 'homing' : P.kind, homing: homing || 0,
+      speed: lerp(P.speed, P.speedFull), radius: P.radius, life: P.life,
+      damage: lerp(P.damage, P.damageFull) * slotMul * forgeActionMul * (mods?.dmgMul || 1) + (rider?.bonus || 0) + dashBonus,
+      type: rider?.type || P.type,
       pierce: Math.round(lerp(P.pierce, P.pierceFull)),
-      knockback: lerp(P.knockback, P.knockbackFull), hitstop: lerp(P.hitstop, P.hitstopFull),
+      knockback: lerp(P.knockback, P.knockbackFull) + (rider?.knockback || 0) + (mods?.knockback || 0), hitstop: lerp(P.hitstop, P.hitstopFull),
       color: col, size: lerp(P.size, P.sizeFull), coreSize: lerp(P.coreSize, P.coreSizeFull),
-      crit: lerp(P.crit ?? 0, P.critFull ?? 0),
+      crit: lerp(P.crit ?? 0, P.critFull ?? 0) + (this.weapon.critChance || 0) + (rider?.critChance || 0),
+      status: rider?.status || P.status, statusStacks: rider?.stacks || P.statusStacks || 1, statusPower: rider?.statusPower || 0,
+      expose: rider?.expose || 0, boonGod: rider?.god, boonSlot: slot,
       source: A, hero: true, onExpire: P.onExpire || 'burst',
+      blastRadius: blastRadius * forgeMul,
       shake: full ? 0.2 : 0.08,
-    });
-    if (P.stick) this.stuck = id;
+    };
+    const id = this.combat.projectiles.fire(spec);
+    if (this.weaponId === 'rail' && slot === 'attack') {
+      this.ammo = Math.max(0, this.ammo - 1);
+      this._reloadQueued = this.ammo <= 0;
+      this.ctx.events.emit('weapon.ammo', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: A });
+    }
+    const spread = full && ((this.weaponId === 'spear' && forge?.trident) || forge?.triple);
+    if (spread) {
+      for (const angle of [-0.16, 0.16]) {
+        const ca = Math.cos(angle), sa = Math.sin(angle);
+        const dx = A.facing.x * ca - A.facing.y * sa;
+        const dz = A.facing.x * sa + A.facing.y * ca;
+        this.combat.projectiles.fire({ ...spec, dx, dz, damage: spec.damage * 0.72, shake: 0.04, tag: `forge:${this.weaponId}-spread` });
+      }
+      this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'spread' });
+    }
+    if (P.stick) {
+      // Keep a deterministic landing fallback because the outbound projectile
+      // may have expired or struck scenery before the player asks for recall.
+      this.stuck = {
+        id, charge: k,
+        x: spec.x + spec.dx * 7.5,
+        z: spec.z + spec.dz * 7.5,
+      };
+    }
     const sh = full && c.shakeFull ? c.shakeFull : c.shake;
     if (sh) this.ctx.events.emit('camera.shake', sh);
     this.ctx.audio?.sfx?.(full && c.sfxFull ? c.sfxFull : c.sfx, { pos: A.position });
     this.ctx.vfx?.burst?.(this.combat._v3a.set(A.position.x + A.facing.x * 0.8, 1.14, A.position.z + A.facing.y * 0.8),
       { count: full ? 22 : 9, color: col, speed: full ? 11 : 6, spread: 0.45, kind: 'chev', dir: this.combat._v3b.set(A.facing.x, 0.12, A.facing.y) });
+    if (rider) this._playBoonFx(rider, this.combat._v3a.set(A.position.x + A.facing.x, 1.1, A.position.z + A.facing.y), this.combat._v3b.set(A.facing.x, 0.12, A.facing.y), slot);
+    if (slot === 'special' && rider?.deflect) this.combat.activateDeflect(A, rider.deflect, rider.color);
     this.ctx.events.emit('weapon.loose', { weapon: this.weaponId, charge: k, full, actor: A });
     if (full) this.ctx.engine?.slowmo?.(0.55, 0.10);
+  }
+
+  // ───────────────────────────────────────────────────────────── reload ───
+  _beginReload() {
+    const mag = this.weapon.magazine;
+    if (!mag || this.ammo >= this.ammoMax) return false;
+    this.state = 'reload'; this.step = null; this.t = 0; this.reloadT = mag.reload;
+    this.holding = false; this.charge = 0; this._reloadQueued = false;
+    this.actor.onWeaponState?.('reload', mag);
+    this.ctx.events.emit('weapon.reload.begin', {
+      weapon: this.weaponId, duration: mag.reload, current: this.ammo, max: this.ammoMax, actor: this.actor,
+    });
+    this.ctx.audio?.sfx?.('shield.block', { pos: this.actor.position, gain: 0.48, rate: 0.78 });
+    if (this.actor === this.ctx.player) this.ctx.ui?.toast?.('ADAMANT RAIL · RELOADING', { color: '#ffb15c', dur: 1.15 });
+    return true;
+  }
+
+  _stepReload(dt) {
+    const mag = this.weapon.magazine;
+    if (!mag) { this.state = 'idle'; return; }
+    this.t += dt; this.reloadT = Math.max(0, mag.reload - this.t);
+    if (this.t < mag.reload) return;
+    this.ammo = this.ammoMax; this.reloadT = 0; this.state = 'idle';
+    this.ctx.events.emit('weapon.ammo', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: this.actor });
+    this.ctx.events.emit('weapon.reload.end', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: this.actor });
+    this.ctx.audio?.sfx?.('charge.full', { pos: this.actor.position, gain: 0.40, rate: 1.22 });
   }
 
   // ────────────────────────────────────────────────── shield rush / block ──
   _beginRush(full) {
     const c = this.weapon.charge;
+    const { mods, rider } = this._boon('special');
+    const forge = this._forge();
+    const forgeMul = mods?.forgeMul || 1;
+    const banked = this._forgeBank || 0;
+    this._forgeBank = 0;
     this.state = 'rush'; this.t = 0; this.rootDone = 0; this._rushFull = full;
     this._rushDist = full ? c.dash.distanceFull : c.dash.distance;
     this._rushTime = full ? c.dash.timeFull : c.dash.time;
@@ -478,11 +952,25 @@ export class WeaponRuntime {
       shape: c.hitbox.shape, owner: this.actor, source: this.actor,
       radius: c.hitbox.radius, maxTargets: c.hitbox.maxTargets, pierce: c.hitbox.pierce,
       t0: 0, t1: this._rushTime, life: this._rushTime + 0.02,
-      damage: full ? c.damageFull : c.damage, knockback: full ? c.knockbackFull : c.knockback,
+      damage: (full ? c.damageFull : c.damage) * (mods?.specialMul || 1) * (forge?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0) + banked,
+      type: rider?.type || c.type || 'physical',
+      knockback: (full ? c.knockbackFull : c.knockback) + (rider?.knockback || 0) + (mods?.knockback || 0),
       poiseDamage: c.poise, hitstop: full ? c.hitstopFull : c.hitstop,
-      shake: (full ? c.shakeFull : c.shake).amp, color: c.color, tag: 'shield:rush',
+      status: rider?.status, statusStacks: rider?.stacks || 1, statusPower: rider?.statusPower || 0,
+      crit: (this.weapon.critChance || 0) + (rider?.critChance || 0), expose: rider?.expose || 0,
+      boonGod: rider?.god, boonSlot: 'special',
+      shake: (full ? c.shakeFull : c.shake).amp, color: rider?.color || c.color, tag: 'shield:rush',
     });
-    this.ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.06, this.actor.position.z), { radius: full ? 2.6 : 1.8, color: c.color, life: 0.3 });
+    this.ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.06, this.actor.position.z), { radius: full ? 2.6 : 1.8, color: rider?.color || c.color, life: 0.3 });
+    if (full && forge?.ram) {
+      this.combat.hitboxes.spawn({ shape: 'circle', owner: this.actor, source: this.actor, follow: true,
+        radius: 3.35, t0: 0, t1: Math.min(0.18, this._rushTime), life: Math.min(0.20, this._rushTime + 0.02),
+        maxTargets: 12, damage: forge.ram * forgeMul, type: 'fire', knockback: 5.5,
+        status: 'burn', statusStacks: 2, color: '#ff9b42', tag: 'forge:shield-ram' });
+      this.ctx.events.emit('forge.triggered', { weapon: 'shield', effect: 'ram' });
+    }
+    if (rider) this._playBoonFx(rider, this.combat._v3a.set(this.actor.position.x, 1.0, this.actor.position.z), this.combat._v3b.set(this.actor.facing.x, 0, this.actor.facing.y), 'special');
+    if (rider?.deflect) this.combat.activateDeflect(this.actor, rider.deflect, rider.color);
     this.ctx.events.emit('camera.shake', full ? c.shakeFull : c.shake);
     this.ctx.audio?.sfx?.(c.sfx, { pos: this.actor.position });
   }
@@ -522,6 +1010,16 @@ export class WeaponRuntime {
           this.ctx.audio?.sfx?.(b.sfxReflect, { pos: A.position });
           this.ctx.events.emit('camera.shake', { amp: 0.09, dur: 0.16, freq: 33 });
           this.combat.hitstop(52);
+          const forge = this._forge();
+          if (forge?.reflect) {
+            const forgeMul = this.ctx.boons?.mods?.forgeMul || 1;
+            this.combat.hitboxes.spawn({ shape: 'circle', owner: A, source: A, follow: false,
+              x: p.x, z: p.z, radius: 2.5, t0: 0, t1: 0.08, life: 0.10,
+              maxTargets: 10, damage: forge.reflect * forgeMul, type: 'fire', knockback: 3.5,
+              status: 'burn', statusStacks: 1, color: '#ff9b42', tag: 'forge:shield-reflect' });
+            this.ctx.vfx?.shockwave?.(this.combat._v3a.set(p.x, 0.07, p.z), { radius: 2.5, color: '#ff9b42', life: 0.28 });
+            this.ctx.events.emit('forge.triggered', { weapon: 'shield', effect: 'reflect' });
+          }
         }
       });
     }
@@ -552,6 +1050,11 @@ export class WeaponRuntime {
       this.combat._v3b.set(-A.facing.x, 0, -A.facing.y), { type: 'arcane', scale: perfect ? 1.2 : 0.7, color: b.color });
     this.ctx.events.emit('weapon.blocked', { actor: A, perfect, amount: info.amount });
     if (perfect) {
+      const bank = this._forge()?.bank || 0;
+      if (bank) {
+        this._forgeBank = bank * (this.ctx.boons?.mods?.forgeMul || 1);
+        this.ctx.events.emit('forge.triggered', { weapon: 'shield', effect: 'bank', damage: this._forgeBank });
+      }
       this.combat.hitstop(b.perfectHitstop);
       this.ctx.engine?.slowmo?.(b.perfectSlowmo[0], b.perfectSlowmo[1]);
       return 0;
@@ -563,18 +1066,37 @@ export class WeaponRuntime {
   /** Recall the stuck spear — it flies home through everything in the way. */
   recall() {
     const c = this.weapon.charge;
-    if (!c || !c.recall) return false;
+    if (!c || !c.recall || !this.stuck) return false;
     const P = this.combat.projectiles;
     const A = this.actor;
-    // fire the return leg from wherever the throw ended up (or from max range)
-    const ox = A.position.x + A.facing.x * 7.5, oz = A.position.z + A.facing.y * 7.5;
+    // Recall from the live outbound spear when possible, otherwise from its
+    // predicted landing point after it has hit scenery or expired.
+    const outbound = P.get?.(this.stuck.id);
+    const ox = outbound?.x ?? this.stuck.x;
+    const oz = outbound?.z ?? this.stuck.z;
+    if (outbound) P.kill?.(outbound, 'silent');
     const dx = A.position.x - ox, dz = A.position.z - oz;
+    const forge = this._forge();
+    const { mods, rider } = this._boon('special');
+    const forgeMul = mods?.forgeMul || 1;
+    const charge = this.stuck.charge ?? 0;
+    const returnDamage = c.recall.damage + ((c.recall.damageFull ?? c.recall.damage) - c.recall.damage) * charge;
+    const distance = Math.hypot(dx, dz);
     P.fire({
-      x: ox, y: 1.1, z: oz, dx, dz, kind: 'straight',
-      speed: c.recall.speed, radius: c.recall.radius, life: 1.1,
-      damage: c.recall.damage, pierce: c.recall.pierce, knockback: c.recall.knockback,
+      x: ox, y: 1.1, z: oz, dx, dz,
+      kind: 'homing', homing: 12 + (forge?.homing || 0), target: A,
+      returnTarget: A, returnRadius: (A.radius || 0.5) + 0.48,
+      speed: c.recall.speed, radius: c.recall.radius, life: Math.max(0.45, distance / c.recall.speed + 0.45),
+      damage: returnDamage * (mods?.specialMul || 1) * (forge?.specialMul || 1) * (mods?.dmgMul || 1) + (rider?.bonus || 0),
+      pierce: c.recall.pierce, knockback: c.recall.knockback + (rider?.knockback || 0) + (mods?.knockback || 0),
       hitstop: c.recall.hitstop, color: c.recall.color, source: A, hero: true, size: 1.2,
+      blastRadius: (forge?.recallBlast || 0) * forgeMul,
+      type: rider?.type || (forge?.recallBlast ? 'fire' : 'physical'),
+      status: rider?.status, statusStacks: rider?.stacks || 1, statusPower: rider?.statusPower || 0,
+      crit: (this.weapon.critChance || 0) + (rider?.critChance || 0),
+      expose: rider?.expose || 0, boonGod: rider?.god, boonSlot: 'special',
     });
+    if (forge?.recallBlast || forge?.homing) this.ctx.events.emit('forge.triggered', { weapon: 'spear', effect: 'recall' });
     this.stuck = null;
     this.ctx.audio?.sfx?.('spear.recall', { pos: A.position });
     return true;

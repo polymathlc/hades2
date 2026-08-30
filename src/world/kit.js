@@ -1458,9 +1458,10 @@ export class Kit {
   // STATUES
   // =========================================================================
   /**
-   * kit.statue(kind, opts) — 'robed' | 'shade' | 'hound' | 'caryatid' |
-   * 'sentinel'. Every one is authored so its 1/8-resolution silhouette is
-   * unambiguous: a cowl, a chain, three heads, a bowed head with raised arm.
+   * kit.statue(kind, opts) — 'hades' | 'poseidon' | 'zeus' | 'robed' |
+   * 'shade' | 'hound' | 'caryatid' | 'sentinel'. Every one is authored so its
+   * 1/8-resolution silhouette is unambiguous: a divine weapon, cowl, chain,
+   * three heads, or a bowed head with raised arm.
    */
   statue(kind = 'robed', opts = {}) {
     const g = new THREE.Group();
@@ -1470,6 +1471,9 @@ export class Kit {
     const key = 'statue:' + kind;
     const geo = this.geo(key, () => {
       switch (kind) {
+        case 'hades': return this._hadesGeo();
+        case 'poseidon': return this._poseidonGeo();
+        case 'zeus': return this._zeusGeo();
         case 'shade': return this._shadeGeo();
         case 'hound': return this._houndGeo();
         case 'caryatid': return this._caryatidGeo();
@@ -1624,6 +1628,179 @@ export class Kit {
     g.computeBoundingBox();
     return g;
   }
+
+  // ── DIVINE LANDMARKS ────────────────────────────────────────────────────
+  // These three statues share a carved, mature Olympian anatomy but not a
+  // silhouette. Hades is closed and severe beneath a split crown; Poseidon
+  // opens toward the arena behind a trident; Zeus raises a lightning bolt.
+  // Their attributes live in the separate gold trim mesh so the identity is
+  // readable under every biome grade without turning the whole stone body into
+  // a bright competing character.
+  _deityGeo(kind) {
+    const p = new Parts();
+
+    // A broad folded chiton gives the landmark enough mass to survive the
+    // isometric camera while the narrowing waist keeps it human, not columnar.
+    const robe = lathe([
+      [0.68, 0.00], [0.71, 0.12], [0.66, 0.38], [0.61, 0.76],
+      [0.55, 1.15], [0.48, 1.50], [0.38, 1.72], [0.31, 1.82],
+    ], 48);
+    foldify(robe, 17, 0.085, 0.55);
+    p.add(robe);
+    for (let i = 0; i < 17; i++) {
+      const a = i / 17 * TAU + 0.08;
+      const hem = new THREE.SphereGeometry(0.095, 7, 5);
+      hem.scale(1.7, 0.28, 0.82);
+      p.add(hem, { p: [Math.cos(a) * 0.64, 0.035, Math.sin(a) * 0.64], r: [0, -a, 0] });
+    }
+
+    // Heroic torso, layered mantle and belt. The chest is deliberately wider
+    // than the old chained shade's ribcage so the replacement reads as a god.
+    const torso = lathe([
+      [0.28, 1.66], [0.34, 1.78], [0.38, 1.96], [0.40, 2.18],
+      [0.38, 2.40], [0.31, 2.54], [0.20, 2.59],
+    ], 30);
+    torso.scale(1.18, 1, 0.78);
+    p.add(torso);
+    const mantle = new THREE.TorusGeometry(0.405, 0.105, 9, 30, Math.PI * 1.18);
+    p.add(mantle, { p: [0, 2.42, -0.01], r: [Math.PI / 2, 0, -Math.PI * 0.09], s: [1.18, 1, 0.84] });
+    p.add(new THREE.TorusGeometry(0.37, 0.052, 7, 28), { p: [0, 1.73, 0], r: [Math.PI / 2, 0, 0], s: [1.08, 1, 0.82] });
+
+    // Shoulder masses and god-specific arm poses.
+    for (const s of [-1, 1]) {
+      const shoulder = new THREE.SphereGeometry(0.18, 11, 8);
+      shoulder.scale(1.15, 0.78, 0.92);
+      p.add(shoulder, { p: [s * 0.43, 2.39, 0.01] });
+    }
+    let left, right;
+    if (kind === 'hades') {
+      left = [[-0.40, 2.34, 0.01], [-0.51, 2.12, 0.10], [-0.58, 1.88, 0.19]];
+      right = [[0.40, 2.34, 0.01], [0.47, 2.11, 0.16], [0.22, 1.93, 0.34]];
+    } else if (kind === 'poseidon') {
+      left = [[-0.40, 2.34, 0.01], [-0.56, 2.17, 0.18], [-0.72, 2.03, 0.40]];
+      right = [[0.40, 2.34, 0.01], [0.52, 2.18, 0.10], [0.62, 1.99, 0.19]];
+    } else {
+      left = [[-0.40, 2.34, 0.01], [-0.47, 2.09, 0.16], [-0.22, 1.91, 0.34]];
+      right = [[0.40, 2.34, 0.01], [0.50, 2.66, 0.08], [0.52, 3.00, 0.18]];
+    }
+    for (const pts of [left, right]) {
+      p.add(taperedTube(pts.map(v => new THREE.Vector3(...v)), [0.13, 0.105, 0.082], 10));
+      const h = pts[pts.length - 1];
+      const hand = new THREE.SphereGeometry(0.09, 9, 7);
+      hand.scale(0.90, 1.22, 0.90);
+      p.add(hand, { p: h });
+    }
+
+    // Mature face, swept hair and a forked carved beard. The nose and brows
+    // face +Z, matching the established inward-facing statue convention.
+    p.add(new THREE.CylinderGeometry(0.105, 0.13, 0.17, 11), { p: [0, 2.57, 0] });
+    const head = new THREE.SphereGeometry(0.205, 16, 12);
+    head.scale(0.92, 1.12, 0.94);
+    p.add(head, { p: [0, 2.83, 0.025] });
+    const nose = new THREE.SphereGeometry(0.055, 8, 6);
+    nose.scale(0.62, 1.15, 1.28);
+    p.add(nose, { p: [0, 2.83, 0.215] });
+    for (const s of [-1, 1]) {
+      const brow = new THREE.BoxGeometry(0.125, 0.035, 0.055);
+      p.add(brow, { p: [s * 0.075, 2.91, 0.188], r: [0.08, 0, -s * 0.10] });
+      p.add(taperedTube([
+        new THREE.Vector3(s * 0.13, 2.75, 0.13),
+        new THREE.Vector3(s * 0.15, 2.58, 0.14),
+        new THREE.Vector3(s * 0.08, 2.43, 0.12),
+      ], [0.075, 0.066, 0.025], 7));
+    }
+    p.add(taperedTube([
+      new THREE.Vector3(0, 2.70, 0.15), new THREE.Vector3(0, 2.50, 0.18),
+      new THREE.Vector3(0, 2.35, 0.12),
+    ], [0.10, 0.085, 0.025], 8));
+    for (let i = 0; i < 9; i++) {
+      const a = -0.22 + i / 8 * (Math.PI + 0.44);
+      const curl = new THREE.SphereGeometry(0.088, 8, 6);
+      curl.scale(0.95, 1.12, 0.88);
+      p.add(curl, { p: [Math.cos(a) * 0.19, 2.94 + Math.sin(a) * 0.16, -0.025] });
+    }
+
+    if (kind === 'hades') {
+      // The split underworld crown replaces the shade's raised chains.
+      for (const s of [-1, 1]) {
+        p.add(new THREE.ConeGeometry(0.075, 0.48, 7), { p: [s * 0.13, 3.19, -0.02], r: [0, 0, -s * 0.20] });
+      }
+      const cloak = new THREE.CylinderGeometry(0.35, 0.76, 2.12, 22, 5, true, Math.PI * 0.42, Math.PI * 1.16);
+      foldify(cloak, 13, 0.072, 0.82);
+      p.add(cloak, { p: [0, 1.40, -0.17] });
+    } else if (kind === 'poseidon') {
+      // Sea-crown fins make the head readable even when the trident is cropped.
+      for (let i = -2; i <= 2; i++) {
+        p.add(new THREE.ConeGeometry(0.055, 0.25 + (2 - Math.abs(i)) * 0.05, 6), {
+          p: [i * 0.085, 3.12 + (2 - Math.abs(i)) * 0.025, -0.015], r: [0, 0, -i * 0.08],
+        });
+      }
+    } else {
+      // Zeus carries a heavier eagle mantle and an exposed raised arm.
+      for (const s of [-1, 1]) {
+        p.add(new THREE.ConeGeometry(0.115, 0.42, 7), { p: [s * 0.48, 2.43, -0.02], r: [0, 0, -s * 1.12] });
+      }
+    }
+
+    const g = p.merge();
+    g.computeBoundingBox();
+    return g;
+  }
+
+  _deityTrimGeo(kind) {
+    const p = new Parts();
+    p.add(new THREE.TorusGeometry(0.39, 0.035, 7, 28), { p: [0, 1.74, 0], r: [Math.PI / 2, 0, 0], s: [1.08, 1, 0.82] });
+
+    if (kind === 'hades') {
+      // Long bident: two widely separated teeth, never confused with Poseidon.
+      p.add(new THREE.CylinderGeometry(0.031, 0.038, 3.78, 8), { p: [-0.60, 2.08, 0.19] });
+      p.box(0.34, 0.055, 0.07, [-0.60, 3.91, 0.19]);
+      for (const x of [-0.73, -0.47]) p.add(new THREE.ConeGeometry(0.065, 0.46, 7), { p: [x, 4.13, 0.19] });
+      p.add(new THREE.TorusGeometry(0.205, 0.026, 6, 20, Math.PI), { p: [0, 3.08, 0], r: [0, 0, Math.PI] });
+      // Underworld key on the breast.
+      p.add(new THREE.TorusGeometry(0.12, 0.025, 6, 18), { p: [0, 2.16, 0.295] });
+      p.box(0.045, 0.23, 0.04, [0, 2.01, 0.295]);
+    } else if (kind === 'poseidon') {
+      // Tall trident with a longer centre tine and outward-curving side tines.
+      p.add(new THREE.CylinderGeometry(0.032, 0.040, 4.0, 8), { p: [0.62, 2.15, 0.19] });
+      p.box(0.48, 0.055, 0.075, [0.62, 4.08, 0.19]);
+      p.add(new THREE.ConeGeometry(0.070, 0.55, 8), { p: [0.62, 4.34, 0.19] });
+      for (const s of [-1, 1]) {
+        p.add(taperedTube([
+          new THREE.Vector3(0.62 + s * 0.19, 4.08, 0.19),
+          new THREE.Vector3(0.62 + s * 0.24, 4.22, 0.19),
+          new THREE.Vector3(0.62 + s * 0.22, 4.40, 0.19),
+        ], [0.035, 0.026, 0.010], 7));
+      }
+      // Wave medallion.
+      p.add(new THREE.TorusGeometry(0.16, 0.028, 6, 22, Math.PI * 1.45), { p: [0, 2.12, 0.30], r: [0, 0, -0.28] });
+    } else {
+      // A large zig-zag bolt held overhead is Zeus's whole silhouette.
+      p.add(taperedTube([
+        new THREE.Vector3(0.52, 3.00, 0.18), new THREE.Vector3(0.79, 3.24, 0.19),
+        new THREE.Vector3(0.61, 3.48, 0.18), new THREE.Vector3(0.86, 3.73, 0.19),
+        new THREE.Vector3(0.68, 4.06, 0.18),
+      ], [0.070, 0.062, 0.058, 0.047, 0.012], 8));
+      // Laurel beads and eagle-wing breast bars.
+      for (let i = 0; i < 14; i++) {
+        const a = -2.75 + i / 13 * 2.36;
+        const leaf = new THREE.SphereGeometry(0.042, 6, 5);
+        leaf.scale(0.55, 1.35, 0.45);
+        p.add(leaf, { p: [Math.sin(a) * 0.20, 3.00 + Math.cos(a) * 0.10, 0.13], r: [0, 0, -a] });
+      }
+      for (const s of [-1, 1]) p.box(0.30, 0.045, 0.04, [s * 0.13, 2.18, 0.30], [0, 0, s * 0.42]);
+    }
+    const g = p.merge();
+    g.computeBoundingBox();
+    return g;
+  }
+
+  _hadesGeo() { return this._deityGeo('hades'); }
+  _poseidonGeo() { return this._deityGeo('poseidon'); }
+  _zeusGeo() { return this._deityGeo('zeus'); }
+  _hadesTrimGeo() { return this._deityTrimGeo('hades'); }
+  _poseidonTrimGeo() { return this._deityTrimGeo('poseidon'); }
+  _zeusTrimGeo() { return this._deityTrimGeo('zeus'); }
 
   /** A chained shade: gaunt, arms hauled upward, lower body a dissolving column. */
   _shadeGeo() {

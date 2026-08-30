@@ -114,7 +114,7 @@ const RIGS = {
     // toward a warm near-white lets each material show ITS colour and leaves hue variety to the
     // coloured practicals — the opposite of raising global saturation, which only amplifies
     // whatever single hue already dominates. See ART_DIRECTION §15.
-    key:    { color: '#ffd8b8', intensity: 21.0, dir: [0.646, -0.615, -0.452] },
+    key:    { color: '#ffe7d5', intensity: 18.0, dir: [0.646, -0.615, -0.452] },
     // ── THE SUBJECT LIGHT (§1.1, §9.2) ──────────────────────────────────────
     // The frame did not know who its subject was. Every light in this rig was
     // authored for the ROOM — a key for the architecture, practicals nailed to
@@ -147,7 +147,7 @@ const RIGS = {
     // channel, and a dead channel has stopped carrying form. A paler subject key
     // delivers the same luminance with the red channel ~15% lower, so the lit
     // side keeps a gradient instead of a plateau. Target: no hero pixel over 244.
-    subject: { color: '#ffe2c8', intensity: 16.0, distance: 6.6, decay: 2.0,
+    subject: { color: '#fff0e2', intensity: 8.5, distance: 6.8, decay: 2.0,
                offset: [0.80, 1.95, 1.20] },
     // §3: "fill ... never lifts blacks above ~0.06 luminance". At 2.60 with a
     // saturated periwinkle sky this was the brightest thing landing on the
@@ -173,7 +173,7 @@ const RIGS = {
     // while lit stone stayed orange, and a single surface split that far across the colour
     // temperature axis is what reads as artificial rather than as stone. The ink ramp asks for
     // PLUM shadows (#241238), which is a warm violet, not a blue one.
-    hemi:   { sky: '#4a2c48', ground: '#3a1c30', intensity: 0.80 },
+    hemi:   { sky: '#5b4d59', ground: '#4a3949', intensity: 0.64 },
     // A tight warm pool that grazes the standing forms near the centre — the
     // §3 fake bounce, not a lift.
     bounce: { color: '#8a3a34', intensity: 0.40, size: [11, 11], y: 1.6 },
@@ -189,7 +189,7 @@ const RIGS = {
     // black band under the washed cornice. Tinted with the FLOOR's own crimson
     // (§3 "tinted with the floor albedo") so it recedes toward the ink ramp
     // rather than greying anything.
-    bounce2:{ color: '#5a2430', intensity: 0.52, size: [34, 34], y: 0.12 },
+    bounce2:{ color: '#6f3540', intensity: 0.70, size: [34, 34], y: 0.12 },
     // §1.2 non-negotiable, and §9.6 wants the complement genuinely VISIBLE.
     // The rim is now the second-strongest light in the frame by design: it is
     // what draws every vertical edge in the chamber.
@@ -220,7 +220,7 @@ const RIGS = {
     // hero. When painterly.js ships `vec3 rimC = uRimColor;` this goes back to
     // '#5fd0ff' and rig.js's RIM_HEX goes with it — the two must move together.
     rim:    { color: '#8fa4ff', dir: [-0.62, 0.36, 0.70], intensity: 2.8, power: 2.60, wrap: 0.22 },
-    ambient:{ color: '#2e1826', intensity: 0.36 },
+    ambient:{ color: '#554a58', intensity: 0.32 },
     godrayAnchor: [0.22, 1.06],
     // §9.3 + §9.5. With the bloom fog gone, bands.highlight measured 0.021
     // against a 0.04 floor — the frame's old top band was NOT ornament, it was
@@ -262,11 +262,11 @@ const RIGS = {
       // that says "underworld chamber", no longer the subject of the picture.
       // `distance` comes down with them so the pool stays a POOL and does not
       // creep further across the floor as it dims.
-      { pos: [ -8.30, 1.7,   9.21], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 1.00 },
-      { pos: [-12.39, 1.7,   0.43], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 0.83 },
-      { pos: [ -8.92, 1.7,  -8.61], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 1.21 },
-      { pos: [  0.00, 1.7, -12.40], color: '#ff9a52', intensity: 78,  distance: 8.6, speed: 0.72 },
-      { pos: [  8.92, 1.7,  -8.61], color: '#ffb070', intensity: 74,  distance: 9.0, speed: 0.94 },
+      { pos: [ -8.30, 1.7,   9.21], color: '#f7b17f', intensity: 42,  distance: 8.2, speed: 1.00 },
+      { pos: [-12.39, 1.7,   0.43], color: '#f7b17f', intensity: 42,  distance: 8.2, speed: 0.83 },
+      { pos: [ -8.92, 1.7,  -8.61], color: '#f39a68', intensity: 46,  distance: 8.0, speed: 1.21 },
+      { pos: [  0.00, 1.7, -12.40], color: '#f39a68', intensity: 46,  distance: 8.0, speed: 0.72 },
+      { pos: [  8.92, 1.7,  -8.61], color: '#f7b17f', intensity: 42,  distance: 8.2, speed: 0.94 },
       // COOL #5fd0ff washes on the perimeter masonry, the column capitals and
       // the gate. §9.4 needs the mid/background architecture to sit a full value
       // band ABOVE the ground plane, and §9.6 needs the complement at scale —
@@ -288,11 +288,11 @@ const RIGS = {
       // The three that fall on plain perimeter come DOWN: an evenly washed
       // perimeter is what turned the top of every play frame into one continuous
       // salmon band with no depth in it (§1.1, §11.1).
-      { pos: [ -4.6, 5.4, -12.6], color: '#b9dcec', intensity: 420, distance: 22, speed: 0.31, flicker: 0.09 },
-      { pos: [-12.6, 5.0,  -4.6], color: '#b3d8ea', intensity: 380, distance: 22, speed: 0.61, flicker: 0.12 },
-      { pos: [  0.0, 4.6, -13.4], color: '#b3d8ea', intensity: 190, distance: 17, speed: 0.44, flicker: 0.14 },
-      { pos: [ 13.2, 6.6,  -9.4], color: '#3fb8ff', intensity: 230, distance: 18, speed: 0.27, flicker: 0.09 },
-      { pos: [-14.6, 5.0,   3.6], color: '#b3d8ea', intensity: 150, distance: 17, speed: 0.52, flicker: 0.14 },
+      { pos: [ -4.6, 5.4, -12.6], color: '#b9dcec', intensity: 180, distance: 19, speed: 0.31, flicker: 0.09 },
+      { pos: [-12.6, 5.0,  -4.6], color: '#b3d8ea', intensity: 165, distance: 19, speed: 0.61, flicker: 0.12 },
+      { pos: [  0.0, 4.6, -13.4], color: '#b3d8ea', intensity: 95, distance: 16, speed: 0.44, flicker: 0.14 },
+      { pos: [ 13.2, 6.6,  -9.4], color: '#69b8e0', intensity: 110, distance: 16, speed: 0.27, flicker: 0.09 },
+      { pos: [-14.6, 5.0,   3.6], color: '#b3d8ea', intensity: 80, distance: 16, speed: 0.52, flicker: 0.14 },
     ],
     // ── THE WALL WASH (§1.1 three bands, §11.2 "light the mid-ground") ─────
     // WHAT WAS WRONG. Every light above aims DOWN into the arena or sits
@@ -403,26 +403,31 @@ const RIGS = {
     ],
   },
   asphodel: {
-    key:    { color: '#ffc884', intensity: 8.8, dir: [0.586, -0.668, -0.459] },
-    hemi:   { sky: '#4e4a94', ground: '#5a1c06', intensity: 0.24 },
-    bounce: { color: '#e0600f', intensity: 0.30, size: [30, 30], y: 0.2 },
-    rim:    { color: '#33e0c0', dir: [-0.66, 0.32, 0.68], intensity: 2.4, power: 2.2, wrap: 0.34 },
-    ambient:{ color: '#231b46', intensity: 0.05 },
-    godrayAnchor: [0.26, -0.08],
-    env:    { zenith: '#0e0c26', horizon: '#3a1c0e', nadir: '#4a1605', keyGain: 16.0, keySharp: 220, keyWide: 0.06, rimGain: 1.9, rimSharp: 34, bounce: '#ff6a12', bounceGain: 0.07, intensity: 0.32 },
+    key:    { color: '#ffead0', intensity: 15.0, dir: [0.586, -0.668, -0.459] },
+    hemi:   { sky: '#9296c2', ground: '#76564d', intensity: 0.62 },
+    bounce: { color: '#ad664c', intensity: 0.20, size: [24, 24], y: 0.2 },
+    bounce2:{ color: '#555d7c', intensity: 0.12, size: [36, 36], y: 0.16 },
+    rim:    { color: '#7fe6df', dir: [-0.66, 0.32, 0.68], intensity: 3.1, power: 2.0, wrap: 0.40 },
+    ambient:{ color: '#77748f', intensity: 0.28 },
+    subject:{ color: '#f1f9ff', intensity: 12.0, distance: 7.4, decay: 2.0, offset: [0.80, 2.05, 1.20] },
+    // Kept on-screen for API compatibility, but the Asphodel grade disables
+    // radial god rays entirely; the former below-frame anchor made sky beams.
+    godrayAnchor: [0.26, 0.82],
+    env:    { zenith: '#242640', horizon: '#46322d', nadir: '#302025', keyGain: 12.0, keySharp: 190, keyWide: 0.08, rimGain: 2.2, rimSharp: 30, bounce: '#b65d3c', bounceGain: 0.04, intensity: 0.44 },
     practicals: [
-      { pos: [ 12.0, 0.6,  -4.0], color: '#ff8c1a', intensity: 120, distance: 13, speed: 0.9 },
-      { pos: [-10.0, 0.6,   9.0], color: '#ff8c1a', intensity: 120, distance: 13, speed: 1.15 },
-      { pos: [  2.0, 0.5,  13.0], color: '#fff0b0', intensity: 80, distance: 11, speed: 1.4 },
-      { pos: [ -7.0, 0.5, -12.0], color: '#c22a06', intensity: 60, distance: 12, speed: 0.62 },
+      { pos: [ 12.0, 1.2,  -4.0], color: '#ff9d55', intensity: 72, distance: 12, speed: 0.9 },
+      { pos: [-10.0, 1.2,   9.0], color: '#ff9d55', intensity: 72, distance: 12, speed: 1.15 },
+      { pos: [  2.0, 1.2,  13.0], color: '#ffe0b0', intensity: 54, distance: 10, speed: 1.4 },
+      { pos: [ -7.0, 1.2, -12.0], color: '#70c9cc', intensity: 44, distance: 11, speed: 0.62 },
     ],
   },
   elysium: {
-    key:    { color: '#fff0d0', intensity: 9.2, dir: [0.632, -0.630, -0.451] },
-    hemi:   { sky: '#9a90cc', ground: '#1c4c3a', intensity: 0.30 },
+    key:    { color: '#fff4df', intensity: 10.0, dir: [0.632, -0.630, -0.451] },
+    hemi:   { sky: '#aaa3cf', ground: '#3b6653', intensity: 0.38 },
     bounce: { color: '#c9bda4', intensity: 0.32, size: [30, 30], y: 0.25 },
     rim:    { color: '#ff5fa8', dir: [-0.58, 0.40, 0.71], intensity: 2.2, power: 2.3, wrap: 0.30 },
-    ambient:{ color: '#3d3560', intensity: 0.06 },
+    ambient:{ color: '#655d82', intensity: 0.12 },
+    subject:{ color: '#fff6e4', intensity: 9.5, distance: 7.0, decay: 2.0, offset: [0.80, 2.10, 1.20] },
     godrayAnchor: [0.24, 1.04],
     env:    { zenith: '#141c40', horizon: '#332f4c', nadir: '#13201c', keyGain: 20.0, keySharp: 220, keyWide: 0.07, rimGain: 1.5, rimSharp: 34, bounce: '#3fa86a', bounceGain: 0.05, intensity: 0.36 },
     practicals: [

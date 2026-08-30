@@ -20,9 +20,11 @@ import * as THREE from 'three';
 import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette } from './ornament.js';
 import { HUD } from './hud.js';
 import { BoonOverlay } from './boons.js';
+import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
 import { WorldLabels } from './worldlabels.js';
-import { BoonState, BOONS, GOD_INFO } from '../game/boons.js';
+import { BoonState, BOONS, DUOS, GOD_INFO } from '../game/boons.js';
+import { CHARACTER_INFO } from '../game/characters.js';
 
 const REF_W = 1600, REF_H = 900;
 
@@ -36,11 +38,13 @@ export class UI {
     this.toasts = [];
     this._rand = 0;
     this.enabled = true;
+    this._padPrev = {};
     // Constructed eagerly, not in init(): main.js adds UI after the player, and
     // Player.init() calls ctx.ui.setHealth() during initAll. Every contract
     // setter must be safe from the moment the object exists.
     this.hud = new HUD(this);
     this.boonUI = new BoonOverlay(this);
+    this.nectarUI = new NectarOverlay(this);
     this.menus = new Menus(this);
     this.labels = new WorldLabels(this);
     this.boonState = new BoonState(null);
@@ -56,6 +60,7 @@ export class UI {
 
   async init(ctx) {
     this.ctx = ctx;
+    this.menus.settings.quality = ctx.quality?.source === 'auto' ? 'auto' : (ctx.quality?.tier || 'med');
     this._rng = ctx.rng && ctx.rng.fork ? ctx.rng.fork('ui') : ctx.rng;
 
     // DOM host (kept: main.js's capture.hud() toggles #ui, and it hosts the
@@ -114,7 +119,16 @@ export class UI {
     });
     E.on('entity.died', (i) => { if (i && i.entity) { this.labels.removeEnemy(i.entity); if (i.entity.def && i.entity.def.boss) this.labels.setBoss(null); } });
     E.on('boon.granted', (i) => { if (i) this.hud.addBoon(i.record || i); });
+    E.on('nectar.changed', (i) => { if (i && i.total != null) this.setResources(null, i.total); });
+    E.on('titanBlood.changed', (i) => { if (i && i.total != null) this.setResources(null, null, i.total); });
+    E.on('darkness.changed', (i) => { if (i && i.total != null) this.setResources(null, null, null, i.total); });
     E.on('weapon.equipped', (i) => this.hud.setWeapon(i));
+    E.on('weapon.ammo', (i) => { if (!i?.actor || i.actor === ctx.player) this.hud.setAmmo(i); });
+    E.on('weapon.reload.begin', (i) => { if (!i?.actor || i.actor === ctx.player) this.hud.setReload(i); });
+    E.on('weapon.reload.end', (i) => { if (!i?.actor || i.actor === ctx.player) { this.hud.setAmmo(i); this.hud.setReload(null); } });
+    E.on('weapon.reload.cancel', (i) => { if (!i?.actor || i.actor === ctx.player) this.hud.setReload(null); });
+    E.on('character.changed', (i) => this.hud.setCharacter(i?.character || i));
+    E.on('home.characterSelected', (i) => this.hud.setCharacter(i?.character || i));
     E.on('room.entered', (i) => { if (i && i.room) this.setRoom(i.room.depth, i.room.biome); });
     E.on('biome.changed', (i) => { if (i && i.name) this.setRoom(null, i.name); });
     E.on('player.dashed', () => { this.hud.setDash(Math.max(0, this.hud.dash - 1)); });
@@ -126,7 +140,8 @@ export class UI {
       const r = this.canvas.getBoundingClientRect ? this.canvas.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
-      if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i !== this.boonUI.hover) { this.boonUI.hover = i; this.dirty = true; } }
+      if (this.nectarUI.active) this.nectarUI.move(x, y);
+      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i !== this.boonUI.hover) { this.boonUI.hover = i; this.dirty = true; } }
       else this.menus.move(x, y);
     };
     this._onDown = (e) => {
@@ -134,18 +149,35 @@ export class UI {
       const r = this.canvas.getBoundingClientRect ? this.canvas.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
-      if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); } }
+      if (this.nectarUI.active) { if (this.nectarUI.click(x, y)) e.preventDefault(); }
+      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); } }
       else if (this.menus.click(x, y)) e.preventDefault();
     };
     this._onKey = (e) => {
+      if (this.nectarUI.active) { this.nectarUI.key(e); return; }
       if (this.boonUI.active) {
         if (e.key === '1' || e.key === '2' || e.key === '3') this.boonUI.choose(+e.key - 1);
-        else if (e.key === 'ArrowLeft') { this.boonUI.hover = Math.max(0, this.boonUI.hover - 1); this.dirty = true; }
-        else if (e.key === 'ArrowRight') { this.boonUI.hover = Math.min(this.boonUI.options.length - 1, this.boonUI.hover + 1); this.dirty = true; }
+        else if (e.key === 'ArrowLeft') this.boonUI.moveSelection(-1);
+        else if (e.key === 'ArrowRight') this.boonUI.moveSelection(1);
         else if (e.key === 'Enter' || e.key === ' ') this.boonUI.choose(this.boonUI.hover < 0 ? 0 : this.boonUI.hover);
         return;
       }
-      if (e.key === 'Escape') { this.screen(this.menus.screen === 'pause' ? 'game' : 'pause'); return; }
+      if (e.key === 'h' || e.key === 'H') {
+        if (!this._modal()) this.screen('pause');
+        if (this.menus.screen === 'pause') this.menus.activate(this.menus.controlsOpen ? 'back' : 'controls');
+        return;
+      }
+      if (e.key === 'b' || e.key === 'B' || e.key === 'Tab') {
+        e.preventDefault();
+        if (!this._modal()) this.screen('pause');
+        if (this.menus.screen === 'pause') this.menus.activate(this.menus.boonsOpen ? 'back' : 'boons');
+        return;
+      }
+      if (e.key === 'Escape') {
+        if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
+        else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
+        return;
+      }
       if (!this._modal()) return;
       if (e.key === 'ArrowDown' || e.key === 's') this.menus.key(1);
       else if (e.key === 'ArrowUp' || e.key === 'w') this.menus.key(-1);
@@ -161,13 +193,14 @@ export class UI {
 
     // sensible starting state so the HUD is never empty-looking
     this.hud.setHealth(ctx.player?.health ?? 100, ctx.player?.maxHealth ?? 100);
+    this.hud.setCharacter(CHARACTER_INFO?.[ctx.player?.characterId] || { id: 'zagreus', name: 'Zagreus' });
     this.hud.setMana(ctx.player?.mana ?? 100, ctx.player?.maxMana ?? 100);
     this.hud.setRoom(ctx.run?.depth || 1, ctx.run?.biome || 'tartarus');
     this.hud.roomT = -9;
     this.draw();
   }
 
-  _modal() { return this.boonUI.active || this.menus.modal; }
+  _modal() { return this.nectarUI.active || this.boonUI.active || this.menus.modal; }
 
   _sizeTo(ctx) {
     const r = ctx.renderer;
@@ -197,6 +230,7 @@ export class UI {
   setRoom(depth, biome) { this.hud.setRoom(depth, biome); }
   damageNumber(worldPos, amount, o) { this.labels.damageNumber(worldPos, amount, o); }
   showBoonChoice(options, o) { return this.boonUI.open(options, o); }
+  showHomeUpgrades(meta, page) { this.nectarUI.open(meta || this.ctx?.meta, page); }
   toast(text, o = {}) {
     this.toasts.push({ text: String(text), color: o.color || PAL.gold, icon: o.icon || null, t0: this.t, dur: o.dur || 2.4 });
     if (this.toasts.length > 4) this.toasts.shift();
@@ -205,16 +239,28 @@ export class UI {
   screen(name) {
     if (name === 'game') { this.menus.set('game'); this.hud.alpha.set(1); }
     else { this.menus.set(name); this.hud.alpha.set(name === 'pause' ? 0.25 : 0); }
+    if (this.ctx) {
+      this.ctx.paused = name === 'pause';
+      if (this.ctx.input) this.ctx.input.enabled = name === 'game';
+    }
     this.dirty = true;
   }
   // ── extensions (all optional for other systems) ──
   setDash(n, max) { this.hud.setDash(n, max); }
   setWeapon(w) { this.hud.setWeapon(w); }
   setBoss(o) { this.labels.setBoss(o); }
+  clearRunBoons() { this.hud.boons.length = 0; this.hud.boonPop.clear(); this.dirty = true; }
   prompt(pos, text, o) { this.labels.prompt(pos, text, o); }
   clearPrompts() { this.labels.clearPrompts(); }
   sigil(pos, o) { this.labels.sigil(pos, o); }
-  setResources(obols, darkness) { if (obols != null) this.hud.obols = obols; if (darkness != null) this.hud.darkness = darkness; this.dirty = true; }
+  clearSigils() { this.labels.clearSigils(); }
+  setResources(obols, nectar, titanBlood, darkness) {
+    if (obols != null) this.hud.obols = obols;
+    if (nectar != null) this.hud.nectar = nectar;
+    if (titanBlood != null) this.hud.titanBlood = titanBlood;
+    if (darkness != null) this.hud.darkness = darkness;
+    this.dirty = true;
+  }
   setSummary(o) { Object.assign(this.menus.summary, o || {}); this.dirty = true; }
 
   // ═══════════════════════════════════════════════════════════ LOOP ═══════
@@ -242,12 +288,60 @@ export class UI {
         if (d !== this.hud.dash) this.hud.setDash(d);
       }
     }
-    if (this.boonUI.active || this.menus.modal) this.dirty = true;
+    if (this.nectarUI.active || this.boonUI.active || this.menus.modal) this.dirty = true;
   }
 
   lateUpdate(alpha, ctx) {
+    if (ctx.paused) this.t += ctx.time?.unscaledDt || 0;
+    this._pollGamepad(ctx);
     if (this._modal() || this.labels.nums.length) this.dirty = true;
     this.draw();
+  }
+
+  _pollGamepad(ctx) {
+    if (typeof navigator === 'undefined' || !navigator.getGamepads) return;
+    const pad = Array.from(navigator.getGamepads()).find(Boolean);
+    if (!pad) { this._padPrev = {}; return; }
+    const down = i => !!pad.buttons?.[i]?.pressed;
+    const edge = (key, value) => { const was = !!this._padPrev[key]; this._padPrev[key] = !!value; return value && !was; };
+    const pause = edge('pause', down(9));
+    const up = down(12) || (pad.axes?.[1] ?? 0) < -0.72;
+    const dn = down(13) || (pad.axes?.[1] ?? 0) > 0.72;
+    const lf = down(14) || (pad.axes?.[0] ?? 0) < -0.72;
+    const rt = down(15) || (pad.axes?.[0] ?? 0) > 0.72;
+    // Sample A every frame, including ordinary gameplay, so the edge latch
+    // cannot go stale while the player is dashing toward a reward gate.
+    const acceptDown = down(0);
+    const accept = edge('accept', acceptDown);
+    if (this.boonUI.active) {
+      if (edge('left', lf)) this.boonUI.gamepad('left');
+      else if (edge('right', rt)) this.boonUI.gamepad('right');
+      else this.boonUI.pollGamepadAccept(acceptDown, accept);
+      return; // the offer is a required decision; Start must not open behind it
+    }
+    if (this.nectarUI.active) {
+      if (pause || edge('back', down(1))) this.nectarUI.gamepad('back');
+      else if (edge('up', up)) this.nectarUI.gamepad('up');
+      else if (edge('down', dn)) this.nectarUI.gamepad('down');
+      else if (edge('left', lf)) this.nectarUI.gamepad('left');
+      else if (edge('right', rt)) this.nectarUI.gamepad('right');
+      else if (accept) this.nectarUI.gamepad('accept');
+      return;
+    }
+    if (pause) {
+      if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
+      else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
+    }
+    if (!this.menus.modal || this.boonUI.active) return;
+    if (edge('up', up)) this.menus.key(-1);
+    if (edge('down', dn)) this.menus.key(1);
+    if (edge('left', lf)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, -1); }
+    if (edge('right', rt)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, 1); }
+    if (accept) { const h = this.menus.hit[this.menus.sel]; if (h) h.act === 'setting' ? this.menus._bump(h.key, 1) : this.menus.activate(h.act); }
+    if (edge('back', down(1))) {
+      if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
+      else if (this.menus.screen === 'pause') this.screen('game');
+    }
   }
 
   /** Engine calls this after RenderSystem.render(); play-mode DOM path is free. */
@@ -300,6 +394,7 @@ export class UI {
     }
     this.menus.draw(g, W, H, S, t);
     this.boonUI.draw(g, W, H, S, t);
+    this.nectarUI.draw(g, W, H, S, t);
     this.dirty = false;
   }
 
@@ -328,10 +423,12 @@ export class UI {
   // ═══════════════════════════════════════ ARCHITECTURE §5 CAPTURE ════════
   _captureState(name, args, ctx) {
     if (name === 'ui') this.setupCaptureHUD(ctx);
-    else if (name === 'boons') this.setupCaptureBoons(ctx);
+    else if (name === 'boons') this.setupCaptureBoons(ctx, args?.god || 'zeus');
+    else if (name === 'forge') this.setupCaptureBoons(ctx, 'hephaestus');
+    else if (name === 'loadout') this.setupCaptureLoadout(ctx);
     else if (name === 'combat') {
       // the combat frame should carry the HUD too — it is what the player sees
-      this.setupCaptureHUD(ctx, { quiet: true });
+      this.setupCaptureHUD(ctx, { quiet: true, character: args?.character, weapon: args?.weapon });
     }
   }
 
@@ -349,18 +446,29 @@ export class UI {
     h.setHealth(120, 120); h.hpFill.snap(1); h.hpGhost = 1;
     h.setMana(64, 100); h.mpFill.snap(0.64);
     h.setCast(2, 3); h.setDash(1, 2);
-    h.setWeapon({ id: 'blade', name: 'Stygian Blade' });
+    const character = CHARACTER_INFO[o.character || ctx.player?.characterId] || CHARACTER_INFO.zagreus;
+    const runtimeWeapon = ctx.combat?.runtimes?.get?.(ctx.player)?.weapon;
+    h.setCharacter(character);
+    h.setWeapon(runtimeWeapon || { id: o.weapon || character.defaultWeapon, name: String(o.weapon || character.defaultWeapon) });
+    if ((o.weapon || runtimeWeapon?.id) === 'rail') h.setAmmo({ weapon: 'rail', current: 3, max: 6 });
     h.weaponCd = 0.34;
-    h.obols = 137; h.darkness = 42;
+    h.obols = 137; h.nectar = 4; h.titanBlood = 2;
     h.depth = 7; h.biome = (ctx.run && ctx.run.biome) || 'tartarus';
     h.roomT = -99;                                  // the plaque already says it; no banner
     h.boons.length = 0; h.boonPop.clear();
-    const tray = [
+    const tray = character.id === 'melinoe' ? [
+      ['apollo', 'epic', 'attack'], ['hera', 'rare', 'special'],
+      ['hestia', 'heroic', 'cast'], ['demeter', 'common', 'dash'],
+      ['zeus', 'rare', 'gain'], ['hephaestus', 'common', 'passive'],
+    ] : [
       ['zeus', 'epic', 'attack'], ['aphrodite', 'rare', 'special'],
-      ['hecate', 'heroic', 'cast'], ['hermes', 'common', 'dash'],
+      ['athena', 'heroic', 'cast'], ['hermes', 'common', 'dash'],
       ['artemis', 'rare', 'passive'], ['poseidon', 'common', 'call'],
     ];
-    for (const [god, rarity, slot] of tray) h.addBoon({ god, rarity, slot, name: '' });
+    for (const [god, rarity, slot] of tray) h.addBoon({
+      id: `${god}.capture.${slot}`, god, rarity, slot,
+      name: `${GOD_INFO[god]?.name || god} ${slot}`,
+    });
     h.boonPop.clear();
 
     // the life bar caught mid damage-lag: drop life just before the shot
@@ -387,24 +495,55 @@ export class UI {
   }
 
   /** §5 `boons`: the choice open with three real cards, settled and readable. */
-  setupCaptureBoons(ctx) {
+  setupCaptureBoons(ctx, god = 'zeus') {
     this.setupCaptureHUD(ctx, { quiet: true });
     const bs = this.boonState;
-    // Hand-picked rather than rolled: a legal random roll can produce three
-    // Commons from one god, which would under-sell the whole card system in
-    // the only frame anyone ever sees of it. Three gods, three slots, three
-    // rarities — including a Heroic so the prismatic ring is on screen.
-    const want = [['zeus.attack', 'epic'], ['aphrodite.special', 'rare'], ['hecate.cast', 'heroic']];
+    // Seed one occupied action slot so the reference shot exercises the most
+    // information-dense live case: a god replacing an existing action boon.
+    if (god === 'zeus' && !bs.granted.length) {
+      const currentAttack = BOONS.find(x => x.id === 'poseidon.attack');
+      if (currentAttack) bs.grant(bs.offer(currentAttack, 'rare'));
+    }
+    // Hand-picked from one deity to mirror the live post-gate audience. Three
+    // slots and three rarities keep the upgrade language readable while the
+    // repeated portrait makes it unmistakable that Zeus owns this offer.
+    const want = god === 'hephaestus'
+      ? [['hephaestus.blade.wave', 'epic'], ['hephaestus.blade.echo', 'rare'], ['hephaestus.blade.ember', 'heroic']]
+      : god === 'zeus'
+        ? [['zeus.attack', 'epic'], ['zeus.special', 'rare'], ['zeus.cast', 'heroic']]
+        : BOONS.filter(b => b.god === god && ['attack', 'special', 'cast', 'dash', 'call'].includes(b.slot))
+          .slice(0, 3).map((b, i) => [b.id, ['epic', 'rare', 'heroic'][i]]);
     const opts = [];
     for (const [id, rarity] of want) {
       const b = BOONS.find(x => x.id === id);
       if (b) opts.push(bs.offer(b, rarity));
     }
     const rng = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('boonshot') : ctx.rng;
-    const list = opts.length === 3 ? opts : bs.roll(rng, { count: 3, allowDuo: false });
+    const list = opts.length === 3 ? opts : bs.roll(rng, { count: 3, god, allowDuo: false });
     this.boonUI.open(list);
     this.boonUI.t0 = this.t - 1.35;                 // settled by the time we shoot
     this.boonUI.hover = 1;
+    this.dirty = true;
+  }
+
+  /** `loadout`: the pause Codex populated with a varied late-run build. */
+  setupCaptureLoadout(ctx) {
+    const bs = this.boonState;
+    bs.clear();
+    const seed = [
+      ['zeus.attack', 'epic'], ['aphrodite.special', 'rare'], ['demeter.canon.cast', 'epic'],
+      ['apollo.canon.dash', 'rare'], ['selene.call', 'heroic'], ['hera.canon.extended-family', 'rare'],
+      ['hestia.canon.controlled-burn', 'epic'], ['chaos.canon.favor', 'rare'], ['hades.canon.life-tax', 'common'],
+      ['duo.canon.cold-fusion', 'heroic'],
+    ];
+    for (const [id, rarity] of seed) {
+      const boon = [...BOONS, ...DUOS].find(x => x.id === id);
+      if (boon) bs.grant(bs.offer(boon, rarity));
+    }
+    this.screen('pause');
+    this.menus.activate('boons');
+    this.menus.t0 = this.t - 1;
+    this.menus.boonSel = 2;
     this.dirty = true;
   }
 

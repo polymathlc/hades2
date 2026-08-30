@@ -5,8 +5,12 @@ import { clamp } from './math.js';
 
 export class Engine {
   constructor(opts={}){
-    this.fixedDt = 1/120;
-    this.maxSubSteps = 8;
+    const tier = opts.quality?.tier || 'high';
+    // 120 Hz doubled the CPU cost of every AI, combat and world system. The
+    // browser-friendly tiers use a still-responsive 60 Hz simulation and a
+    // smaller catch-up budget so a slow frame cannot trigger a spiral of work.
+    this.fixedDt = (tier === 'low' || tier === 'med') ? 1/60 : 1/120;
+    this.maxSubSteps = tier === 'low' ? 3 : tier === 'med' ? 5 : 8;
     this.systems = [];
     this._acc = 0; this._last = 0; this._raf = 0; this.running = false; this.skipRender = false;
     this.ctx = {

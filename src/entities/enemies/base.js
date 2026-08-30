@@ -121,8 +121,35 @@ const FAMILY_LOOK = {
   herald: { rim: '#ffe14d', mul: 1.12 },  // -> hot yellow, the summoner
   hound: { rim: '#ff7a2a', mul: 1.16 },   // -> amber-olive, the swarmer
   bloat: { rim: '#8ef06a', mul: 1.16 },   // -> green, the detonator
+  lancer: { rim: '#77e5ff', mul: 1.16 },  // -> ice blue, the lane charger
+  siren: { rim: '#ff74ba', mul: 1.16 },   // -> rose, the blink assassin
+  oracle: { rim: '#c9b8ff', mul: 1.14 },  // -> lavender, the ward support
+  riftstalker: { rim: '#74f0ff', mul: 1.18 }, // -> spectral cyan, the anti-ranged hunter
   warden: { rim: '#3aa8ff', mul: 1.12 },  // -> ICE. the boss opposes its own room
+  minotaur: { rim: '#ff8a3d', mul: 1.14 },// -> hot amber, the charging boss
+  heracles: { rim: '#ffd56a', mul: 1.12 },// -> heroic gold, the final champion
+  hades: { rim: '#ff557c', mul: 1.16 },   // -> royal blood-red, Zagreus finale
+  chronos: { rim: '#f2d071', mul: 1.16 }, // -> aged gold, Melinoe finale
 };
+const ASPHODEL_FAMILY_LOOK = {
+  shade:  { rim: '#7fe6df', mul: 1.18 },
+  brute:  { rim: '#9dbdff', mul: 1.18 },
+  hexer:  { rim: '#b9a4ff', mul: 1.18 },
+  herald: { rim: '#8fdcff', mul: 1.18 },
+  hound:  { rim: '#7fd2ff', mul: 1.20 },
+  bloat:  { rim: '#b7f0df', mul: 1.18 },
+  lancer: { rim: '#a9edff', mul: 1.20 },
+  siren:  { rim: '#ffc2e3', mul: 1.20 },
+  oracle: { rim: '#ddd3ff', mul: 1.18 },
+  riftstalker: { rim: '#a5f6ff', mul: 1.22 },
+  warden: { rim: '#d6f4ff', mul: 1.18 },
+  minotaur: { rim: '#ffd0a6', mul: 1.18 },
+  heracles: { rim: '#fff0aa', mul: 1.16 },
+  hades: { rim: '#ff9fb7', mul: 1.20 },
+  chronos: { rim: '#fff1ad', mul: 1.20 },
+};
+let _familyBiome = 'tartarus';
+const familyLook = (kind) => (_familyBiome === 'asphodel' ? ASPHODEL_FAMILY_LOOK : FAMILY_LOOK)[kind];
 const FAMILY_KINDS = Object.keys(FAMILY_LOOK);
 
 /** 'wardenblade' -> 'warden', 'hexerwood' -> 'hexer'. */
@@ -144,7 +171,7 @@ const _familyMats = [];
  * after a biome change can never compound.
  */
 export function familyRim(mat, kind, slot) {
-  const F = FAMILY_LOOK[kind];
+  const F = familyLook(kind);
   const U = mat && paintParams(mat);
   if (!F || !U) return mat;
   let tgt = mat.userData.familyRim;
@@ -169,10 +196,15 @@ export function familyRim(mat, kind, slot) {
 }
 
 /** Re-stamp every family rim (after a biome swap has trampled them). */
-export function refreshFamilyRims() {
+export function refreshFamilyRims(biome = _familyBiome) {
+  _familyBiome = biome || _familyBiome;
   for (let i = 0; i < _familyMats.length; i++) {
     const m = _familyMats[i], t = m.userData.familyRim;
-    if (t) setPaint(m, { rimColor: t.rimColor, rimStrength: t.rimStrength, contourStrength: t.contourStrength });
+    if (!t) continue;
+    const F = familyLook(t.kind);
+    t.rimColor = F?.rim || t.rimColor;
+    setPaint(m, { rimColor: t.rimColor, rimStrength: t.rimStrength, contourStrength: t.contourStrength });
+    m.userData.paintOverrides = { ...(m.userData.paintOverrides || {}), rimColor: t.rimColor };
   }
 }
 
@@ -196,14 +228,14 @@ export function charMaterial(ctx, slot, tag, opts = {}) {
   // MeshStandardMaterial — so a per-family material costs one uniform block
   // and no extra draw call (the bodies are already separate meshes). What it
   // buys is a per-family RIM, which §9.2 makes non-optional.
-  const key = 'characterrig.' + slot + (tag ? '.' + tag : '');
+  const key = opts.materialKey || ('characterrig.' + slot + (tag ? '.' + tag : ''));
   // §7: the roster used to strip every map off its materials, same as rig.js
   // did, which is why every enemy shipped as flat colour. `characterrig.*` now
   // resolves to a real baked set (materials/recipes.js) for skin/cloth/hair/
   // metal; `glow` still has no recipe and correctly falls through to the
   // painterly character shader. Where a map exists, the ORM drives roughness
   // and metalness, so those are passed at 1.
-  const mapped = slot === 'skin' || slot === 'cloth' || slot === 'hair';
+  const mapped = !!opts.materialKey || slot === 'skin' || slot === 'cloth' || slot === 'hair';
   let m = ctx.mats && ctx.mats.get ? ctx.mats.get(key, {
     color: '#ffffff',
     roughness: mapped ? 1.0 : (opts.roughness ?? (slot === 'metal' ? 0.34 : 0.72)),
@@ -498,8 +530,9 @@ export class Enemy {
   /** Integrate the steering result with acceleration, collision and facing. */
   move(dt, ctx, out, o = {}) {
     const accel = o.accel ?? this.def.accel ?? 26;
-    const vx = damp(this.velocity.x, out.x, accel * 0.34, dt);
-    const vz = damp(this.velocity.z, out.z, accel * 0.34, dt);
+    const slow = ctx.combat?.slowOf?.(this) ?? 1;
+    const vx = damp(this.velocity.x, out.x * slow, accel * 0.34, dt);
+    const vz = damp(this.velocity.z, out.z * slow, accel * 0.34, dt);
     this.velocity.x = vx; this.velocity.z = vz;
     this.position.x += (vx + this._knock.x) * dt;
     this.position.z += (vz + this._knock.z) * dt;
@@ -552,7 +585,7 @@ export class Enemy {
     const dir = info && info.dir ? info.dir : null;
     ctx.vfx?.death?.(_v.copy(this.position).setY(this.height * 0.5), {
       color: this.def.deathColor || this.def.identity || '#8ef0d0',
-      scale: this.def.deathScale ?? 1, dir,
+      scale: this.def.deathScale ?? 1, dir, boss: !!this.def.boss,
     });
     ctx.events.emit('camera.shake', { amp: this.def.deathShake ?? 0.05, dur: 0.2, freq: 27 });
     ctx.audio?.sfx?.('enemyDeath', { pos: this.position });

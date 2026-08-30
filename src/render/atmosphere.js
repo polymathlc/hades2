@@ -195,8 +195,8 @@ const AIR = {
     // under the play floor (0.055-0.075) and the lit mid-ground (0.15-0.21), so
     // §11's far < near < mid ordering is untouched, but the negative space now
     // carries hue, the strata read, and the ember glow has something to sit on.
-    zenith: '#171430', horizon: '#26193a', nadir: '#110d1a',
-    glow: '#280a10', glowY: -0.24, glowSharp: 4.2, cloud: 0.70,
+    zenith: '#242040', horizon: '#382a4b', nadir: '#1b1728',
+    glow: '#42171d', glowY: -0.24, glowSharp: 4.2, cloud: 0.62,
     ember: '#e8a24a', emberAmt: 0.34,
     motes: [
       // Recoloured off the GOLD ramp (§2 gold core -> bronze shadow) so the
@@ -210,18 +210,18 @@ const AIR = {
     ],
   },
   asphodel: {
-    zenith: '#04030e', horizon: '#0f0503', nadir: '#030208',
-    glow: '#301205', glowY: -0.20, glowSharp: 2.8, cloud: 0.74,
-    ember: '#ffc064', emberAmt: 0.6,
+    zenith: '#282c46', horizon: '#4b383d', nadir: '#222536',
+    glow: '#60362e', glowY: -0.22, glowSharp: 3.2, cloud: 0.46,
+    ember: '#d07a45', emberAmt: 0.26,
     motes: [
-      { tint: '#ff9426', count: 0.22, size: 0.30, rise: 0.90, span: 16, intensity: 1.9 },
-      { tint: '#fff0b0', count: 0.18, size: 0.11, rise: 0.58, span: 21, intensity: 0.75 },
-      { tint: '#3fc0b8', count: 0.60, size: 0.32, rise: 0.13, span: 13, intensity: 0.07, shape: 1.0 },
+      { tint: '#c86b3d', count: 0.14, size: 0.24, rise: 0.62, span: 16, intensity: 0.62 },
+      { tint: '#e8c59d', count: 0.10, size: 0.09, rise: 0.42, span: 21, intensity: 0.30 },
+      { tint: '#6e8791', count: 0.42, size: 0.26, rise: 0.10, span: 13, intensity: 0.045, shape: 1.0 },
     ],
   },
   elysium: {
-    zenith: '#050713', horizon: '#0c0b17', nadir: '#030409',
-    glow: '#333827', glowY: -0.06, glowSharp: 2.9, cloud: 0.62,
+    zenith: '#202944', horizon: '#393c50', nadir: '#191e30',
+    glow: '#4d513c', glowY: -0.06, glowSharp: 2.9, cloud: 0.52,
     ember: '#ffeeb8', emberAmt: 0.35,
     motes: [
       { tint: '#ffe6a3', count: 0.20, size: 0.22, rise: 0.30, span: 17, intensity: 1.1 },
@@ -276,7 +276,9 @@ export class Atmosphere {
 
     // ── mote / ember / ash layers ──────────────────────────────────────────
     this.moteBudget = Math.max(120, q.motes ?? 1200);
-    this.layerCount = Math.max(1, Math.min(3, q.dustLayers ?? 3));
+    // Low quality intentionally permits zero particle layers; the painted
+    // backdrop remains, while an entire transparent draw pass disappears.
+    this.layerCount = Math.max(0, Math.min(3, q.dustLayers ?? 3));
     this._rng = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('atmosphere') : null;
     this._buildLayers(ctx);
 

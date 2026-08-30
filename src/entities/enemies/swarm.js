@@ -43,85 +43,115 @@ class PartsVisual {
 // HOUND
 // ═══════════════════════════════════════════════════════════════════════════
 function houndGeo() {
-  // BODY: a tapered spine, wide at the shoulder, narrow at the hip
+  // BODY: a low, muscular canine barrel. Overlapping shoulder and haunch
+  // masses keep the silhouette organic at gameplay distance instead of
+  // collapsing into the old rectangular torso.
   const pts = [];
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
-    pts.push(new THREE.Vector3(0, 0.62 + 0.10 * Math.sin(t * 2.4), 0.62 - 1.30 * t));
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12;
+    pts.push(new THREE.Vector3(0, 0.63 + 0.09 * Math.sin(t * Math.PI), 0.63 - 1.34 * t));
   }
-  const spine = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 14, 0.26, 9, false);
-  const chest = new THREE.SphereGeometry(0.32, 14, 10); chest.scale(1.05, 0.92, 1.2); chest.translate(0, 0.64, 0.36);
-  const haunch = new THREE.SphereGeometry(0.26, 12, 9); haunch.scale(1.1, 1.0, 0.95); haunch.translate(0, 0.60, -0.58);
-  const neck = new THREE.CylinderGeometry(0.15, 0.20, 0.42, 8); neck.rotateX(1.15); neck.translate(0, 0.76, 0.70);
-  const body = mergeGeometries([spine, chest, haunch, neck], false);
-  paintGeo(body, '#8a2a12', { y0: 0.1, y1: 1.0, aoLow: 0.42, top: '#e0641c' });
+  const spine = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 18, 0.285, 12, false);
+  const chest = new THREE.SphereGeometry(0.37, 18, 12); chest.scale(1.08, 1.02, 1.16); chest.translate(0, 0.64, 0.37);
+  const haunch = new THREE.SphereGeometry(0.33, 16, 11); haunch.scale(1.14, 1.08, 1.02); haunch.translate(0, 0.60, -0.55);
+  const neck = new THREE.CylinderGeometry(0.19, 0.23, 0.48, 12); neck.rotateX(1.12); neck.translate(0, 0.77, 0.72);
+  const tailPts = [];
+  for (let i = 0; i <= 9; i++) {
+    const t = i / 9;
+    tailPts.push(new THREE.Vector3(
+      Math.sin(t * Math.PI * 1.35) * 0.20,
+      0.59 + t * 0.25 + Math.sin(t * Math.PI) * 0.10,
+      -0.67 - t * 0.72,
+    ));
+  }
+  const tail = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(tailPts), 12, 0.068, 8, false);
+  const body = mergeGeometries([spine, chest, haunch, neck, tail], false);
+  paintGeo(body, '#651d1c', { y0: 0.05, y1: 1.02, aoLow: 0.48, top: '#b64a2b' });
 
-  // HEAD: a long wedge snout — the shape that says "hound" at 40 pixels
-  const skull = new THREE.SphereGeometry(0.19, 12, 9); skull.scale(1, 0.92, 1.15); skull.translate(0, 0.93, 0.88);
-  const snout = new THREE.ConeGeometry(0.13, 0.46, 7); snout.rotateX(Math.PI / 2 + 0.12); snout.translate(0, 0.88, 1.16);
-  const jaw = new THREE.BoxGeometry(0.16, 0.07, 0.34); jaw.translate(0, 0.79, 1.08);
-  const head = mergeGeometries([skull, snout, jaw], false);
-  paintGeo(head, '#a03418', { y0: 0.6, y1: 1.1, aoLow: 0.5, top: '#ff8c1a' });
+  // HEAD: cheek mass + broad muzzle, with a separate nose/ear/fang layer below.
+  const skull = new THREE.SphereGeometry(0.23, 16, 11); skull.scale(1.12, 1.0, 1.28); skull.translate(0, 0.94, 0.91);
+  const cheekL = new THREE.SphereGeometry(0.13, 12, 9); cheekL.scale(1.0, 0.92, 1.20); cheekL.translate(-0.14, 0.87, 1.00);
+  const cheekR = cheekL.clone(); cheekR.translate(0.28, 0, 0);
+  const snout = new THREE.CylinderGeometry(0.105, 0.155, 0.43, 10); snout.rotateX(Math.PI / 2); snout.translate(0, 0.86, 1.19);
+  const jaw = new THREE.SphereGeometry(0.16, 12, 8); jaw.scale(0.92, 0.44, 1.42); jaw.translate(0, 0.78, 1.15);
+  const head = mergeGeometries([skull, cheekL, cheekR, snout, jaw], false);
+  paintGeo(head, '#74211d', { y0: 0.58, y1: 1.16, aoLow: 0.54, top: '#c65a31' });
 
-  // LEGS: four, splayed, with a visible hock
+  // LEGS: four chunky articulated limbs with shoulder/haunch bulbs, visible
+  // hocks and broad paws. The former 7.5cm tubes read as sticks from above.
   const legs = [];
   for (const sx of [-1, 1]) for (const sz of [1, -1]) {
-    const p = [];
-    for (let i = 0; i <= 5; i++) {
-      const t = i / 5;
-      p.push(new THREE.Vector3(
-        sx * (0.26 + 0.06 * t),
-        0.60 - 0.58 * t,
-        (sz > 0 ? 0.34 : -0.52) + (sz > 0 ? -0.10 : 0.14) * Math.sin(t * 2.6)));
-    }
-    const g = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(p), 8, 0.075, 6, false);
-    const paw = new THREE.SphereGeometry(0.10, 8, 6); paw.scale(1.1, 0.7, 1.3);
-    paw.translate(sx * 0.32, 0.055, sz > 0 ? 0.28 : -0.42);
-    legs.push(g, paw);
+    const front = sz > 0;
+    const z0 = front ? 0.38 : -0.52;
+    const zend = front ? 0.51 : -0.30;
+    const p = [
+      new THREE.Vector3(sx * 0.24, 0.64, z0),
+      new THREE.Vector3(sx * 0.29, 0.49, z0 + (front ? 0.02 : -0.03)),
+      new THREE.Vector3(sx * 0.34, 0.30, z0 + (front ? 0.08 : 0.07)),
+      new THREE.Vector3(sx * 0.35, 0.09, zend),
+    ];
+    const limb = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(p), 10, 0.095, 8, false);
+    const joint = new THREE.SphereGeometry(0.145, 10, 8); joint.scale(1.0, 1.15, 1.0); joint.translate(sx * 0.25, 0.55, z0);
+    const paw = new THREE.SphereGeometry(0.12, 10, 7); paw.scale(1.18, 0.58, 1.55); paw.translate(sx * 0.35, 0.065, zend + 0.035);
+    legs.push(limb, joint, paw);
   }
   const leg = mergeGeometries(legs, false);
-  paintGeo(leg, '#2a1018', { y0: 0, y1: 0.7, aoLow: 0.5, top: '#7a2410' });
+  paintGeo(leg, '#1d1218', { y0: 0, y1: 0.72, aoLow: 0.56, top: '#68241f' });
 
-  // SPINES + TAIL: the back ridge is the top edge of the silhouette
+  // SPINES: irregular layered keratin, tapered toward the tail.
   const spikes = [];
-  for (let i = 0; i < 7; i++) {
-    const t = i / 6;
-    const h = 0.16 + 0.20 * Math.sin(t * Math.PI);
-    const c = new THREE.ConeGeometry(0.045, h, 5);
-    c.rotateX(-0.42);
-    c.translate(0, 0.86 + 0.06 * Math.sin(t * 2.4), 0.52 - 1.20 * t);
+  for (let i = 0; i < 8; i++) {
+    const t = i / 7;
+    const h = 0.14 + 0.22 * Math.sin(t * Math.PI);
+    const c = new THREE.ConeGeometry(0.055 + 0.015 * Math.sin(t * Math.PI), h, 7);
+    c.rotateX(-0.30 + 0.18 * t);
+    c.translate(0, 0.89 + 0.07 * Math.sin(t * Math.PI), 0.52 - 1.16 * t);
     spikes.push(c);
   }
-  const tp = [];
-  for (let i = 0; i <= 6; i++) { const t = i / 6; tp.push(new THREE.Vector3(0, 0.62 + 0.24 * t, -0.66 - 0.62 * t)); }
-  spikes.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(tp), 8, 0.05, 5, false));
   const ridge = mergeGeometries(spikes, false);
-  paintGeo(ridge, '#ffb03c', { y0: 0.6, y1: 1.2, aoLow: 0.62, top: '#fff0b0' });
+  paintGeo(ridge, '#292126', { y0: 0.6, y1: 1.25, aoLow: 0.66, top: '#b9aa8e' });
+
+  // READABLE CANINE FEATURES: tall ears, wet dark nose, aged bronze collar and
+  // two lower fangs. Each source is painted before merging so the final mesh
+  // retains material separation in vertex colour as well as atlas detail.
+  const earL = new THREE.ConeGeometry(0.105, 0.34, 8); earL.rotateZ(-0.18); earL.translate(-0.13, 1.20, 0.84);
+  const earR = new THREE.ConeGeometry(0.105, 0.34, 8); earR.rotateZ(0.18); earR.translate(0.13, 1.20, 0.84);
+  paintGeo(earL, '#24171d', { y0: 0.95, y1: 1.40, aoLow: 0.60, top: '#715047' });
+  paintGeo(earR, '#24171d', { y0: 0.95, y1: 1.40, aoLow: 0.60, top: '#715047' });
+  const nose = new THREE.SphereGeometry(0.105, 12, 8); nose.scale(1.05, 0.75, 0.80); nose.translate(0, 0.87, 1.42);
+  paintGeo(nose, '#08070d', { y0: 0.7, y1: 1.0, aoLow: 0.72, top: '#332735' });
+  const collar = new THREE.CylinderGeometry(0.245, 0.235, 0.105, 14, 1, true); collar.rotateX(1.12); collar.translate(0, 0.76, 0.70);
+  paintGeo(collar, '#6e4f2b', { y0: 0.45, y1: 1.05, aoLow: 0.60, top: '#b89555' });
+  const fangL = new THREE.ConeGeometry(0.034, 0.15, 7); fangL.rotateZ(Math.PI); fangL.translate(-0.075, 0.73, 1.25);
+  const fangR = new THREE.ConeGeometry(0.034, 0.15, 7); fangR.rotateZ(Math.PI); fangR.translate(0.075, 0.73, 1.25);
+  paintGeo(fangL, '#a99b80', { y0: 0.62, y1: 0.82, aoLow: 0.68, top: '#e1d3b4' });
+  paintGeo(fangR, '#a99b80', { y0: 0.62, y1: 0.82, aoLow: 0.68, top: '#e1d3b4' });
+  const features = mergeGeometries([earL, earR, nose, collar, fangL, fangR], false);
 
   // EYES
-  const e1 = new THREE.SphereGeometry(0.045, 8, 6); e1.translate(-0.10, 0.96, 1.00);
-  const e2 = new THREE.SphereGeometry(0.045, 8, 6); e2.translate(0.10, 0.96, 1.00);
+  const e1 = new THREE.SphereGeometry(0.042, 10, 7); e1.translate(-0.105, 0.99, 1.08);
+  const e2 = new THREE.SphereGeometry(0.042, 10, 7); e2.translate(0.105, 0.99, 1.08);
   const eyes = mergeGeometries([e1, e2], false);
   paintGeo(eyes, '#ffffff', { aoLow: 1 });
 
-  return { body, head, leg, ridge, eyes };
+  return { body, head, leg, ridge, features, eyes };
 }
 
 function buildHound(ctx, e) {
   const G = houndGeo();
   const root = new THREE.Group();
-  const mk = (g, slot, opts) => {
+  const mk = (g, slot, opts, parent = root) => {
     const m = new THREE.Mesh(g, charMaterial(ctx, slot, 'hound', opts));
-    m.castShadow = true; m.frustumCulled = false; root.add(m); return m;
+    m.castShadow = true; m.frustumCulled = false; parent.add(m); return m;
   };
-  const body = mk(G.body, 'cloth');
-  const head = mk(G.head, 'cloth');
-  const legs = mk(G.leg, 'hair');
-  const ridge = mk(G.ridge, 'metal');
-  const eyes = mk(G.eyes, 'glow', { glowKey: '#fff0b0', glow: 0.6 });
-  const parts = [body, head, legs, ridge, eyes];
-  const headGrp = new THREE.Group();
-  root.add(headGrp);
+  const headRig = new THREE.Group(); root.add(headRig);
+  const body = mk(G.body, 'cloth', { materialKey: 'characterrig.hound.hide' });
+  const head = mk(G.head, 'cloth', { materialKey: 'characterrig.hound.hide' }, headRig);
+  const legs = mk(G.leg, 'hair', { materialKey: 'characterrig.hound.limbs' });
+  const ridge = mk(G.ridge, 'metal', { materialKey: 'characterrig.hound.keratin' });
+  const features = mk(G.features, 'metal', { materialKey: 'characterrig.hound.keratin' }, headRig);
+  const eyes = mk(G.eyes, 'glow', { glowKey: '#ffd080', glow: 0.34 }, headRig);
+  const parts = [body, head, legs, ridge, features, eyes];
 
   return new PartsVisual(root, 1.15, parts, (V, dt, a) => {
     const t = V.t;
@@ -136,11 +166,11 @@ function buildHound(ctx, e) {
     // TRANSFORMS — a shear-ish yaw wag reads as a gallop at play distance
     legs.rotation.z = Math.sin(gait) * 0.10 * sp;
     legs.position.z = Math.sin(gait * 2) * 0.05 * sp;
-    head.position.y = Math.sin(gait + 0.8) * 0.035 * sp - 0.05 * k;
-    head.rotation.x = 0.10 * Math.sin(gait * 0.5) - 0.34 * k;
+    headRig.position.y = Math.sin(gait + 0.8) * 0.035 * sp - 0.05 * k;
+    headRig.rotation.x = 0.10 * Math.sin(gait * 0.5) - 0.34 * k;
     ridge.position.y = 0.04 * k + Math.sin(gait * 0.5) * 0.012;
     ridge.rotation.x = -0.22 * k;
-    if (eyes.material.emissiveIntensity != null) eyes.material.emissiveIntensity = 0.6 + 2.4 * k;
+    if (eyes.material.emissiveIntensity != null) eyes.material.emissiveIntensity = 0.34 + 1.7 * k;
   });
 }
 

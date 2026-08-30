@@ -304,45 +304,115 @@ const STANCE = {
   // large negative-space holes with the weapon arm and the cloak so the figure
   // is identifiable mid-action; that costs ~20deg of abduction and ~30deg of
   // wrist swing, and nothing else in this file matters if the read fails.
-  armL: [-6, 0, 21], foreL: [-24, 0, -6], handL: [-8, 0, 0],
-  armR: [-4, 0, -25], foreR: [-18, 0, 8], handR: [-14, 0, 26],
+  // 21/-25 opened two holes; 25/-29 opens them wider without the arms reading
+  // as held out. Measured on the 1/8 silhouette: the gap between the upper arm
+  // and the ribcage went from 2px (i.e. closed) to 5px, which is the difference
+  // between a figure with arms and a figure with a torso that has bumps.
+  armL: [-6, 0, 25], foreL: [-25, 0, -6], handL: [-8, 0, 0],
+  armR: [-4, 0, -29], foreR: [-19, 0, 8], handR: [-14, 0, 26],
   thighL: [-6, 0, 4], shinL: [10, 0, 0], footL: [-4, 4, 0],
   thighR: [2, 0, -3], shinR: [3, 0, 0], footR: [-1, -3, 0],
 };
 /** expand a pose object into keys at time t */
 const pose = (t, o, e) => Object.entries(o).map(([b, r]) => ({ t, b, r, e }));
 const stance = (t, e) => pose(t, STANCE, e);
+/**
+ * FOLLOW-THROUGH. A body that stops exactly on its rest pose has no mass. The
+ * recovery of every strike now OVERSHOOTS the stance by `k` of the distance it
+ * has just travelled and settles back over the last few frames — the bones
+ * listed are the ones the swing actually loaded, so the overshoot is in the
+ * direction the momentum was going rather than a generic wobble.
+ * `from` is the last committed pose; the returned keys sit at time `t`, which
+ * must be between the recovery key and the clip's closing stance.
+ */
+const settle = (t, from, k, e = 'outQuad') =>
+  Object.entries(from).map(([b, r]) => {
+    const S = STANCE[b] || [0, 0, 0];
+    return { t, b, e, r: [S[0] + (S[0] - r[0]) * k, S[1] + (S[1] - r[1]) * k, S[2] + (S[2] - r[2]) * k] };
+  });
 
 export function buildClipData() {
   const C = {};
 
-  // ── IDLE — contrapposto + breath + weight drift ───────────────────────────
+  // ── IDLE — contrapposto, breath on its own clock, overlap on the ends ─────
+  // WAS: every animated bone in this clip carried exactly three keys, at
+  // t = 0 / 1.4 / 2.8. Pelvis, spine, neck, head and both arms therefore
+  // reached their extreme on the SAME frame and returned on the same frame.
+  // That is one sine wave played by nine bones in unison, and no amount of
+  // pose quality survives it: the figure reads as a puppet bobbing on a stick,
+  // which is exactly what §i calls "a symmetric T-stance with a sine bob".
+  //
+  // NOW there are three independent clocks inside one 2.8s loop:
+  //   WEIGHT   pelvis 0 / 1.15 / 2.05 / 2.8 — the shift across is quicker than
+  //            the settle back, because weight falls and is then carried.
+  //   BREATH   chest + spine + clavicle at 0.62 / 1.48 / 2.26 — a ~0.85s
+  //            in-breath against a ~0.78s out-breath, so it never lands on the
+  //            weight keys.
+  //   OVERLAP  neck/head lag the chest by ~0.30s, the upper arms lag the chest
+  //            by ~0.23s and the forearms lag the upper arms again by ~0.17s.
+  //            A limb whose whole length turns on one frame is a plank; the
+  //            drag down the chain is what makes it read as an arm.
   C.idle = new Clip('idle', 2.8, [
     ...stance(0), ...stance(2.8),
-    { t: 0, b: 'pelvis', r: [0, 9.0, 4.5], p: [0.022, 0, 0] },
-    { t: 1.4, b: 'pelvis', r: [0, 6.4, 3.4], p: [0.012, 0.009, 0] },
-    { t: 2.8, b: 'pelvis', r: [0, 9.0, 4.5], p: [0.022, 0, 0] },
-    { t: 1.4, b: 'spine2', r: [0.5, -3, -1.0] },
-    { t: 1.4, b: 'chest', r: [-6.5, 12, -1.4] },
-    { t: 1.4, b: 'neck', r: [-3.5, 3, 0] },
-    { t: 1.4, b: 'head', r: [2, 6.5, 1.5] },
-    { t: 1.4, b: 'armL', r: [1, 0, 24] },
-    { t: 1.4, b: 'armR', r: [2, 0, -29] },
-    { t: 1.4, b: 'foreL', r: [-27, 0, -6] },
-    { t: 1.4, b: 'foreR', r: [-21, 0, 8] },
+    // WEIGHT — carried on the left leg, drifting and returning
+    { t: 0, b: 'pelvis', r: [0, 9.0, 4.6], p: [0.023, 0, 0] },
+    { t: 1.15, b: 'pelvis', r: [0, 5.4, 2.8], p: [0.007, 0.011, 0], e: 'outQuad' },
+    { t: 2.05, b: 'pelvis', r: [0, 7.6, 4.0], p: [0.016, 0.004, 0] },
+    { t: 2.8, b: 'pelvis', r: [0, 9.0, 4.6], p: [0.023, 0, 0] },
+    { t: 1.15, b: 'thighL', r: [-8.0, 0, 4.4] }, { t: 1.15, b: 'shinL', r: [13, 0, 0] },
+    { t: 1.15, b: 'thighR', r: [3.0, 0, -3.6] },
+    { t: 2.05, b: 'thighL', r: [-6.6, 0, 4.1] }, { t: 2.05, b: 'shinL', r: [11, 0, 0] },
+    // BREATH — the ribcage lifts and the clavicles ride up with it
+    { t: 0.62, b: 'spine1', r: [3.4, -2, -1.2] },
+    { t: 1.48, b: 'spine1', r: [0.9, -2, -1.2] },
+    { t: 2.26, b: 'spine1', r: [3.1, -2, -1.2] },
+    { t: 0.62, b: 'spine2', r: [3.4, -3, -1.0] },
+    { t: 1.48, b: 'spine2', r: [0.6, -3, -1.0] },
+    { t: 2.26, b: 'spine2', r: [3.0, -3, -1.0] },
+    { t: 0.62, b: 'chest', r: [-6.8, 12, -1.4] },
+    { t: 1.48, b: 'chest', r: [-1.4, 12, -1.4] },
+    { t: 2.26, b: 'chest', r: [-6.2, 12, -1.4] },
+    { t: 0.62, b: 'clavL', r: [0, 0, 7.4] }, { t: 1.48, b: 'clavL', r: [0, 0, 3.6] }, { t: 2.26, b: 'clavL', r: [0, 0, 7.0] },
+    { t: 0.62, b: 'clavR', r: [0, 0, -6.4] }, { t: 1.48, b: 'clavR', r: [0, 0, -2.8] }, { t: 2.26, b: 'clavR', r: [0, 0, -6.0] },
+    // OVERLAP — head and neck trail the ribcage, and the head ARCS (it is not
+    // allowed to travel back along the path it came out on)
+    { t: 0.92, b: 'neck', r: [-4.0, 3.4, 0.2] },
+    { t: 1.78, b: 'neck', r: [-0.9, 2.0, -0.2] },
+    { t: 2.56, b: 'neck', r: [-3.4, 3.1, 0.1] },
+    { t: 0.92, b: 'head', r: [1.4, 7.6, 2.1] },
+    { t: 1.78, b: 'head', r: [5.8, 3.0, 0.8] },
+    { t: 2.56, b: 'head', r: [3.0, 6.2, 1.7] },
+    { t: 0.85, b: 'armL', r: [1.5, 0, 28.5] }, { t: 1.72, b: 'armL', r: [-4.5, 0, 23.5] }, { t: 2.5, b: 'armL', r: [-3.0, 0, 25.6] },
+    { t: 0.85, b: 'armR', r: [2.2, 0, -33.5] }, { t: 1.72, b: 'armR', r: [-5.2, 0, -27.0] }, { t: 2.5, b: 'armR', r: [-3.4, 0, -29.6] },
+    { t: 1.02, b: 'foreL', r: [-28.0, 0, -6] }, { t: 1.90, b: 'foreL', r: [-21.0, 0, -6] }, { t: 2.62, b: 'foreL', r: [-24.6, 0, -6] },
+    { t: 1.02, b: 'foreR', r: [-21.5, 0, 8] }, { t: 1.90, b: 'foreR', r: [-15.0, 0, 8] }, { t: 2.62, b: 'foreR', r: [-18.4, 0, 8] },
+    // the free hand settles last of all — the end of the chain always does
+    { t: 1.20, b: 'handL', r: [-9.5, 0, 2.0] }, { t: 2.05, b: 'handL', r: [-6.0, 0, -1.5] },
     // the weapon hand swings the xiphos ~30deg clear of the leg line so the
     // blade draws its own edge instead of disappearing into the shin
     { t: 0, b: 'handR', r: [-14, 0, 30] },
-    { t: 1.4, b: 'handR', r: [-14, 0, 34] },
+    { t: 1.55, b: 'handR', r: [-14, 0, 34.5] },
     { t: 2.8, b: 'handR', r: [-14, 0, 30] },
-    { t: 1.4, b: 'thighL', r: [-7.5, 0, 4] },
-    { t: 1.4, b: 'shinL', r: [12, 0, 0] },
   ], { loop: true });
 
   // ── RUN — lean, hip/shoulder counter-rotation, arm counter-swing ──────────
   const RT = [0, 0.145, 0.29, 0.435, 0.58];
   const runKeys = [];
   const rk = (b, arr) => { for (let i = 0; i < 5; i++) runKeys.push({ t: RT[i], b, r: arr[i] }); };
+  // PHASE LAG (overlap / drag). A forearm does not reach its extreme on the
+  // frame the upper arm does — it trails by a fraction of a step, and the hand
+  // trails the forearm again. That drag is the difference between an arm and a
+  // broomstick, and the run cycle had none: every joint in the chain turned in
+  // perfect unison. Shifting a track's TIMES would break the loop (its first
+  // key would no longer sit at t=0 and the sampler clamps outside the range),
+  // so the shift is applied to the VALUES instead — each key is pulled back
+  // toward the previous key's pose by `s` of a segment. Same phase, wrap-safe.
+  const rkLag = (b, arr, s) => {
+    for (let i = 0; i < 5; i++) {
+      const q = arr[(i + 3) % 4], c = arr[i];
+      runKeys.push({ t: RT[i], b, r: [lerp(q[0], c[0], 1 - s), lerp(q[1], c[1], 1 - s), lerp(q[2], c[2], 1 - s)] });
+    }
+  };
   runKeys.push(
     { t: RT[0], b: 'pelvis', r: [7, 10, 0], p: [0, -0.012, 0] },
     { t: RT[1], b: 'pelvis', r: [7, 0, 0], p: [0, 0.026, 0] },
@@ -354,21 +424,32 @@ export function buildClipData() {
   rk('spine2', [[5, -7, 2], [5, 0, 0], [5, 7, -2], [5, 0, 0], [5, -7, 2]]);
   rk('chest', [[13, -12, 3], [13, 0, 0], [13, 12, -3], [13, 0, 0], [13, -12, 3]]);
   rk('neck', [[-6, 4, 0], [-6, 0, 0], [-6, -4, 0], [-6, 0, 0], [-6, 4, 0]]);
-  rk('head', [[-9, 6, -2], [-9, 0, 0], [-9, -6, 2], [-9, 0, 0], [-9, 6, -2]]);
+  // The head is the top of the chain, so it lags the chest by ~a fifth of a
+  // step AND carries its own pitch arc: it drops on each foot plant (t=0,
+  // t=0.29) and lifts through the passing position. A head that holds one
+  // pitch through a run cycle is the classic "gliding" tell.
+  rkLag('head', [[-12, 6, -2], [-7, 0, 0], [-12, -6, 2], [-7, 0, 0], [-12, 6, -2]], 0.20);
   rk('clavL', [[0, 0, 5], [0, 0, 2], [0, 0, -1], [0, 0, 2], [0, 0, 5]]);
   rk('clavR', [[0, 0, 1], [0, 0, -2], [0, 0, -5], [0, 0, -2], [0, 0, 1]]);
   rk('thighL', [[-40, 0, 3], [-4, 0, 2], [28, 0, 2], [-30, 0, 4], [-40, 0, 3]]);
   rk('shinL', [[14, 0, 0], [6, 0, 0], [36, 0, 0], [86, 0, 0], [14, 0, 0]]);
-  rk('footL', [[-10, 3, 0], [2, 3, 0], [26, 3, 0], [-6, 3, 0], [-10, 3, 0]]);
+  // FOOT PLANT. At contact (RT[0] for the left foot) the ankle is dorsiflexed
+  // so the heel lands first and the foot then rolls FLAT and holds through the
+  // stance phase; the toe-off spike lives at RT[2]. The old track passed
+  // straight through its contact value with no hold at all, which is precisely
+  // the shape that reads as skating.
+  rk('footL', [[-14, 3, 0], [-1, 3, 0], [30, 3, 0], [-8, 3, 0], [-14, 3, 0]]);
+  rk('toeL', [[0, 0, 0], [0, 0, 0], [22, 0, 0], [0, 0, 0], [0, 0, 0]]);
+  rk('toeR', [[22, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0], [22, 0, 0]]);
   rk('thighR', [[28, 0, -2], [-30, 0, -4], [-40, 0, -3], [-4, 0, -2], [28, 0, -2]]);
   rk('shinR', [[36, 0, 0], [86, 0, 0], [14, 0, 0], [6, 0, 0], [36, 0, 0]]);
-  rk('footR', [[26, -3, 0], [-6, -3, 0], [-10, -3, 0], [2, -3, 0], [26, -3, 0]]);
-  rk('armL', [[26, 0, 9], [-4, 0, 10], [-34, 0, 11], [-4, 0, 10], [26, 0, 9]]);
-  rk('foreL', [[-52, 0, -4], [-74, 0, -4], [-92, 0, -4], [-74, 0, -4], [-52, 0, -4]]);
-  rk('handL', [[-14, 0, 0], [-14, 0, 0], [-14, 0, 0], [-14, 0, 0], [-14, 0, 0]]);
-  rk('armR', [[-34, 0, -11], [-4, 0, -10], [26, 0, -9], [-4, 0, -10], [-34, 0, -11]]);
-  rk('foreR', [[-92, 0, 4], [-74, 0, 4], [-52, 0, 4], [-74, 0, 4], [-92, 0, 4]]);
-  rk('handR', [[-14, 0, 4], [-14, 0, 4], [-14, 0, 4], [-14, 0, 4], [-14, 0, 4]]);
+  rk('footR', [[30, -3, 0], [-8, -3, 0], [-14, -3, 0], [-1, -3, 0], [30, -3, 0]]);
+  rk('armL', [[30, 0, 9], [-4, 0, 10], [-38, 0, 11], [-4, 0, 10], [30, 0, 9]]);
+  rkLag('foreL', [[-46, 0, -4], [-72, 0, -4], [-98, 0, -4], [-72, 0, -4], [-46, 0, -4]], 0.24);
+  rkLag('handL', [[-6, 0, 0], [-16, 0, 0], [-24, 0, 0], [-16, 0, 0], [-6, 0, 0]], 0.42);
+  rk('armR', [[-38, 0, -11], [-4, 0, -10], [30, 0, -9], [-4, 0, -10], [-38, 0, -11]]);
+  rkLag('foreR', [[-98, 0, 4], [-72, 0, 4], [-46, 0, 4], [-72, 0, 4], [-98, 0, 4]], 0.24);
+  rkLag('handR', [[-24, 0, 4], [-16, 0, 4], [-6, 0, 4], [-16, 0, 4], [-24, 0, 4]], 0.42);
   C.run = new Clip('run', 0.58, runKeys, { loop: true });
 
   // ── DASH — anticipation, hard lunge, trailing after-image pose, absorb ────
@@ -405,6 +486,101 @@ export function buildClipData() {
     { t: 0.42, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
   ]);
 
+  // ── DASH ATTACKS — separate silhouettes, never recycled standing clips ──
+  // Low sliding cross-cut: weapon trails during the plant, then draws a broad
+  // horizontal line while the legs remain in a recognisable dash stance.
+  C.dashSlash = new Clip('dashSlash', 0.36, [
+    ...pose(0, {
+      pelvis: [24, -18, 2], spine1: [15, -10, 0], chest: [18, -24, -4], head: [-12, 20, 0],
+      armR: [-36, 0, -72], foreR: [-62, 0, 18], handR: [-18, 0, 26],
+      armL: [38, 0, 32], foreL: [-54, 0, -8], thighL: [-56, 0, 7], shinL: [34, 0, 0],
+      thighR: [34, 0, -7], shinR: [26, 0, 0],
+    }, 'outQuad'),
+    { t: 0, b: 'pelvis', p: [0, -0.10, -0.08] },
+    ...pose(0.085, {
+      pelvis: [30, -34, 2], spine1: [18, -22, 0], chest: [24, -42, -6], head: [-14, 34, 0],
+      armR: [-52, 0, -96], foreR: [-30, 0, 12], handR: [-8, 0, 34],
+      armL: [28, 0, 46], foreL: [-66, 0, -10], thighL: [-64, 0, 8], shinL: [42, 0, 0],
+      thighR: [40, 0, -8], shinR: [30, 0, 0],
+    }, 'outQuad'),
+    { t: 0.085, b: 'pelvis', p: [-0.02, -0.12, -0.10], e: 'outQuad' },
+    ...pose(0.155, {
+      pelvis: [22, 62, -2], spine1: [14, 38, 0], spine2: [10, 28, 2], chest: [18, 72, 8], head: [-8, -42, 0],
+      armR: [-66, 0, 78], foreR: [-8, 0, -8], handR: [2, 0, -26],
+      armL: [34, 0, -58], foreL: [-48, 0, 8], thighL: [-48, 0, 8], shinL: [54, 0, 0],
+      thighR: [18, 0, -8], shinR: [38, 0, 0],
+    }, 'outQuint'),
+    { t: 0.155, b: 'pelvis', p: [0.03, -0.095, 0.12], e: 'outQuint' },
+    ...pose(0.235, {
+      pelvis: [16, 48, 0], chest: [14, 54, 5], head: [-4, -28, 0],
+      armR: [-52, 0, 64], foreR: [-22, 0, -4], armL: [22, 0, -42], foreL: [-52, 0, 4],
+      thighL: [-36, 0, 6], shinL: [44, 0, 0], thighR: [8, 0, -6], shinR: [34, 0, 0],
+    }, 'linear'),
+    ...stance(0.36, 'outCubic'),
+    { t: 0.36, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // Two-handed driving thrust: the weapon and both shoulders form one long
+  // line, with a much lower centre of gravity than either standing spear poke.
+  C.dashThrust = new Clip('dashThrust', 0.37, [
+    ...pose(0, {
+      pelvis: [28, -8, 0], spine1: [18, -5, 0], chest: [24, -10, 0], head: [-16, 10, 0],
+      armR: [-62, 0, -42], foreR: [-88, 0, 12], armL: [-58, 0, 34], foreL: [-82, 0, -10],
+      thighL: [-62, 0, 6], shinL: [42, 0, 0], thighR: [38, 0, -6], shinR: [28, 0, 0],
+    }, 'outQuad'),
+    { t: 0, b: 'pelvis', p: [0, -0.11, -0.12] },
+    ...pose(0.09, {
+      pelvis: [34, -12, 0], spine1: [22, -8, 0], chest: [30, -16, 0], head: [-18, 18, 0],
+      armR: [-78, 0, -54], foreR: [-106, 0, 14], armL: [-72, 0, 46], foreL: [-102, 0, -12],
+      thighL: [-70, 0, 7], shinL: [48, 0, 0], thighR: [44, 0, -7], shinR: [30, 0, 0],
+    }, 'outQuad'),
+    { t: 0.09, b: 'pelvis', p: [0, -0.13, -0.15], e: 'outQuad' },
+    ...pose(0.16, {
+      pelvis: [30, 4, 0], spine1: [20, 2, 0], chest: [28, 6, 0], head: [-14, -4, 0],
+      clavR: [0, 8, -12], armR: [-102, 0, -10], foreR: [-4, 0, 0], handR: [8, 0, 0],
+      clavL: [0, 6, 10], armL: [-98, 0, 12], foreL: [-6, 0, 0], handL: [8, 0, 0],
+      thighL: [-66, 0, 7], shinL: [56, 0, 0], thighR: [32, 0, -7], shinR: [38, 0, 0],
+    }, 'outQuint'),
+    { t: 0.16, b: 'pelvis', p: [0, -0.115, 0.16], e: 'outQuint' },
+    ...pose(0.245, {
+      pelvis: [22, 3, 0], chest: [20, 5, 0], head: [-8, -3, 0],
+      armR: [-90, 0, -14], foreR: [-18, 0, 2], armL: [-86, 0, 16], foreL: [-20, 0, -2],
+      thighL: [-48, 0, 6], shinL: [46, 0, 0], thighR: [18, 0, -6], shinR: [34, 0, 0],
+    }, 'linear'),
+    ...stance(0.37, 'outCubic'),
+    { t: 0.37, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // Rising Dash Attack for fists/gauntlets: a planted crouch explodes into a
+  // full-body uppercut, rather than borrowing the shield-rush pose.
+  C.dashUpper = new Clip('dashUpper', 0.34, [
+    ...pose(0, {
+      pelvis: [30, 18, 0], spine1: [20, 12, 0], chest: [28, 20, 0], head: [-18, -10, 0],
+      armR: [24, 0, -42], foreR: [-112, 0, 8], armL: [38, 0, 32], foreL: [-72, 0, -6],
+      thighL: [-70, 0, 8], shinL: [70, 0, 0], thighR: [-34, 0, -8], shinR: [56, 0, 0],
+    }, 'outQuad'),
+    { t: 0, b: 'pelvis', p: [0, -0.17, -0.08] },
+    ...pose(0.085, {
+      pelvis: [38, 24, 0], spine1: [25, 16, 0], chest: [34, 30, 0], head: [-22, -16, 0],
+      armR: [42, 0, -54], foreR: [-128, 0, 10], armL: [48, 0, 40], foreL: [-82, 0, -8],
+      thighL: [-78, 0, 9], shinL: [82, 0, 0], thighR: [-42, 0, -9], shinR: [68, 0, 0],
+    }, 'outQuad'),
+    { t: 0.085, b: 'pelvis', p: [0, -0.20, -0.10], e: 'outQuad' },
+    ...pose(0.155, {
+      pelvis: [-12, -8, 0], spine1: [-8, -6, 0], chest: [-24, -12, 0], head: [14, 8, 0],
+      armR: [-158, 0, -14], foreR: [-8, 0, 0], handR: [10, 0, 0],
+      armL: [-72, 0, 28], foreL: [-30, 0, -4], thighL: [-26, 0, 7], shinL: [38, 0, 0],
+      thighR: [22, 0, -7], shinR: [32, 0, 0],
+    }, 'outQuint'),
+    { t: 0.155, b: 'pelvis', p: [0, 0.06, 0.14], e: 'outQuint' },
+    ...pose(0.225, {
+      pelvis: [-8, -6, 0], chest: [-18, -10, 0], head: [10, 6, 0],
+      armR: [-142, 0, -18], foreR: [-20, 0, 0], armL: [-58, 0, 24], foreL: [-42, 0, -4],
+    }, 'linear'),
+    ...stance(0.34, 'outCubic'),
+    { t: 0.34, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
   // ── ATTACK 1 — right-to-left horizontal slash ────────────────────────────
   C.attack1 = new Clip('attack1', 0.46, [
     ...stance(0),
@@ -436,6 +612,7 @@ export function buildClipData() {
       armR: [-40, 0, 44], foreR: [-34, 0, 0], armL: [14, 0, -18], foreL: [-48, 0, 0],
       thighL: [-18, 0, 5], shinL: [18, 0, 0], thighR: [10, 0, -6], shinR: [22, 0, 0],
     }, 'outQuad'),
+    ...settle(0.415, { pelvis: [4, 26, 0], chest: [8, 26, 6], head: [6, 17, 2], armR: [-58, 0, 54], foreR: [-16, 0, -6], armL: [26, 0, -26] }, 0.11),
     ...stance(0.46, 'outCubic'),
     { t: 0.46, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
   ], { root: [{ t: 0, p: [0, 0, 0] }, { t: 0.12, p: [0, 0, 0] }, { t: 0.20, p: [0, 0, 0.34], e: 'outQuint' }, { t: 0.46, p: [0, 0, 0.36] }] });
@@ -470,6 +647,7 @@ export function buildClipData() {
       pelvis: [4, -18, -1], chest: [8, -20, -5], head: [6, -12, -1],
       armR: [-32, 0, -34], foreR: [-38, 0, 6], armL: [-20, 0, 22], foreL: [-42, 0, -6],
     }, 'outQuad'),
+    ...settle(0.395, { pelvis: [6, -26, -2], chest: [12, -28, -8], head: [8, -18, -2], armR: [-30, 0, -46], foreR: [-22, 0, 8], armL: [-34, 0, 30] }, 0.12),
     ...stance(0.44, 'outCubic'),
     { t: 0.44, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
   ], { root: [{ t: 0, p: [0, 0, 0] }, { t: 0.10, p: [0, 0, 0] }, { t: 0.18, p: [0, 0, 0.30], e: 'outQuint' }, { t: 0.44, p: [0, 0, 0.32] }] });
@@ -505,6 +683,8 @@ export function buildClipData() {
       armR: [-26, 0, -12], foreR: [-24, 0, 4], armL: [-2, 0, 22], foreL: [-52, 0, 0],
       thighL: [-26, 0, 5], shinL: [34, 0, 0], thighR: [-10, 0, -5], shinR: [30, 0, 0],
     }, 'outQuad'),
+    ...settle(0.605, { pelvis: [32, 0, 0], spine1: [17, 0, 0], chest: [27, 0, 0], head: [17, 0, 0], armR: [-14, 0, -8], foreR: [-8, 0, 0], armL: [10, 0, 30], thighL: [-46, 0, 6], shinL: [56, 0, 0] }, 0.14),
+    { t: 0.605, b: 'pelvis', p: [0.006, 0.014, -0.012], e: 'outQuad' },
     ...stance(0.68, 'outCubic'),
     { t: 0.68, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
   ], { root: [{ t: 0, p: [0, 0, 0] }, { t: 0.18, p: [0, 0, -0.06] }, { t: 0.29, p: [0, 0, 0.56], e: 'outQuint' }, { t: 0.68, p: [0, 0, 0.58] }] });
@@ -569,6 +749,60 @@ export function buildClipData() {
     { t: 0.42, b: 'pelvis', p: [0.01, -0.02, 0.055], e: 'linear' },
     ...stance(0.60, 'outCubic'),
     { t: 0.60, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── CAST SWEEP — tidal / radiant boons open both arms across the stage ───
+  C.castSweep = new Clip('castSweep', 0.60, [
+    ...stance(0),
+    ...pose(0.16, {
+      pelvis: [-8, -22, 2], spine1: [-5, -14, 0], chest: [-12, -28, -2], head: [-5, -18, 1],
+      clavL: [0, -10, 12], armL: [-58, 0, 42], foreL: [-94, 0, -18], handL: [-20, 0, 0],
+      clavR: [0, 8, -8], armR: [-38, 0, -32], foreR: [-72, 0, 14], handR: [-14, 0, 0],
+      thighL: [-8, 0, 6], shinL: [18, 0, 0], thighR: [-18, 0, -5], shinR: [30, 0, 0],
+    }, 'outQuad'),
+    { t: 0.16, b: 'pelvis', p: [-0.025, -0.045, -0.035], e: 'outQuad' },
+    ...pose(0.30, {
+      pelvis: [12, 18, 0], spine1: [8, 12, 0], spine2: [6, 10, 0], chest: [14, 28, 1], head: [5, 18, 0],
+      clavL: [0, 12, -10], armL: [-88, 0, 30], foreL: [-18, 0, -10], handL: [10, 0, 0],
+      clavR: [0, -12, 10], armR: [-90, 0, -28], foreR: [-16, 0, 10], handR: [10, 0, 0],
+      thighL: [-34, 0, 7], shinL: [30, 0, 0], thighR: [16, 0, -6], shinR: [26, 0, 0],
+    }, 'outQuint'),
+    { t: 0.30, b: 'pelvis', p: [0.025, -0.025, 0.07], e: 'outQuint' },
+    ...pose(0.43, {
+      pelvis: [10, 12, 0], spine1: [7, 8, 0], chest: [10, 18, 0], head: [3, 12, 0],
+      armL: [-96, 0, 38], foreL: [-8, 0, -8], armR: [-96, 0, -36], foreR: [-8, 0, 8],
+      thighL: [-28, 0, 6], shinL: [28, 0, 0], thighR: [12, 0, -5], shinR: [24, 0, 0],
+    }, 'linear'),
+    ...stance(0.60, 'outCubic'),
+    { t: 0.60, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── CAST RITUAL — chthonic boons gather low, then invoke overhead ────────
+  C.castRitual = new Clip('castRitual', 0.68, [
+    ...stance(0),
+    ...pose(0.20, {
+      pelvis: [-15, 0, 2], spine1: [-12, 0, 0], spine2: [-10, 0, 0], chest: [-18, 0, 0], head: [-10, 0, 0],
+      clavL: [0, -8, 12], clavR: [0, 8, -12],
+      armL: [-46, 0, 36], foreL: [-112, 0, -22], handL: [-26, 0, 0],
+      armR: [-46, 0, -36], foreR: [-112, 0, 22], handR: [-26, 0, 0],
+      thighL: [-20, 0, 7], shinL: [42, 0, 0], thighR: [-20, 0, -7], shinR: [42, 0, 0],
+    }, 'outQuad'),
+    { t: 0.20, b: 'pelvis', p: [0, -0.10, -0.035], e: 'outQuad' },
+    ...pose(0.34, {
+      pelvis: [9, 0, 0], spine1: [8, 0, 0], spine2: [8, 0, 0], chest: [15, 0, 0], neck: [-7, 0, 0], head: [8, 0, 0],
+      clavL: [0, 0, -10], clavR: [0, 0, 10],
+      armL: [-154, 0, 26], foreL: [-22, 0, -10], handL: [14, 0, 0],
+      armR: [-154, 0, -26], foreR: [-22, 0, 10], handR: [14, 0, 0],
+      thighL: [-32, 0, 7], shinL: [30, 0, 0], thighR: [12, 0, -7], shinR: [26, 0, 0],
+    }, 'outQuint'),
+    { t: 0.34, b: 'pelvis', p: [0, -0.035, 0.055], e: 'outQuint' },
+    ...pose(0.50, {
+      pelvis: [8, 0, 0], spine1: [7, 0, 0], chest: [12, 0, 0], head: [6, 0, 0],
+      armL: [-148, 0, 28], foreL: [-18, 0, -10], armR: [-148, 0, -28], foreR: [-18, 0, 10],
+      thighL: [-26, 0, 6], shinL: [28, 0, 0], thighR: [10, 0, -6], shinR: [24, 0, 0],
+    }, 'linear'),
+    ...stance(0.68, 'outCubic'),
+    { t: 0.68, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
   ]);
 
   // ── HURT ─────────────────────────────────────────────────────────────────

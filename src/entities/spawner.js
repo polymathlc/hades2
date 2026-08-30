@@ -28,7 +28,7 @@ import { clamp, clamp01, lerp, TAU } from '../core/math.js';
 
 // ── per-biome weighted pools. Weight is a function of depth so families fade
 //    in as the run gets deeper rather than appearing fully formed at depth 1.
-const POOLS = {
+export const ENCOUNTER_POOLS = {
   tartarus: [
     { kind: 'shade', cost: 1, w: (d) => 6 },
     { kind: 'hound', cost: 1, w: (d) => (d >= 1 ? 4 : 1) },
@@ -36,6 +36,10 @@ const POOLS = {
     { kind: 'hexer', cost: 2, w: (d) => (d >= 2 ? 3 : 0.5) },
     { kind: 'bloat', cost: 2, w: (d) => (d >= 3 ? 2.5 : 0) },
     { kind: 'herald', cost: 3, w: (d) => (d >= 4 ? 1.6 : 0) },
+    { kind: 'lancer', cost: 2, w: (d) => (d >= 2 ? 2.4 : 0) },
+    { kind: 'siren', cost: 2, w: (d) => (d >= 3 ? 1.8 : 0) },
+    { kind: 'oracle', cost: 3, w: (d) => (d >= 4 ? 1.2 : 0) },
+    { kind: 'riftstalker', cost: 3, w: (d) => (d >= 4 ? 1.4 : 0) },
   ],
   asphodel: [
     { kind: 'hound', cost: 1, w: () => 6 },
@@ -44,6 +48,10 @@ const POOLS = {
     { kind: 'brute', cost: 3, w: (d) => (d >= 2 ? 3 : 0) },
     { kind: 'hexer', cost: 2, w: (d) => (d >= 2 ? 2.5 : 0) },
     { kind: 'herald', cost: 3, w: (d) => (d >= 3 ? 2 : 0) },
+    { kind: 'lancer', cost: 2, w: (d) => (d >= 2 ? 2 : 0) },
+    { kind: 'siren', cost: 2, w: (d) => (d >= 1 ? 3 : 0.5) },
+    { kind: 'oracle', cost: 3, w: (d) => (d >= 3 ? 1.5 : 0) },
+    { kind: 'riftstalker', cost: 3, w: (d) => (d >= 2 ? 2.0 : 0.4) },
   ],
   elysium: [
     { kind: 'brute', cost: 3, w: () => 4 },
@@ -52,12 +60,27 @@ const POOLS = {
     { kind: 'shade', cost: 1, w: () => 3 },
     { kind: 'hound', cost: 1, w: () => 2 },
     { kind: 'bloat', cost: 2, w: () => 2 },
+    { kind: 'lancer', cost: 2, w: () => 4 },
+    { kind: 'siren', cost: 2, w: () => 3.5 },
+    { kind: 'oracle', cost: 3, w: () => 2.8 },
+    { kind: 'riftstalker', cost: 3, w: () => 3.4 },
   ],
 };
 
 // pack units always arrive together — a lone hound is a nuisance, three is a
 // mechanic
 const PACK = { hound: 3, shade: 2 };
+
+// Boss cadence is every five depths. The first encounter remains the Warden;
+// the second and third are distinct mythic opponents instead of repeats.
+export const BOSS_SEQUENCE = ['warden', 'minotaur', 'heracles'];
+export const FINAL_BOSS_DEPTH = 20;
+export const FINAL_BOSSES = Object.freeze({ zagreus: 'hades', melinoe: 'chronos' });
+export function bossForDepth(depth, character = 'zagreus') {
+  const encounter = Math.max(1, Math.floor((depth | 0) / 5));
+  if (encounter >= 4) return FINAL_BOSSES[character] || FINAL_BOSSES.zagreus;
+  return BOSS_SEQUENCE[Math.min(BOSS_SEQUENCE.length, encounter) - 1];
+}
 
 const _v = new THREE.Vector3();
 
@@ -94,7 +117,7 @@ export class Spawner {
 
   /** compose a deterministic wave list for (biome, depth). */
   compose(biome, depth) {
-    const pool = POOLS[biome] || POOLS.tartarus;
+    const pool = ENCOUNTER_POOLS[biome] || ENCOUNTER_POOLS.tartarus;
     const live = pool.filter(p => p.w(depth) > 0);
     const total = this.budget(depth);
     // 2 waves shallow, 3 mid, 4 deep — pacing, not padding
@@ -113,8 +136,10 @@ export class Spawner {
         for (let i = 0; i < n && left > 0; i++) { list.push(pick.kind); left -= pick.cost; }
       }
       // an escalation wave always carries one shape-changer if it can afford it
-      if (w === nWaves - 1 && depth >= 3 && !list.includes('herald') && !list.includes('brute')) {
-        list.push(depth >= 5 ? 'herald' : 'brute');
+      const shapers = ['herald', 'brute', 'lancer', 'siren', 'oracle', 'riftstalker'];
+      if (w === nWaves - 1 && depth >= 3 && !list.some(kind => shapers.includes(kind))) {
+        const specialist = depth >= 9 ? (depth % 2 ? 'riftstalker' : 'oracle') : depth >= 5 ? (depth % 2 ? 'siren' : 'herald') : 'lancer';
+        list.push(specialist);
       }
       waves.push({
         list,
@@ -150,8 +175,10 @@ export class Spawner {
   }
 
   _bossWaves() {
+    const character = this.ctx?.run?.selectedCharacter || this.ctx?.player?.characterId || 'zagreus';
+    const boss = bossForDepth(this.depth, character);
     return [
-      { list: ['warden'], delay: 1.1, stagger: 0, trigger: 'immediate' },
+      { list: [boss], delay: 1.1, stagger: 0, trigger: 'immediate' },
       { list: ['shade', 'shade'], delay: 8.0, stagger: 0.3, trigger: 'timed' },
     ];
   }
@@ -226,7 +253,7 @@ export class Spawner {
     // the sides so nothing materialises directly in the hero's blind spot
     const base = this.rng.range(0, TAU);
     const a = base + (index / Math.max(1, count)) * TAU * 0.86;
-    const ring = clamp(R * 0.62, 6.5, 12.5) + this.rng.range(-1.2, 1.2);
+    const ring = clamp(R * 0.68, 9.0, 23.5) + this.rng.range(-1.8, 1.8);
     const x = Math.cos(a) * ring, z = Math.sin(a) * ring;
     const e = this.mgr.spawn(kind, { x, z }, {
       depth: this.depth, wave: this.wave, minPlayerDist: 6.0,

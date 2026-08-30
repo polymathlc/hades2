@@ -47,6 +47,7 @@ const _v2 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _qc = new THREE.Quaternion();
 const _m = new THREE.Matrix4();
+const _m2 = new THREE.Matrix4();
 const _s = new THREE.Vector3();
 const _c = new THREE.Color();
 const _up = new THREE.Vector3(0, 1, 0);
@@ -213,11 +214,18 @@ export class ProjectileSystem {
       speed: 18, gravity: 0, drag: 0,
       radius: 0.28, life: 3, t: 0,
       damage: 10, type: 'physical', knockback: 3, hitstop: 0, shake: 0,
-      poiseDamage: 5, status: null, statusStacks: 1,
+      poiseDamage: 5, status: null, statusStacks: 1, statusPower: 0,
       team: TEAM.ENEMY, mask: TEAM.PLAYER, source: null,
       pierce: 1, hits: 0, bounces: 0, solid: true, reflectable: true,
       blastRadius: 0, crit: 0, follow: false,
+      forks: 0, castTicks: 0, tickDamage: 0, castBeam: 0,
+      skewer: 0,
+      expose: 0, boonGod: null, boonSlot: null, boonProc: false,
+      castShard: false, castReturned: false, castDuration: 0, castForm: null,
+      castSpin: 0, castPulse: 0, coreX: 1, coreY: 1, coreZ: 1,
+      lodgedTarget: null, lodgeX: 0, lodgeY: 0, lodgeZ: 0, lodgeDX: 0, lodgeDZ: 1,
       homing: 0, target: null,
+      returnTarget: null, returnRadius: 0,
       orbX: 0, orbZ: 0, orbR: 3, orbW: 2.2, orbA: 0,
       cr: 1, cg: 0.7, cb: 0.3, size: 1, coreSize: 1,
       hx: new Float32Array(TRAIL), hy: new Float32Array(TRAIL), hz: new Float32Array(TRAIL),
@@ -265,6 +273,7 @@ export class ProjectileSystem {
     p.poiseDamage = d.poiseDamage ?? p.damage * 0.4;
     p.status = d.status || null;
     p.statusStacks = d.statusStacks ?? 1;
+    p.statusPower = d.statusPower ?? 0;
 
     p.source = d.source || null;
     p.team = d.team ?? (p.source ? (this.combat ? this.combat.hitboxes.teamOf(p.source) : TEAM.ENEMY) : TEAM.ENEMY);
@@ -272,11 +281,20 @@ export class ProjectileSystem {
 
     p.pierce = d.pierce ?? 1; p.hits = 0;
     p.blastRadius = d.blastRadius ?? 0; p.crit = d.crit ?? 0;
+    p.forks = d.forks ?? 0; p.castTicks = d.castTicks ?? 0; p.tickDamage = d.tickDamage ?? 0; p.castBeam = d.castBeam ?? 0;
+    p.skewer = d.skewer ?? 0;
+    p.expose = d.expose ?? 0; p.boonGod = d.boonGod || null; p.boonSlot = d.boonSlot || null; p.boonProc = !!d.boonProc;
+    p.castShard = !!d.castShard; p.castReturned = false; p.castDuration = d.castDuration ?? 0; p.castForm = d.castForm || null;
+    p.castSpin = d.castSpin ?? 0; p.castPulse = d.castPulse ?? 0;
+    p.coreX = d.coreAspect?.[0] ?? 1; p.coreY = d.coreAspect?.[1] ?? 1; p.coreZ = d.coreAspect?.[2] ?? 1;
+    p.lodgedTarget = null; p.lodgeX = p.lodgeY = p.lodgeZ = 0; p.lodgeDX = dx; p.lodgeDZ = dz;
     p.bounces = d.bounces ?? (p.kind === 3 ? 3 : 0);
     p.solid = d.solid !== false;
     p.reflectable = d.reflectable !== false;
     p.homing = d.homing ?? (p.kind === 2 ? 4.5 : 0);
     p.target = d.target || null;
+    p.returnTarget = d.returnTarget || null;
+    p.returnRadius = d.returnRadius ?? 0;
 
     p.orbX = d.orbitX ?? p.x; p.orbZ = d.orbitZ ?? p.z;
     p.orbR = d.orbitRadius ?? 3; p.orbW = d.orbitSpeed ?? 2.2;
@@ -304,6 +322,88 @@ export class ProjectileSystem {
     this.count = this.live.length;
     this.ctx.events.emit('projectile.fired', { id: p.id, pos: _v.set(p.x, p.y, p.z), type: p.type, source: p.source });
     return p.id;
+  }
+
+  /** Live pooled record for a stable projectile id, used by spear recall. */
+  get(id) {
+    if (!id) return null;
+    for (let i = 0; i < this.live.length; i++) {
+      const p = this.pool[this.live[i]];
+      if (p.alive && p.id === id) return p;
+    }
+    return null;
+  }
+
+  /** Turn a player Cast projectile into a visible shard carried by its victim. */
+  lodgeCastShard(p, target, duration = 8) {
+    if (!p?.alive || !p.castShard || p.lodgedTarget || !target || target.dead || target.alive === false) return false;
+    const dx = p.x - target.position.x, dz = p.z - target.position.z;
+    const dl = Math.hypot(dx, dz);
+    const r = Math.max(0.18, (target.radius || 0.5) * 0.58);
+    p.lodgeX = dl > 1e-4 ? dx / dl * r : -p.lodgeDX * r;
+    p.lodgeZ = dl > 1e-4 ? dz / dl * r : -p.lodgeDZ * r;
+    p.lodgeY = Math.max(0.5, (target.height || 1.8) * 0.62);
+    const vl = Math.hypot(p.vx, p.vz) || 1;
+    p.lodgeDX = p.vx / vl; p.lodgeDZ = p.vz / vl;
+    p.lodgedTarget = target;
+    p.t = 0; p.life = Math.max(0.5, duration);
+    p.vx = p.vy = p.vz = 0; p.gravity = 0; p.drag = 0;
+    p.mask = 0; p.solid = false; p.hn = 0;
+    target._castShardCount = (target._castShardCount || 0) + 1;
+    if (p.trailHandle) { p.trailHandle.release?.(); p.trailHandle = null; }
+    this.ctx.events?.emit?.('cast.lodged', { projectile: p.id, target, source: p.source, god: p.boonGod, duration: p.life });
+    this.ctx.vfx?.burst?.(_v.set(p.x, p.y, p.z), { count: 9, color: this._hex(p), speed: 4.5, spread: 0.55, kind: 'shard' });
+    return true;
+  }
+
+  _unmarkCastTarget(p) {
+    const target = p.lodgedTarget;
+    if (!target) return;
+    target._castShardCount = Math.max(0, (target._castShardCount || 1) - 1);
+    p.lodgedTarget = null;
+  }
+
+  _restoreCastStock(p, reason) {
+    if (!p.castShard || p.castReturned) return;
+    p.castReturned = true;
+    p.source?.restoreCastShard?.(1);
+    this.ctx.events?.emit?.('cast.returned', { projectile: p.id, source: p.source, reason });
+  }
+
+  /** Release a lodged shard, visibly dropping it before its pooled record dies. */
+  dropCastShard(p, reason = 'expired') {
+    if (!p?.alive || !p.lodgedTarget) return false;
+    this._unmarkCastTarget(p);
+    this._restoreCastStock(p, reason);
+    p.castShard = false;
+    p.mask = 0; p.solid = false; p.reflectable = false;
+    p.gravity = 13; p.vy = 1.8; p.vx = -p.lodgeDX * 1.1; p.vz = -p.lodgeDZ * 1.1;
+    p.t = 0; p.life = 0.42; p.hn = 0; p.onExpireFx = 'burst';
+    this.ctx.vfx?.burst?.(_v.set(p.x, p.y, p.z), { count: 6, color: this._hex(p), speed: 3.2, spread: 0.45, kind: 'sparkFine' });
+    return true;
+  }
+
+  releaseLodgedByTarget(target, reason = 'death') {
+    if (!target) return 0;
+    let n = 0;
+    for (let i = this.live.length - 1; i >= 0; i--) {
+      const p = this.pool[this.live[i]];
+      if (p.alive && p.lodgedTarget === target && this.dropCastShard(p, reason)) n++;
+    }
+    return n;
+  }
+
+  releaseCastShardsBySource(source, reason = 'source-death') {
+    if (!source) return 0;
+    let n = 0;
+    for (let i = this.live.length - 1; i >= 0; i--) {
+      const p = this.pool[this.live[i]];
+      if (!p.alive || !p.castShard || p.source !== source) continue;
+      if (p.lodgedTarget) this.dropCastShard(p, reason);
+      else this.kill(p, 'silent');
+      n++;
+    }
+    return n;
   }
 
   /** Reflect a bolt back at its owner — the SHIELD's whole reason to exist. */
@@ -337,6 +437,9 @@ export class ProjectileSystem {
 
   kill(p, why) {
     if (!p.alive) return;
+    if (p.lodgedTarget) this._unmarkCastTarget(p);
+    this._restoreCastStock(p, why);
+    p.castShard = false;
     p.alive = false;
     if (p.trailHandle) { p.trailHandle.release?.(); p.trailHandle = null; }
     const i = this.live.indexOf(p.slot);
@@ -359,6 +462,22 @@ export class ProjectileSystem {
     for (let i = this.live.length - 1; i >= 0; i--) {
       const p = this.pool[this.live[i]];
       p.t += dt;
+
+      // Lodged Casts are world-space marks carried by their victim. They do
+      // not collide, trail or pierce while embedded; expiry starts a short
+      // physical fall and immediately removes the damage bonus.
+      if (p.lodgedTarget) {
+        const target = p.lodgedTarget;
+        if (!target || target.dead || target.alive === false || p.t >= p.life) {
+          this.dropCastShard(p, !target || target.dead || target.alive === false ? 'death' : 'expired');
+          continue;
+        }
+        p.x = target.position.x + p.lodgeX;
+        p.y = target.position.y + p.lodgeY;
+        p.z = target.position.z + p.lodgeZ;
+        if (p.carrier) { p.carrier.position.set(p.x, p.y, p.z); p.carrier.updateMatrixWorld(true); }
+        continue;
+      }
 
       // ── integrate ──────────────────────────────────────────────────────
       if (p.kind === 4) {                                   // orbit
@@ -395,6 +514,17 @@ export class ProjectileSystem {
       }
       if (p.carrier) { p.carrier.position.set(p.x, p.y, p.z); p.carrier.updateMatrixWorld(true); }
 
+      // Returning weapons are caught instead of flying through their owner and
+      // continuing off-screen. They can still damage enemies on the way home.
+      if (p.returnTarget?.position && p.returnRadius > 0) {
+        const rx = p.returnTarget.position.x - p.x, rz = p.returnTarget.position.z - p.z;
+        if (rx * rx + rz * rz <= p.returnRadius * p.returnRadius) {
+          this.ctx.events.emit('projectile.returned', { id: p.id, source: p.source, target: p.returnTarget });
+          this.kill(p, 'silent');
+          continue;
+        }
+      }
+
       // ── expiry ─────────────────────────────────────────────────────────
       if (p.t >= p.life) { this.kill(p, 'expire'); continue; }
       if (p.y < 0.06 && p.gravity > 0) {
@@ -404,7 +534,9 @@ export class ProjectileSystem {
       if (p.x * p.x + p.z * p.z > R * R) { this.kill(p, 'expire'); continue; }
 
       // ── world solids (cheap: collide() pushes out in place) ────────────
-      if (p.solid && world && world.collide && (ctx.time.frame + p.slot) % 2 === 0) {
+      // Central cover is intentional ranged counterplay. Check every step so
+      // fast rail bolts cannot tunnel through a thin stele between odd frames.
+      if (p.solid && world && world.collide) {
         _v.set(p.x, p.y, p.z);
         world.collide(_v, p.radius);
         if (Math.abs(_v.x - p.x) > 1e-4 || Math.abs(_v.z - p.z) > 1e-4) {
@@ -435,6 +567,7 @@ export class ProjectileSystem {
 
         const dl = Math.hypot(dx, dz) || 1;
         this.combat.projectileHit(p, e, dx / dl, dz / dl);
+        if (p.lodgedTarget) { p.hits++; p._lastHit = e; break; }
         p.hits++; p._lastHit = e;
         if (p.hits >= p.pierce) { this._explode(p, targets); break; }
       }
@@ -483,17 +616,20 @@ export class ProjectileSystem {
       // fade-in on spawn, fade-out at end of life so nothing pops
       const fin = Math.min(1, p.t / 0.05);
       const fout = Math.min(1, (p.life - p.t) / 0.14);
-      const k = Math.max(0, Math.min(fin, fout));
+      const pulse = 1 + Math.sin(p.t * Math.max(1, Math.abs(p.castSpin)) * 2.1) * p.castPulse;
+      const k = Math.max(0, Math.min(fin, fout)) * pulse;
 
       // CORE — stretched along velocity
       const sp = Math.hypot(p.vx, p.vy, p.vz) || 1;
-      _v.set(p.vx / sp, p.vy / sp, p.vz / sp);
+      if (p.lodgedTarget) _v.set(p.lodgeDX, 0.16, p.lodgeDZ).normalize();
+      else _v.set(p.vx / sp, p.vy / sp, p.vz / sp);
       if (Math.abs(_v.y) > 0.995) { _v.x += 0.02; _v.normalize(); }
       // orient +Z of the bipyramid along velocity: build from a lookAt basis
       _m.lookAt(_v2.set(0, 0, 0), _v, _up);
+      if (p.castSpin) _m.multiply(_m2.makeRotationZ(p.castSpin * p.t));
       _m.setPosition(p.x, p.y, p.z);
       const cs = p.radius * 1.02 * p.coreSize * k;
-      _s.set(cs, cs, cs);
+      _s.set(cs * p.coreX, cs * p.coreY, cs * p.coreZ);
       _m.scale(_s);
       this.coreMesh.setMatrixAt(ci, _m);
       cCol[ci * 3] = Math.min(1.05, p.cr * 0.90 + 0.09) * k;
@@ -515,7 +651,7 @@ export class ProjectileSystem {
       // Point i is i steps behind the head; q is its position along the trail
       // (1 at the head, 0 at the tail). Width tapers to a needle and value
       // falls faster than width, so the tail bleeds out instead of stopping.
-      const n = p.hn;
+      const n = p.lodgedTarget ? 0 : p.hn;
       if (n < 1) continue;
       const wHead = p.radius * 1.06 * p.size;
       const kk = k * 0.92;

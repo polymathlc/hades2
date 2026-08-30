@@ -6,6 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test:boons": "node scripts/test-boons.mjs",
+    "test:meta": "node scripts/test-meta.mjs",
+    "test:features": "node scripts/test-forge-gates-controls.mjs",
+    "test:textures": "node scripts/test-texture-budget.mjs",
+    "test:weapons": "node scripts/test-player-weapons.mjs",
     "preview": "vite preview --port 4173 --strictPort",
     "shot": "node tools/capture.mjs",
     "desktop": "npm run build && node scripts/stage-desktop.mjs && electron desktop/main.cjs",

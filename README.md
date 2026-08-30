@@ -1,9 +1,10 @@
 # EREBUS — Descent
 
-An isometric 3/4 rogue-lite action game in Three.js, in the Hades genre: chamber-to-chamber runs,
-god boons, four distinct weapons, a painterly Greek-underworld art direction.
+An isometric 3/4 rogue-lite action game in Three.js, in the Hades genre: a persistent Crossroads
+home base, chamber-to-chamber runs, god boons, four distinct weapons, and a painterly
+Greek-underworld art direction.
 
-The game uses a **hybrid painterly material pipeline**: four image-generated albedo atlases provide
+The game uses a **hybrid painterly material pipeline**: eight image-generated albedo atlases provide
 authored colour and brushwork for every named surface, while code generates the matching normals,
 roughness, metalness, ambient occlusion, emissive masks, anti-tiling projection, meshes, animation,
 and sound at runtime. No downloaded stock textures, models, audio, or fonts. ~40k lines.
@@ -33,6 +34,14 @@ npm run standalone   # rebuild standalone/play.html
 First load bakes the procedural texture library on a worker pool. On a slow machine that takes a
 few seconds before the first chamber appears — this is a known rough edge, not a hang.
 
+The browser build now starts in **Auto** graphics mode. It uses available memory, CPU count, screen
+size, pixel density, mobile input, and data-saver preference to choose Low, Medium, or High. Low
+mode renders at a reduced resolution, disables shadows and the expensive cinematic passes, halves
+the simulation workload, uses fewer lights and particles, and leaves CPU cores free while textures
+are built. The pause-menu **Settings** screen can save Auto, Low, Medium, High, or Ultra; changing it
+at the home base reloads safely and applies the full tier. `?q=low` is also available as an immediate
+URL override for older computers.
+
 For a production build:
 
 ```bash
@@ -44,22 +53,23 @@ npm run build && npm run preview
 | Input | Action |
 |---|---|
 | **W A S D** / arrows | Move (camera-relative, 8-direction) |
-| **Left mouse** | Attack — combos, with input buffering and cancel windows |
-| **Right mouse** / **E** | Special (weapon-dependent: spin, throw, power shot, bash) |
+| **Left mouse** | Attack toward cursor — melee combos or the bow’s charged shot |
+| **Right mouse** | Cursor-aimed special (weapon-dependent: sweep, spear throw/press again to recall, kick, guard) |
 | **Q** | Cast |
 | **Space** / **Shift** | Dash — i-frames during the active window, cancels attack recovery |
-| **1 2 3 4** | Equip blade / spear / bow / shield |
-| **X** or **C** | Cycle weapon |
-| **R** | Summon |
-| **F** | Interact (doors, rewards) |
+| **R** | God Call / Summon |
+| **E** or **F** | Interact; approach a hovering weapon at home and press to equip it |
 | **Esc** | Pause |
+| **H** | Open the in-game controls guide |
 
-Gamepad is supported: left stick moves, right stick aims, face buttons map to attack/special/dash.
+Gamepad is supported: left stick moves, right stick aims, face buttons map to attack/special/dash,
+and the Menu button pauses. The pause menu includes persistent Master, Music, and Effects volume controls.
 
 ### The four weapons
 
 Each is a separate rhythm, not a reskin — timings, cancel windows, hitbox shapes and knockback are
-authored as data in `src/entities/weapons.js`.
+authored as data in `src/entities/weapons.js`. Choose one from the hovering Crossroads armory before
+entering the portal; that arm is bound for the entire descent.
 
 - **Stygian Blade** — fast 3-hit combo, third hit a committed lunge with root motion
 - **Spear** — long reach poke combo, plus a charged throw that sticks and is recalled
@@ -77,9 +87,10 @@ authored as data in `src/entities/weapons.js`.
 - Ornate architecture with real carved relief — chamfered profiles, baked contact occlusion that
   survives instancing
 - Six enemy families designed to pass a black-shape silhouette test, plus a three-phase boss
+- Crossroads home base with a run portal, boss-dropped Nectar and Titan Blood, persistent saves, three permanent god paths (Boon Mastery, Legacy, Devotion), and Attack/Special/Cast weapon forges
 - Attack-token AI so only N enemies commit at once — the mechanism that keeps fights readable
 - Drawn-shape VFX atlas, ribbon trails, pooled instanced particles
-- Ornate HUD and god-coloured boon cards
+- Ornate HUD and god-coloured boon cards with generated deity portraits, rarity upgrades, god-specific combat VFX, and Hephaestus gates that always offer current-weapon Attack/Special/Cast choices
 - Synthesised adaptive score: Karplus-Strong plucked strings, procedural impulse responses per
   biome, stems that layer with combat intensity
 

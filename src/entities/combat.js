@@ -32,6 +32,8 @@ import * as THREE from 'three';
 import { HitboxSystem, TEAM } from './hitbox.js';
 import { ProjectileSystem } from './projectiles.js';
 import { WEAPONS, WEAPON_IDS, WeaponRuntime } from './weapons.js';
+import { CAST_SHARD_BASE_BONUS, CAST_SHARD_DURATION, castPresentation } from './cast.js';
+import { characterOwnsWeapon } from '../game/characters.js';
 
 const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 
@@ -53,8 +55,8 @@ export const STATUS = {
     tick: 0.62, dps: 2.4, dpsPerStack: 2.6, poisePerTick: 6, fx: 'spark',
   },
   doom: {
-    // no tick damage at all — one big detonation on expiry. The tension is the
-    // effect; a doom stack you can see is a clock the player can read.
+    // No tick damage: a visible knife hangs above the victim, its halo counts
+    // down, and it falls during the final quarter before this burst resolves.
     color: '#a05fe0', type: 'arcane', maxStacks: 4, dur: 1.35, refresh: false,
     tick: 0, burst: 34, burstPerStack: 22, fx: 'rune',
   },
@@ -88,7 +90,10 @@ export class CombatSystem {
     this.projectiles = new ProjectileSystem().init(ctx, this);
 
     this._status = new Map();        // entity -> array of live status records
+    this._expose = new Map();        // entity -> { bonus, t }
+    this._critMark = new Map();      // entity -> { chance, t }
     this._knock = [];                // entities under a knockback spring
+    this._boonPulses = [];           // deterministic delayed boon strikes
 
     this.intensity = 0;
     this._recentDamage = 0;
@@ -100,6 +105,10 @@ export class CombatSystem {
     // the player's weapon. Other actors get one on demand via runtimeFor().
     this.runtimes = new Map();
     this.weaponId = 'blade';
+    // A descent binds one Infernal Arm. HomeBase is the only system allowed
+    // to choose it; once the portal is crossed every later swap request is
+    // rejected here, including rewards and any future UI/debug caller.
+    this.weaponLocked = false;
     this.playerDrivesBlade = true;   // see special()
 
     ctx.hitboxes = this.hitboxes;
@@ -107,8 +116,8 @@ export class CombatSystem {
     ctx.weapons = this;
 
     this._cap = { on: false, t: 0, i: 0 };
-    ctx.events.on('capture.state', ({ name }) => this._captureState(name, ctx));
-    ctx.events.on('room.built', () => { this.hitboxes.clear(); this.projectiles.clear(); this._status.clear(); this._knock.length = 0; });
+    ctx.events.on('capture.state', ({ name, args }) => this._captureState(name, ctx, args));
+    ctx.events.on('room.built', () => { this.hitboxes.clear(); this.projectiles.clear(); ctx.player?.resetCastShards?.(); this._status.clear(); this._expose.clear(); this._critMark.clear(); this._knock.length = 0; this._boonPulses.length = 0; });
     return this;
   }
 
@@ -124,8 +133,11 @@ export class CombatSystem {
     if (e.knockLambda == null) { e._combatKnock = true; if (!e.knock) e.knock = new THREE.Vector3(); }
   }
   unregister(e) {
+    this.projectiles?.releaseLodgedByTarget?.(e, 'removed');
     this.entities.delete(e); this._dirty = true;
     this._status.delete(e);
+    this._expose.delete(e);
+    this._critMark.delete(e);
     this.hitboxes.cancelByOwner(e);
     const i = this._knock.indexOf(e); if (i >= 0) this._knock.splice(i, 1);
   }
@@ -141,16 +153,44 @@ export class CombatSystem {
     else if (weaponId && r.weaponId !== weaponId) r.equip(weaponId);
     return r;
   }
-  /** ctx.combat.equip('spear') — swaps the player's arm. */
-  equip(id) {
+  /** Equip at the Crossroads. During a descent only the bound arm is legal. */
+  equip(id, o = {}) {
     if (!WEAPONS[id]) return null;
-    this.weaponId = id;
     const p = this.ctx.player;
-    if (p) this.runtimeFor(p, id).equip(id);
-    this.ctx.ui?.toast?.(WEAPONS[id].name, { color: WEAPONS[id].palette.body });
+    if (p?.characterId && !characterOwnsWeapon(p.characterId, id) && !o.allowCrossCharacter) {
+      this.ctx.ui?.toast?.('THAT ARM BELONGS TO THE OTHER HEIR', { color: '#86e6c1' });
+      return null;
+    }
+    if (this.weaponLocked && id !== this.weaponId && !o.force) {
+      this.ctx.ui?.toast?.('INFERNAL ARM BOUND FOR THIS DESCENT', { color: WEAPONS[this.weaponId]?.palette?.body || '#c9b8ff' });
+      return null;
+    }
+    this.weaponId = id;
+    // runtimeFor(actor, id) already performs the swap when the id differs.
+    // Calling equip() again here emitted duplicate HUD/audio events.
+    if (p) this.runtimeFor(p, id);
+    if (!o.silent) this.ctx.ui?.toast?.(WEAPONS[id].name, { color: WEAPONS[id].palette.body });
     return WEAPONS[id];
   }
-  cycleWeapon() { const i = WEAPON_IDS.indexOf(this.weaponId); return this.equip(WEAPON_IDS[(i + 1) % WEAPON_IDS.length]); }
+  lockWeapon(id = this.weaponId) {
+    const weapon = this.equip(id, { force: true, silent: true });
+    if (!weapon) return null;
+    this.weaponLocked = true;
+    this.ctx.events?.emit?.('weapon.locked', { id, weapon });
+    return weapon;
+  }
+  unlockWeapon() {
+    this.weaponLocked = false;
+    this.ctx.events?.emit?.('weapon.unlocked', { id: this.weaponId });
+  }
+  cycleWeapon(o = {}) {
+    if (this.weaponLocked && !o.force) {
+      this.ctx.ui?.toast?.('INFERNAL ARM BOUND FOR THIS DESCENT', { color: WEAPONS[this.weaponId]?.palette?.body || '#c9b8ff' });
+      return null;
+    }
+    const i = WEAPON_IDS.indexOf(this.weaponId);
+    return this.equip(WEAPON_IDS[(i + 1) % WEAPON_IDS.length], o);
+  }
 
   // ── hooks player.js already calls (ARCHITECTURE §2, do not rename) ──────
   special({ source, origin, dir } = {}) {
@@ -166,29 +206,150 @@ export class CombatSystem {
   }
   cast({ source, origin, dir, power = 1 } = {}) {
     if (!source || !origin || !dir) return;
-    // the CAST is weapon-agnostic: a piercing arcane bolt that dooms
-    this.projectiles.fire({
+    const mods = source === this.ctx.player ? this.ctx.boons?.mods : null;
+    const rider = mods?.rider?.cast || null;
+    const forge = source === this.ctx.player ? mods?.forge?.[this.weaponId] : null;
+    const forgeCastMul = forge?.castMul || 1;
+    const color = rider?.color || '#a05fe0';
+    const god = rider?.god;
+    const style = castPresentation(god);
+    const fxKind = style.fx;
+    // Selene's ray is a real sustained line: five separately-resolving pulses
+    // over one second, so enemies entering the beam late can still be struck.
+    if (mods?.castBeam && rider) {
+      this._boonPulses.push({
+        kind: 'beam', t: 0, interval: 0.20, left: 5, source,
+        x: origin.x, z: origin.z, dx: dir.x, dz: dir.z,
+        damage: rider.bonus * power * (mods.castMul || 1) * forgeCastMul * (mods.dmgMul || 1) / 5,
+        type: rider.type || 'arcane', color, god, status: rider.status,
+        statusStacks: rider.stacks || 1, statusPower: rider.statusPower || 0,
+      });
+      this.ctx.vfx?.beam?.(origin, this._v3a.set(origin.x + dir.x * 15, origin.y, origin.z + dir.z * 15), { color, width: 0.48, life: 1.0 });
+      this.ctx.vfx?.burst?.(origin, { count: 22, color, speed: 8, spread: 0.34, kind: fxKind, dir });
+      this.ctx.events.emit('camera.shake', { amp: 0.09, dur: 0.24, freq: 28 });
+    }
+    const normalDamage = mods?.castTicks && rider
+      ? rider.bonus * power * (mods.castMul || 1) * forgeCastMul * (mods.dmgMul || 1)
+      : 26 * power * (mods?.castMul || 1) * forgeCastMul * (mods?.dmgMul || 1) + (rider?.bonus || 0);
+    // A lunar beam still throws a physical shard. Its sustained pulses carry
+    // the boon damage while the shard keeps the universal lodge/return loop.
+    const damage = mods?.castBeam
+      ? 14 * power * (mods?.castMul || 1) * forgeCastMul * (mods?.dmgMul || 1)
+      : normalDamage;
+    if (source === this.ctx.player && source.characterId === 'melinoe') {
+      const aim = source.aimPoint || this._v3a.set(origin.x + dir.x * 6, 0, origin.z + dir.z * 6);
+      let dx = aim.x - source.position.x, dz = aim.z - source.position.z;
+      const distance = Math.hypot(dx, dz) || 1;
+      const reach = Math.min(9.5, distance);
+      dx /= distance; dz /= distance;
+      const x = source.position.x + dx * reach, z = source.position.z + dz * reach;
+      const radius = 2.75 + Math.min(1.4, (mods?.castRadius || 0) * 0.2);
+      const id = this.hitboxes.spawn({
+        shape: 'circle', owner: source, source, follow: false, x, z, radius,
+        t0: 0.08, t1: 0.34, life: 0.38, maxTargets: 14, damage,
+        type: rider?.type || 'arcane', knockback: 1.1, poiseDamage: damage * 0.5, hitstop: 62,
+        status: rider?.status || 'chill', statusStacks: rider?.stacks || 2, statusPower: rider?.statusPower || 0,
+        color, crit: rider?.critChance || 0, expose: rider?.expose || 0,
+        boonGod: god, boonSlot: 'cast', tag: 'melinoe:binding-circle',
+      });
+      this.ctx.vfx?.shockwave?.(this._v3a.set(x, 0.06, z), { radius, color, life: 0.72 });
+      this.ctx.vfx?.burst?.(this._v3b.set(x, 0.18, z), { count: 26, color, speed: 5.5, spread: 1.0, kind: fxKind });
+      this.ctx.events.emit('cast.binding', { source, x, z, radius, god });
+      if (forge && (forge.castMul > 1 || forge.castBlast || forge.castPierce || forge.castSeek || forge.castBounces)) {
+        this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'cast' });
+      }
+      return id;
+    }
+    const forgeSeek = forge?.castSeek || 0;
+    const forgeBounces = forge?.castBounces || 0;
+    const castHoming = Math.max(mods?.castSeek ? 7.5 : 0, forgeSeek);
+    // The CAST remains weapon-agnostic, but its damage identity, status,
+    // seeking and burst size now visibly inherit the chosen god.
+    const projectile = this.projectiles.fire({
       x: origin.x, y: origin.y, z: origin.z, dx: dir.x, dz: dir.z,
-      kind: 'straight', speed: 30 + 8 * power, radius: 0.30, life: 1.4,
-      damage: 26 * power, type: 'arcane', pierce: 3, knockback: 3.2, hitstop: 62,
-      status: 'doom', statusStacks: 1, color: '#a05fe0', size: 1.5, coreSize: 1.3,
-      source, hero: true, onExpire: 'impact',
+      kind: castHoming ? 'homing' : forgeBounces ? 'bounce' : 'straight', homing: castHoming,
+      speed: 30 + 8 * power, radius: 0.30 + Math.min(0.34, (mods?.castRadius || 0) * 0.12), life: 1.4,
+      damage,
+      type: rider?.type || 'arcane', pierce: 1, skewer: Math.round(forge?.castPierce || 0), bounces: Math.round(forgeBounces), knockback: 3.2 + (mods?.knockback || 0), hitstop: 62,
+      poiseDamage: god === 'athena' ? 999 : damage * 0.4,
+      status: rider?.status || null, statusStacks: rider?.stacks || 1, statusPower: rider?.statusPower || 0,
+      color, size: rider ? 1.55 + (rider.tier || 1) * 0.14 : 1.5,
+      coreSize: rider ? 1.30 + (rider.tier || 1) * 0.11 : 1.3,
+      blastRadius: Math.max(mods?.castRadius || 0, forge?.castBlast || 0), crit: rider?.critChance || 0,
+      forks: mods?.castForks || 0, castTicks: mods?.castTicks || 0, tickDamage: rider?.bonus || 0,
+      boonGod: god, boonSlot: 'cast', expose: rider?.expose || 0,
+      castShard: source === this.ctx.player, castDuration: CAST_SHARD_DURATION,
+      castForm: style.form, castSpin: style.spin, castPulse: style.pulse, coreAspect: style.core,
+      source, hero: true, trailWidth: style.trailWidth, onExpire: 'impact',
     });
+    this.ctx.vfx?.burst?.(origin, { count: rider ? 15 + (rider.tier || 1) * 4 : 14, color, speed: 9, spread: 0.42, kind: fxKind, dir });
+    if (rider && (mods?.castRadius || ['poseidon', 'dionysus', 'selene'].includes(god))) {
+      this.ctx.vfx?.shockwave?.(this._v3a.set(origin.x, 0.07, origin.z), { radius: 1.6 + (mods?.castRadius || 0) * 0.35, color, life: 0.38 });
+    }
     this.ctx.events.emit('camera.shake', { amp: 0.07, dur: 0.18, freq: 28 });
+    if (forge && (forge.castMul > 1 || forge.castBlast || forge.castPierce || forge.castSeek || forge.castBounces)) {
+      this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'cast' });
+    }
+    return projectile;
   }
   summon({ source, pos, dir } = {}) {
     if (!source || !pos) return;
-    // three orbiting shade-motes: a small, readable "I have power right now"
+    const mods = source === this.ctx.player ? this.ctx.boons?.mods : null;
+    const call = mods?.rider?.call;
+    // R is a commitment, not a projectile fountain. The old fallback had no
+    // recharge at all and each of its three motes carried 255 pierce for six
+    // seconds, so rapidly tapping R could erase a room. Calls and the fallback
+    // now share the same visible recharge state.
+    if ((source._boonCallCd || 0) > 0) {
+      this.ctx.ui?.toast?.(`Call recharging: ${source._boonCallCd.toFixed(1)}s`, { color: call?.color || '#8ef0d0' });
+      return false;
+    }
+    if (call) {
+      const radius = 4.25 + (call.tier || 1) * 0.15;
+      const damage = (call.bonus || 0) * (mods.callMul || 1) * (mods.dmgMul || 1);
+      for (const target of this._targets()) {
+        if (!target || target === source || target === this.ctx.player || target.dead || target.alive === false) continue;
+        const dx = target.position.x - pos.x, dz = target.position.z - pos.z;
+        if (dx * dx + dz * dz > radius * radius) continue;
+        const d = Math.hypot(dx, dz) || 1;
+        this.applyDamage({ target, amount: damage, type: call.type || 'arcane', source,
+          dir: this._v3a.set(dx / d, 0, dz / d), pos: target.position, knockback: 5,
+          status: call.status, statusStacks: call.stacks || 1, statusPower: call.statusPower || 0,
+          boonGod: call.god, boonSlot: 'call' });
+      }
+      source._boonCallCd = 14 / Math.max(0.25, mods.callCharge || 1);
+      if (mods.callRefund > 0 && source.mana != null) {
+        source.mana = Math.min(source.maxMana || source.mana, source.mana + mods.callRefund);
+        this.ctx.ui?.setMana?.(source.mana, source.maxMana);
+      }
+      this.ctx.vfx?.shockwave?.(pos.clone().setY(0.06), { radius, color: call.color, life: 0.72 });
+      this.ctx.vfx?.burst?.(pos.clone().setY(1.1), { count: 42, color: call.color, speed: 13, spread: 1.35, kind: 'star' });
+      this.ctx.events.emit('player.called', { pos, god: call.god, damage, radius });
+      this.ctx.events.emit('camera.shake', { amp: 0.24, dur: 0.42, freq: 24 });
+      return true;
+    }
+    // Three short-lived shade motes remain readable and useful, but each can
+    // now hit only three foes instead of piercing the room indefinitely.
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * Math.PI * 2;
       this.projectiles.fire({
-        x: pos.x + Math.cos(a) * 2.4, y: 1.15, z: pos.z + Math.sin(a) * 2.4,
-        kind: 'orbit', orbitX: pos.x, orbitZ: pos.z, orbitRadius: 2.4, orbitSpeed: 3.1, orbitAngle: a,
-        radius: 0.30, life: 6.0, damage: 9, type: 'arcane', pierce: 255,
-        knockback: 2.0, hitstop: 30, color: '#8ef0d0', size: 1.2, source,
+        x: pos.x + Math.cos(a) * 2.25, y: 1.15, z: pos.z + Math.sin(a) * 2.25,
+        kind: 'orbit', orbitX: pos.x, orbitZ: pos.z, orbitRadius: 2.25, orbitSpeed: 2.8, orbitAngle: a,
+        radius: 0.26, life: 4.5, damage: 7, type: 'arcane', pierce: 3,
+        knockback: 1.4, hitstop: 24, color: '#8ef0d0', size: 1.05, source,
       });
     }
+    source._boonCallCd = 14;
     this.ctx.events.emit('player.summoned', { pos });
+    return true;
+  }
+
+  /** Athena action window: nullifies direct hits and reflects hostile bolts. */
+  activateDeflect(source, seconds, color = '#b7e4ff') {
+    if (!source || seconds <= 0) return;
+    source._boonDeflectT = Math.max(source._boonDeflectT || 0, seconds);
+    this.ctx.vfx?.shockwave?.(source.position.clone().setY(0.08), { radius: 1.7, color, life: Math.min(0.5, seconds) });
+    this.ctx.events.emit('boon.deflect', { source, seconds, color });
   }
 
   // ═══════════════════════════════════════════════════════ APPLY DAMAGE ════
@@ -208,22 +369,55 @@ export class CombatSystem {
 
     let amount = info.amount || 0;
     const type = info.type || 'physical';
+    const src = info.source;
+
+    if (t === ctx.player) {
+      const mods = ctx.boons?.mods;
+      const dodge = (mods?.dodge || 0) + ((t._boonDeflectT || 0) > 0 ? (mods?.deflectDodge || 0) : 0);
+      if (dodge > 0 && this.rng.f() < dodge) {
+        ctx.vfx?.burst?.(t.position.clone().setY(1.0), { count: 10, color: '#f2c14e', speed: 7, spread: 0.8, kind: 'chev' });
+        ctx.events.emit('damage.dodged', { target: t, source: src, pos: t.position });
+        return 0;
+      }
+      if ((t._boonDeflectT || 0) > 0 && !info.ignoreDeflect) {
+        ctx.vfx?.burst?.(t.position.clone().setY(1.0), { count: 16, color: '#b7e4ff', speed: 9, spread: 1.0, kind: 'shard' });
+        ctx.events.emit('damage.deflected', { target: t, source: src, pos: t.position });
+        return 0;
+      }
+      amount *= mods?.damageTaken || 1;
+    }
 
     // ── a blocking wielder gets first refusal ────────────────────────────
     if (t.blocking && t.blocking.absorb) amount = t.blocking.absorb({ ...info, amount });
     if (amount <= 0) return 0;
 
     // ── attacker debuffs (weak) ─────────────────────────────────────────
-    const src = info.source;
     if (src) {
       const w = this._stack(src, 'weak');
       if (w) amount *= 1 - Math.min(STATUS.weak.maxOutgoing, w * STATUS.weak.outgoingPerStack);
     }
 
+    // Player-side conditional boons are resolved here, the one authority that
+    // sees hit type, target statuses and source together.
+    const playerMods = src === ctx.player ? ctx.boons?.mods : null;
+    const exposure = this._expose.get(t);
+    if (playerMods && exposure) amount *= 1 + exposure.bonus;
+    const castMarked = !!(playerMods && t._castShardCount > 0 && (info.boonSlot === 'attack' || info.boonSlot === 'special'));
+    if (castMarked) amount *= 1 + CAST_SHARD_BASE_BONUS + (playerMods.castShardBonus || 0);
+    if (playerMods) {
+      const hangover = this._stack(t, 'burn');
+      if (hangover) {
+        amount *= 1 + hangover * (playerMods.hangoverAmp || 0);
+        if (this._stack(t, 'weak')) amount *= 1 + hangover * (playerMods.hangoverVsWeak || 0);
+      }
+    }
+
     // ── crit ────────────────────────────────────────────────────────────
     let crit = !!info.crit;
     if (!crit) {
-      const chance = (info.critChance ?? (src && src.critChance) ?? 0);
+      const chance = (info.critChance || 0) + ((src && src.critChance) || 0)
+        + (playerMods ? (this._critMark.get(t)?.chance || 0) : 0)
+        + (playerMods && type === 'lightning' ? (playerMods.lightningCrit || 0) : 0);
       if (chance > 0 && this.rng.f() < chance) crit = true;
     }
     if (crit) amount *= (info.critMul ?? (src && src.critMul) ?? 2.0);
@@ -268,22 +462,46 @@ export class CombatSystem {
     }
 
     // ── status riders ───────────────────────────────────────────────────
-    if (info.statuses) for (const s of info.statuses) this.applyStatus(t, s.kind || s, s.stacks || 1, src);
-    if (info.status) this.applyStatus(t, info.status, info.statusStacks || 1, src);
+    if (info.statuses) for (const s of info.statuses) this.applyStatus(t, s.kind || s, s.stacks || 1, src, s.power || 0);
+    if (info.status) this.applyStatus(t, info.status, info.statusStacks || 1, src, info.statusPower || 0);
+    if (info.expose > 0 && src === ctx.player) this._expose.set(t, { bonus: info.expose, t: 5.0 });
+    if (info.critMark > 0 && src === ctx.player) this._critMark.set(t, { chance: info.critMark, t: 4.0 });
 
     // ── the canonical event (§2.5) + the UI number ──────────────────────
     const pos = info.pos || t.position;
-    ctx.events.emit('damage.dealt', { target: t, amount, crit, dir: info.dir, pos, source: src, type, staggered });
+    ctx.events.emit('damage.dealt', { target: t, amount, crit, dir: info.dir, pos, source: src, type, staggered, knockback: kb, castMarked });
     ctx.events.emit('damage.number', { pos, amount, crit, type, target: t });
     ctx.ui?.damageNumber?.(pos, amount, { crit, type });
 
     this._recentDamage += amount * (t === ctx.player ? 2.2 : 1);
 
+    if (!info.boonProc && t === ctx.player && src && src !== t && !src.dead && playerMods == null) {
+      const mods = ctx.boons?.mods;
+      if (mods?.retaliate > 0 && this.rng.f() < mods.retaliate) {
+        this.applyDamage({ target: src, amount: mods.retaliateDmg, type: 'lightning', source: t,
+          pos: src.position, dir: null, poiseDamage: 999, boonProc: true, ignoreIFrames: true });
+        ctx.vfx?.beam?.(t.position.clone().setY(1.1), src.position.clone().setY(1.1), { color: '#ffe14d', width: 0.18, life: 0.22 });
+      }
+    }
+
+    if (!info.boonProc && playerMods && t.health > 0) {
+      if (crit && playerMods.critRiftDmg > 0) {
+        this.applyDamage({ target: t, amount: playerMods.critRiftDmg, type: 'arcane', source: src,
+          pos, dir: null, poiseDamage: 999, boonProc: true, ignoreIFrames: true });
+        ctx.vfx?.shockwave?.(t.position.clone().setY(0.06), { radius: 2.1, color: '#c81d3c', life: 0.34 });
+      }
+      if (kb > 0) this._tryWallSlam(t, info, playerMods);
+    }
+
     // ── death ───────────────────────────────────────────────────────────
     if (t.health <= 0) {
       t.dead = true; t.alive = false; t.health = 0;
       this._status.delete(t);
+      this._expose.delete(t);
+      this._critMark.delete(t);
       this.hitboxes.cancelByOwner(t);
+      this.projectiles?.releaseLodgedByTarget?.(t, 'death');
+      if (t === ctx.player) this.projectiles?.releaseCastShardsBySource?.(t, 'player-death');
       ctx.events.emit('entity.died', { entity: t, pos: pos || t.position, dir: info.dir, source: src, type });
       if (t !== ctx.player) { this.hitstop(70); this._recentDamage += 40; }
     }
@@ -299,22 +517,27 @@ export class CombatSystem {
   }
 
   // ────────────────────────────────────────────────────── status effects ───
-  applyStatus(target, kind, stacks = 1, source = null) {
+  applyStatus(target, kind, stacks = 1, source = null, power = 0) {
     const D = STATUS[kind];
     if (!D || !target || target.dead) return;
     let list = this._status.get(target);
     if (!list) { list = []; this._status.set(target, list); }
     let rec = null;
     for (let i = 0; i < list.length; i++) if (list[i].kind === kind) { rec = list[i]; break; }
-    if (!rec) { rec = { kind, stacks: 0, t: 0, dur: D.dur, tick: 0, source }; list.push(rec); }
+    const sourceMods = source === this.ctx.player ? this.ctx.boons?.mods : null;
+    const duration = D.dur * (sourceMods?.statusDuration?.[kind] || 1);
+    if (!rec) { rec = { kind, stacks: 0, t: 0, dur: duration, tick: 0, source, power: 0 }; list.push(rec); }
     rec.stacks = Math.min(D.maxStacks, rec.stacks + stacks);
-    if (D.refresh) { rec.t = 0; rec.dur = D.dur; }
+    if (D.refresh) { rec.t = 0; rec.dur = duration; }
     rec.source = source || rec.source;
+    rec.power = Math.max(rec.power || 0, power || 0);
     this.ctx.events.emit('status.applied', { target, kind, stacks: rec.stacks, color: D.color });
+    if (kind === 'doom') this.ctx.vfx?.doomMark?.(target, rec);
     // chill shatter: the payoff for a full stack bar
     if (kind === 'chill' && D.shatterAt && rec.stacks >= D.shatterAt) {
       rec.stacks = 0;
-      this.applyDamage({ target, amount: D.shatterDamage, type: 'frost', source, pos: target.position, dir: null, poiseDamage: 999 });
+      const bonus = sourceMods ? (sourceMods.shatterDmg || 0) + (sourceMods.moonlightShatter || 0) : 0;
+      this.applyDamage({ target, amount: D.shatterDamage + bonus, type: 'frost', source, pos: target.position, dir: null, poiseDamage: 999, boonProc: true });
       this.ctx.vfx?.burst?.(target.position, { count: 22, color: D.color, speed: 9, spread: 1.2, kind: 'shard' });
       this.ctx.events.emit('status.shatter', { target, kind });
     }
@@ -340,7 +563,9 @@ export class CombatSystem {
           r.tick += dt;
           if (r.tick >= D.tick) {
             r.tick -= D.tick;
-            const dps = (D.dps || 0) + (D.dpsPerStack || 0) * (r.stacks - 1);
+            const dps = r.kind === 'burn' && r.power > 0
+              ? r.power * r.stacks
+              : (D.dps || 0) + (D.dpsPerStack || 0) * (r.stacks - 1);
             if (dps > 0) {
               this.applyDamage({
                 target: e, amount: dps * D.tick, type: D.type, source: r.source,
@@ -353,7 +578,14 @@ export class CombatSystem {
         }
         if (r.t >= r.dur) {
           if (r.kind === 'doom') {
-            const dmg = D.burst + D.burstPerStack * (r.stacks - 1);
+            const sourceMods = r.source === this.ctx.player ? this.ctx.boons?.mods : null;
+            const weakBonus = sourceMods && this._stack(e, 'weak') ? (sourceMods.doomVsWeak || 0) : 0;
+            const authored = r.power > 0 ? r.power : D.burst + D.burstPerStack * (r.stacks - 1);
+            const dmg = authored + (sourceMods?.doomDmg || 0) + weakBonus;
+            // The hanging knife has spent the final quarter of its timer
+            // falling. Resolve the hit on the exact frame its point reaches
+            // the target, then leave it embedded for a few frames of impact.
+            this.ctx.vfx?.doomStrike?.(e);
             this.applyDamage({ target: e, amount: dmg, type: D.type, source: r.source, pos: e.position, dir: null, poiseDamage: 999, ignoreIFrames: true });
             this.ctx.vfx?.shockwave?.(_v.set(e.position.x, 0.06, e.position.z), { radius: 2.4, color: D.color, life: 0.4 });
             this.ctx.vfx?.burst?.(_v.set(e.position.x, e.position.y + 1.0, e.position.z), { count: 20, color: D.color, speed: 8, spread: 1.2, kind: 'rune' });
@@ -371,10 +603,11 @@ export class CombatSystem {
   hit(h, e, nx, nz) {
     const dealt = this.applyDamage({
       target: e, amount: h.damage, type: h.type, crit: false,
-      critChance: (h.source && h.source.critChance) || (h.critBonus > 0 ? h.critBonus : 0),
+      critChance: h.critBonus > 0 ? h.critBonus : 0,
       dir: _v.set(nx, 0, nz), pos: _v2.set(e.position.x, e.position.y + 1.0, e.position.z),
       source: h.source, knockback: h.knockback, poiseDamage: h.poiseDamage,
       status: h.statusKind, statusStacks: h.statusStacks,
+      statusPower: h.statusPower, expose: h.expose, critMark: h.critMark, boonGod: h.boonGod, boonSlot: h.boonSlot,
     });
     if (dealt <= 0) return;
     const col = h.color || '#ffd27a';
@@ -390,14 +623,133 @@ export class CombatSystem {
   projectileHit(p, e, nx, nz) {
     const dealt = this.applyDamage({
       target: e, amount: p.damage, type: p.type,
-      critChance: p.crit || (p.source && p.source.critChance) || 0,
+      critChance: p.crit || 0,
       dir: _v.set(nx, 0, nz), pos: _v2.set(e.position.x, e.position.y + 1.0, e.position.z),
       source: p.source, knockback: p.knockback, poiseDamage: p.poiseDamage,
       status: p.status, statusStacks: p.statusStacks,
+      statusPower: p.statusPower, expose: p.expose, boonGod: p.boonGod, boonSlot: p.boonSlot, boonProc: p.boonProc,
     });
     if (dealt <= 0) return;
+    if (p.forks > 0 && p.hits === 0) {
+      const candidates = [];
+      for (const target of this._targets()) {
+        if (!target || target === e || target === p.source || target === this.ctx.player || target.dead || target.alive === false) continue;
+        const dx = target.position.x - e.position.x, dz = target.position.z - e.position.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 <= 49) candidates.push({ target, d2 });
+      }
+      candidates.sort((a, b) => a.d2 - b.d2);
+      for (let i = 0; i < Math.min(p.forks, candidates.length); i++) {
+        const target = candidates[i].target;
+        this.applyDamage({ target, amount: p.damage * 0.64, type: 'lightning', source: p.source,
+          pos: target.position, dir: null, status: 'shock', statusStacks: 1, boonProc: true });
+        this.ctx.vfx?.beam?.(e.position.clone().setY(1.0), target.position.clone().setY(1.0), { color: '#ffe14d', width: 0.13, life: 0.18 });
+      }
+    }
+    if (p.skewer > 0 && p.hits === 0) {
+      const candidates = [];
+      for (const target of this._targets()) {
+        if (!target || target === e || target === p.source || target === this.ctx.player || target.dead || target.alive === false) continue;
+        const dx = target.position.x - e.position.x, dz = target.position.z - e.position.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 <= 36) candidates.push({ target, d2 });
+      }
+      candidates.sort((a, b) => a.d2 - b.d2);
+      for (let i = 0; i < Math.min(p.skewer, candidates.length); i++) {
+        const target = candidates[i].target;
+        this.applyDamage({ target, amount: p.damage * 0.45, type: p.type, source: p.source,
+          pos: target.position, dir: null, status: p.status, statusStacks: p.statusStacks, boonProc: true });
+        this.ctx.vfx?.beam?.(e.position.clone().setY(1.0), target.position.clone().setY(1.0), { color: new THREE.Color(p.cr, p.cg, p.cb).getStyle(), width: 0.09, life: 0.12 });
+      }
+    }
+    if (p.castTicks > 1 && p.hits === 0) {
+      this._boonPulses.push({ kind: 'cuts', t: 0.11, interval: 0.13, left: p.castTicks - 1,
+        source: p.source, target: e, x: e.position.x, z: e.position.z,
+        damage: p.tickDamage || p.damage, type: p.type, color: new THREE.Color(p.cr, p.cg, p.cb).getStyle(), god: p.boonGod });
+    }
+    if (p.boonGod === 'dionysus' && p.boonSlot === 'cast' && p.hits === 0) {
+      this._boonPulses.push({ kind: 'fog', t: 0.24, interval: 0.42, left: 3,
+        source: p.source, x: e.position.x, z: e.position.z, radius: Math.max(2.2, p.blastRadius),
+        damage: p.damage * 0.18, type: 'poison', color: '#a05fe0', status: 'burn', statusStacks: p.statusStacks, statusPower: p.statusPower });
+    }
+    if (p.blastRadius > 0) {
+      const r2 = p.blastRadius * p.blastRadius;
+      for (const target of this._targets()) {
+        if (!target || target === e || target === p.source || target === this.ctx.player || target.dead || target.alive === false) continue;
+        const dx = target.position.x - e.position.x, dz = target.position.z - e.position.z;
+        if (dx * dx + dz * dz > r2) continue;
+        this.applyDamage({
+          target, amount: p.damage * 0.62, type: p.type, critChance: p.crit || 0,
+          dir: _v.set(dx, 0, dz).normalize(), pos: target.position, source: p.source,
+          knockback: p.knockback * 0.7, poiseDamage: p.poiseDamage,
+          status: p.status, statusStacks: p.statusStacks,
+          statusPower: p.statusPower, expose: p.expose, boonGod: p.boonGod, boonSlot: p.boonSlot,
+        });
+      }
+      const blastColor = new THREE.Color(p.cr, p.cg, p.cb).getStyle();
+      this.ctx.vfx?.shockwave?.(_v2.set(e.position.x, 0.06, e.position.z), { radius: p.blastRadius, color: blastColor, life: 0.38 });
+    }
+    if (p.castShard && p.hits === 0 && !e.dead && e.alive !== false) {
+      this.projectiles.lodgeCastShard?.(p, e, p.castDuration || CAST_SHARD_DURATION);
+    }
     this.hitstop(p.hitstop);
     if (p.shake) this.ctx.events.emit('camera.shake', { amp: p.shake, dur: 0.2, freq: 31 });
+  }
+
+  _tryWallSlam(target, info, mods) {
+    const world = this.ctx.world;
+    if (!world || !target?.position || !info.dir) return;
+    const x = target.position.x, z = target.position.z;
+    const d = Math.hypot(x, z) || 1;
+    const a = Math.atan2(z, x);
+    const r = world.radiusAt ? world.radiusAt(a) : (world.bounds?.r || 18);
+    const outward = (info.dir.x * x + (info.dir.z ?? info.dir.y ?? 0) * z) / d;
+    if (d < r - (target.radius || 0.5) - 3.0 || outward < 0.18) return;
+    if (mods.wallSlamDmg > 0) {
+      this.applyDamage({ target, amount: mods.wallSlamDmg, type: 'physical', source: info.source,
+        pos: target.position, dir: null, poiseDamage: 999, boonProc: true, ignoreIFrames: true });
+    }
+    if (mods.seaStormDmg > 0 && !target.dead) {
+      this.applyDamage({ target, amount: mods.seaStormDmg, type: 'lightning', source: info.source,
+        pos: target.position, dir: null, poiseDamage: 999, status: 'shock', statusStacks: 1,
+        boonProc: true, ignoreIFrames: true });
+      this.ctx.vfx?.beam?.(target.position.clone().add(new THREE.Vector3(0, 7, 0)), target.position.clone().setY(1.0), { color: '#ffe14d', width: 0.22, life: 0.22 });
+    }
+    if (mods.slamSpeed > 0 && info.source) info.source._boonSlamT = 3.0;
+    this.ctx.vfx?.shockwave?.(target.position.clone().setY(0.06), { radius: 2.0, color: '#5fd0ff', life: 0.32 });
+    this.ctx.events.emit('boon.wallSlam', { target, source: info.source, damage: mods.wallSlamDmg + mods.seaStormDmg });
+  }
+
+  _updateBoonPulses(dt) {
+    for (let i = this._boonPulses.length - 1; i >= 0; i--) {
+      const q = this._boonPulses[i];
+      q.t -= dt;
+      if (q.t > 0) continue;
+      q.t += q.interval;
+      if (q.target && !q.target.dead) { q.x = q.target.position.x; q.z = q.target.position.z; }
+      if (q.kind === 'beam') {
+        this.hitboxes.spawn({ shape: 'capsule', owner: null, source: q.source,
+          x: q.x, z: q.z, forward: [q.dx, q.dz], length: 15, radius: 0.46,
+          t0: 0, t1: 0.06, life: 0.08, maxTargets: 12, damage: q.damage,
+          type: q.type, knockback: 1.4, status: q.status, statusStacks: q.statusStacks,
+          statusPower: q.statusPower, color: q.color, boonGod: q.god, boonSlot: 'cast', tag: 'boon:lunar-ray' });
+      } else {
+        const radius = q.radius || 1.55;
+        for (const target of this._targets()) {
+          if (!target || target === q.source || target === this.ctx.player || target.dead || target.alive === false) continue;
+          const dx = target.position.x - q.x, dz = target.position.z - q.z;
+          if (dx * dx + dz * dz > radius * radius) continue;
+          this.applyDamage({ target, amount: q.damage, type: q.type, source: q.source,
+            pos: target.position, dir: null, status: q.status, statusStacks: q.statusStacks,
+            statusPower: q.statusPower, boonProc: true, ignoreIFrames: true });
+        }
+        const p = this._v3a.set(q.x, 0.08, q.z);
+        if (q.kind === 'cuts') this.ctx.vfx?.slash?.(p, this._v3b.set(1, 0, 0), { arc: 210, radius, width: 0.34, color: q.color, spin: q.left % 2 ? 1 : -1 });
+        else this.ctx.vfx?.shockwave?.(p, { radius, color: q.color, life: 0.30 });
+      }
+      q.left--;
+      if (q.left <= 0) this._boonPulses.splice(i, 1);
+    }
   }
 
   // ─────────────────────────────────────────────────────────── update ──────
@@ -415,6 +767,23 @@ export class CombatSystem {
       }
     }
 
+    const player = ctx.player;
+    if (player) {
+      player._boonCallCd = Math.max(0, (player._boonCallCd || 0) - dt);
+      player._boonDeflectT = Math.max(0, (player._boonDeflectT || 0) - dt);
+      if (player._boonDeflectT > 0) {
+        this.projectiles.forEachIncoming(player, 2.0, (p) => this.projectiles.reflect(p, player, 1.65, 1.25));
+      }
+    }
+    for (const [target, rec] of this._expose) {
+      rec.t -= dt;
+      if (rec.t <= 0 || !target || target.dead) this._expose.delete(target);
+    }
+    for (const [target, rec] of this._critMark) {
+      rec.t -= dt;
+      if (rec.t <= 0 || !target || target.dead) this._critMark.delete(target);
+    }
+
     // knockback spring — impulse decays, position follows. Entities that
     // integrate their own knock (the player) are left alone.
     for (let i = this._knock.length - 1; i >= 0; i--) {
@@ -429,6 +798,7 @@ export class CombatSystem {
     }
 
     this._statusTick(dt);
+    this._updateBoonPulses(dt);
     for (const r of this.runtimes.values()) r.update(dt);
     this.hitboxes.update(dt, targets);
     this.projectiles.update(dt, ctx, targets);
@@ -470,8 +840,10 @@ export class CombatSystem {
   // have expired by the time the shutter opens. This is a scripted timeline
   // instead, authored backwards from t=2.0: every entry below is placed so that
   // it is at its most readable moment in the captured frame.
-  _captureState(name, ctx) {
-    if (name === 'combat') { this._cap.on = true; this._cap.t = 0; this._cap.i = 0; this.equip('blade'); }
+  _captureState(name, ctx, args = {}) {
+    if (args?.character) ctx.player?.setCharacter?.(args.character);
+    if (name !== 'home' && args?.weapon && WEAPONS[args.weapon]) this.equip(args.weapon, { force: true, silent: true });
+    if (name === 'combat') { this._cap.on = true; this._cap.t = 0; this._cap.i = 0; if (!args?.weapon) this.equip('blade', { force: true, silent: true }); }
     else if (name) {
       // leaving the combat frame: this harness runs every shot on ONE page, so
       // without an explicit teardown the bolts and telegraphs bleed into the

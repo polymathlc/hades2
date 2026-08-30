@@ -5,7 +5,7 @@
 // Ink and gold. A bronze cradle at bottom-left holding the life bar with a
 // damage-lag ghost fill, the magick bar under it, cast pips and dash chevrons,
 // the weapon emblem with its cooldown sweep; a boon rail up the left edge; the
-// depth/biome plaque top-left; obols and darkness top-right.
+// depth/biome plaque top-left; obols and persistent Nectar top-right.
 //
 // §9 discipline: the HUD sits over a dark frame and must never become the
 // brightest thing on screen. Gold here is a MID value with thin highlights —
@@ -19,6 +19,7 @@ import {
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
+import { upsertHudBoon, hudBoonSlotLabel } from './hud-boons.js';
 
 /** A value that eases toward its target with a small, controlled overshoot. */
 class Spring {
@@ -56,6 +57,9 @@ export class HUD {
     this.hpPulse = 0;
 
     this.weapon = { id: 'blade', name: 'Stygian Blade' };
+    this.ammo = { cur: 0, max: 0 };
+    this.reloadRemaining = 0; this.reloadTotal = 0;
+    this.character = { id: 'zagreus', name: 'Zagreus' };
     this.weaponCd = 0;                    // 0..1 remaining
     this.specialCd = 0;
     this.castCd = 0;
@@ -64,7 +68,7 @@ export class HUD {
     this.roomLabel = '';
     this.roomT = -9;
 
-    this.obols = 0; this.darkness = 0;
+    this.obols = 0; this.nectar = 0; this.titanBlood = 0; this.darkness = 0;
     this.boons = [];                      // [{god, rarity, slot, name}]
     this.boonPop = new Map();
 
@@ -97,16 +101,33 @@ export class HUD {
     this.roomT = this.ui.now();
     this.ui.dirty = true;
   }
-  setWeapon(w) { if (w) { this.weapon = { id: w.id || w, name: w.name || String(w) }; this.ui.dirty = true; } }
+  setWeapon(w) {
+    if (!w) return;
+    this.weapon = { id: w.id || w, name: w.name || String(w) };
+    const cap = w.maxAmmo ?? w.magazine?.capacity;
+    if (cap != null) this.ammo = { cur: w.ammo ?? cap, max: cap };
+    else if (this.weapon.id !== 'rail') this.ammo = { cur: 0, max: 0 };
+    this.reloadRemaining = 0; this.reloadTotal = 0;
+    this.ui.dirty = true;
+  }
+  setAmmo(i) {
+    if (!i || i.weapon !== 'rail') return;
+    this.ammo.cur = Math.max(0, i.current | 0); this.ammo.max = Math.max(1, i.max | 0);
+    this.ui.dirty = true;
+  }
+  setReload(i) {
+    const d = Math.max(0, i?.duration || 0);
+    this.reloadRemaining = d; this.reloadTotal = d;
+    this.ui.dirty = true;
+  }
+  setCharacter(c) { if (c) { this.character = { id: c.id || c, name: c.name || String(c) }; this.ui.dirty = true; } }
   addBoon(rec) {
     if (!rec) return;
-    const god = rec.god || rec.boon?.god || (rec.gods && rec.gods[0]);
-    if (!god) return;
-    const e = { god, rarity: (rec.rarity || 'common'), slot: rec.slot || rec.boon?.slot || 'passive', name: rec.name || rec.boon?.name || '' };
-    const i = this.boons.findIndex(b => b.god === e.god && b.slot === e.slot);
-    if (i >= 0) this.boons[i] = e; else this.boons.push(e);
-    if (this.boons.length > 8) this.boons.shift();
-    this.boonPop.set(e.god + e.slot, this.ui.now());
+    const before = this.boons;
+    this.boons = upsertHudBoon(before, rec, 8);
+    const boon = this.boons.find(x => x.id === (rec.id || rec.boon?.id));
+    if (!boon) return;
+    this.boonPop.set(boon.id, this.ui.now());
     this.ui.dirty = true;
   }
 
@@ -120,6 +141,10 @@ export class HUD {
     if (this.hpFlash > 0) this.hpFlash = Math.max(0, this.hpFlash - dt * 3.6);
     if (this.hpPulse > 0) this.hpPulse = Math.max(0, this.hpPulse - dt * 2.4);
     this.weaponCd = Math.max(0, this.weaponCd - dt);
+    if (this.reloadRemaining > 0) {
+      this.reloadRemaining = Math.max(0, this.reloadRemaining - dt);
+      this.ui.dirty = true;
+    }
     if (this.hpFill.v !== this.hpFill.t || this.mpFill.v !== this.mpFill.t || this.hpFlash > 0 || this.hpGhost > f + 1e-4) this.ui.dirty = true;
   }
 
@@ -208,8 +233,14 @@ export class HUD {
     g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, r * 1.5, 0, 6.2832); g.fill();
     g.restore();
 
-    tracked(g, this.weapon.name.toUpperCase(), cx, cy + r * 1.62, {
-      size: 8.4 * S, track: 0.20, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.85),
+    const isRail = this.weapon.id === 'rail' || /adamant rail/i.test(this.weapon.name);
+    const ammoMax = this.ammo.max || 6;
+    const ammoCur = this.ammo.max ? this.ammo.cur : ammoMax;
+    const loading = this.reloadRemaining > 0;
+    const railState = loading ? `RELOADING ${this.reloadRemaining.toFixed(1)}S` : `AMMO ${ammoCur}/${ammoMax}`;
+    const weaponLine = `${this.character.name} · ${this.weapon.name}${isRail ? ` · ${railState}` : ''}`.toUpperCase();
+    tracked(g, weaponLine, Math.max(8 * S, cx - r * 0.9), cy + r * 1.62, {
+      size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.85),
       shadow: '#05030b', shadowDy: 1,
     });
   }
@@ -425,6 +456,9 @@ export class HUD {
   // ═════════════════════════════════════════════════════════ boon rail ════
   _boonRail(g, W, H, S, t) {
     if (!this.boons.length) return;
+    // Preserve a readable minimum for the information-dense rail. Eight rows
+    // at this scale still clear the bottom-left combat cluster at 1024x576.
+    S = Math.max(S, 0.82);
     const x = 54 * S, y0 = 112 * S, step = 56 * S, r = 22 * S;
     // rail
     const railH = (this.boons.length - 1) * step + r * 2.4;
@@ -437,10 +471,36 @@ export class HUD {
       const b = this.boons[i];
       const cy = y0 + i * step;
       const info = GOD_INFO[b.god]; if (!info) continue;
-      const pop = this.boonPop.get(b.god + b.slot);
+      const pop = this.boonPop.get(b.id);
       const pa = pop != null ? clamp01((t - pop) / 0.45) : 1;
       const sc = pop != null && pa < 1 ? ease.overshoot(pa, 1.6) : 1;
-      g.save(); g.translate(x, cy); g.scale(sc, sc);
+      g.save();
+
+      // The compact label turns the old row of unexplained god portraits into
+      // a live loadout. Its restrained backing preserves the left-edge glance
+      // path without covering combat, even at the 1024x576 minimum viewport.
+      const labelX = x + 15 * S, labelY = cy - 16 * S;
+      const labelW = 126 * S, labelH = 32 * S;
+      plaqueRect(g, labelX, labelY, labelW, labelH, 5 * S);
+      const pg = g.createLinearGradient(labelX, labelY, labelX + labelW, labelY);
+      pg.addColorStop(0, rgba('#0b0714', 0.94));
+      pg.addColorStop(0.72, rgba(mix('#120a1c', info.color, 0.12), 0.82));
+      pg.addColorStop(1, 'rgba(10,6,18,0.08)');
+      g.fillStyle = pg; g.fill();
+      const R = RARITY[b.rarity] || RARITY.common;
+      g.strokeStyle = rgba(R.text, 0.52); g.lineWidth = Math.max(0.75, 0.9 * S); g.stroke();
+      tracked(g, hudBoonSlotLabel(b), labelX + 21 * S, labelY + 12 * S, {
+        size: 8 * S, track: 0.24, weight: 700, align: 'left', color: rgba(info.color, 0.96),
+        shadow: '#05030b', shadowDy: 1 * S,
+      });
+      const name = (b.name || `${info.name} Boon`).toUpperCase();
+      const compactName = name.length > 20 ? name.slice(0, 19).trimEnd() + '…' : name;
+      tracked(g, compactName, labelX + 21 * S, labelY + 25 * S, {
+        size: 8.4 * S, track: 0.07, weight: 600, align: 'left', color: '#f4ead6',
+        shadow: '#05030b', shadowDy: 1 * S,
+      });
+
+      g.translate(x, cy); g.scale(sc, sc);
       // hex setting
       g.beginPath();
       for (let k = 0; k < 6; k++) { const a = k * 1.0472 + 0.5236; const px = Math.cos(a) * r, py = Math.sin(a) * r; k ? g.lineTo(px, py) : g.moveTo(px, py); }
@@ -454,7 +514,6 @@ export class HUD {
       const bl = g.createRadialGradient(0, 0, r * 0.15, 0, 0, r * 1.9);
       bl.addColorStop(0, rgba(info.color, 0.30)); bl.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = bl; g.beginPath(); g.arc(0, 0, r * 1.9, 0, 6.2832); g.fill(); g.restore();
-      const R = RARITY[b.rarity] || RARITY.common;
       g.strokeStyle = rgba(R.text, 0.75); g.lineWidth = 0.9 * S;
       g.beginPath();
       for (let k = 0; k < 6; k++) { const a = k * 1.0472 + 0.5236; const px = Math.cos(a) * r * 0.72, py = Math.sin(a) * r * 0.72; k ? g.lineTo(px, py) : g.moveTo(px, py); }
@@ -464,11 +523,13 @@ export class HUD {
     }
   }
 
-  // ═══════════════════════════════════════════════ obols / darkness ═══════
+  // ═══════════════════════ obols / Nectar / Titan Blood / Darkness ═══════
   _resources(g, W, H, S, t) {
     const items = [
       { v: this.obols, c: PAL.gold, glyph: 'obol', label: 'OBOLS' },
-      { v: this.darkness, c: '#a05fe0', glyph: 'dark', label: 'DARKNESS' },
+      { v: this.nectar, c: '#b884ff', glyph: 'nectar', label: 'NECTAR' },
+      { v: this.titanBlood, c: '#ff5968', glyph: 'blood', label: 'TITAN BLOOD' },
+      { v: this.darkness, c: '#8c5cff', glyph: 'darkness', label: 'DARKNESS' },
     ];
     let x = W - 26 * S;
     for (let i = items.length - 1; i >= 0; i--) {
@@ -487,12 +548,29 @@ export class HUD {
         cg.addColorStop(0, '#ffe9a8'); cg.addColorStop(0.5, '#f2c14e'); cg.addColorStop(1, '#6d4416');
         g.beginPath(); g.arc(gcx, gcy, 7.4 * S, 0, 6.2832); g.fillStyle = cg; g.fill();
         g.beginPath(); g.arc(gcx, gcy, 4 * S, 0, 6.2832); g.strokeStyle = 'rgba(60,34,8,0.7)'; g.lineWidth = 1.1 * S; g.stroke();
+      } else if (it.glyph === 'nectar') {
+        g.save(); g.translate(gcx, gcy);
+        const cg = g.createLinearGradient(-7 * S, -8 * S, 7 * S, 8 * S);
+        cg.addColorStop(0, '#f0dcff'); cg.addColorStop(0.48, '#b884ff'); cg.addColorStop(1, '#56218f');
+        plaqueRect(g, -5.5 * S, -5.2 * S, 11 * S, 13 * S, 3 * S); g.fillStyle = cg; g.fill();
+        g.fillStyle = '#f2c14e'; g.fillRect(-3.2 * S, -8.0 * S, 6.4 * S, 3.1 * S);
+        g.strokeStyle = 'rgba(242,222,255,0.55)'; g.lineWidth = 0.9 * S; g.stroke();
+        g.restore();
+      } else if (it.glyph === 'blood') {
+        g.save(); g.translate(gcx, gcy);
+        const cg = g.createRadialGradient(-2 * S, -3 * S, 0.5 * S, 0, 0, 9 * S);
+        cg.addColorStop(0, '#ffd2b5'); cg.addColorStop(0.34, '#ff5968'); cg.addColorStop(1, '#620817');
+        g.beginPath(); g.moveTo(0, -8.5 * S); g.bezierCurveTo(7 * S, -2 * S, 7 * S, 4 * S, 0, 8 * S);
+        g.bezierCurveTo(-7 * S, 4 * S, -7 * S, -2 * S, 0, -8.5 * S); g.closePath(); g.fillStyle = cg; g.fill();
+        g.strokeStyle = rgba('#ffd19f', 0.65); g.lineWidth = 0.9 * S; g.stroke();
+        g.restore();
       } else {
-        g.save(); g.translate(gcx, gcy); g.rotate(Math.PI / 4);
-        const cg = g.createLinearGradient(-7 * S, -7 * S, 7 * S, 7 * S);
-        cg.addColorStop(0, '#d8b6ff'); cg.addColorStop(0.5, '#a05fe0'); cg.addColorStop(1, '#3a1d52');
-        g.fillStyle = cg; g.fillRect(-5.4 * S, -5.4 * S, 10.8 * S, 10.8 * S);
-        g.strokeStyle = 'rgba(220,200,255,0.45)'; g.lineWidth = 1 * S; g.strokeRect(-5.4 * S, -5.4 * S, 10.8 * S, 10.8 * S);
+        g.save(); g.translate(gcx, gcy);
+        const cg = g.createRadialGradient(-2 * S, -3 * S, 0.5 * S, 0, 0, 9 * S);
+        cg.addColorStop(0, '#e4d4ff'); cg.addColorStop(0.35, '#8c5cff'); cg.addColorStop(1, '#18062e');
+        g.beginPath(); g.moveTo(0, -8.5 * S); g.lineTo(6.8 * S, 0); g.lineTo(0, 8.5 * S); g.lineTo(-6.8 * S, 0); g.closePath();
+        g.fillStyle = cg; g.fill(); g.strokeStyle = rgba('#d8b6ff', 0.72); g.lineWidth = 0.9 * S; g.stroke();
+        g.beginPath(); g.arc(1.5 * S, -1 * S, 3.3 * S, 0.55, 5.4); g.strokeStyle = rgba('#fff0ff', 0.5); g.stroke();
         g.restore();
       }
       tracked(g, txt, bx + w - 10 * S, y + h * 0.68, {
@@ -543,6 +621,23 @@ function weaponGlyph(q, cx, cy, r, id) {
       q.moveTo(...P(0, -.96)); q.bezierCurveTo(...P(.80, -.82), ...P(.82, .16), ...P(0, .96));
       q.bezierCurveTo(...P(-.82, .16), ...P(-.80, -.82), ...P(0, -.96)); q.closePath();
       break;
+    case 'staff':
+      q.moveTo(...P(-.08, .95)); q.lineTo(...P(.08, .95)); q.lineTo(...P(.08, -.62)); q.lineTo(...P(-.08, -.62)); q.closePath();
+      q.arc(...P(0, -.64), r * .34, Math.PI * .20, Math.PI * 1.80); break;
+    case 'blades':
+      q.moveTo(...P(-.44, -.92)); q.lineTo(...P(-.12, .58)); q.lineTo(...P(-.28, .92)); q.lineTo(...P(-.56, -.70)); q.closePath();
+      q.moveTo(...P(.44, -.92)); q.lineTo(...P(.12, .58)); q.lineTo(...P(.28, .92)); q.lineTo(...P(.56, -.70)); q.closePath(); break;
+    case 'flames':
+      q.arc(...P(0, -.08), r * .58, 0, Math.PI * 2); q.moveTo(...P(0, -.92)); q.lineTo(...P(.23, -.48)); q.lineTo(...P(0, -.28)); q.lineTo(...P(-.23, -.48)); q.closePath(); break;
+    case 'axe':
+      q.moveTo(...P(-.08, -.96)); q.lineTo(...P(.08, -.96)); q.lineTo(...P(.08, .96)); q.lineTo(...P(-.08, .96)); q.closePath();
+      q.moveTo(...P(.02, -.78)); q.lineTo(...P(.84, -.58)); q.lineTo(...P(.56, -.12)); q.lineTo(...P(.02, -.28)); q.closePath(); break;
+    case 'skull':
+      q.arc(...P(0, -.12), r * .66, Math.PI, 0); q.lineTo(...P(.46, .55)); q.lineTo(...P(.18, .88)); q.lineTo(...P(-.18, .88)); q.lineTo(...P(-.46, .55)); q.closePath(); break;
+    case 'fists': case 'coat':
+      q.moveTo(...P(-.62, -.50)); q.lineTo(...P(.50, -.50)); q.lineTo(...P(.66, .30)); q.lineTo(...P(.32, .90)); q.lineTo(...P(-.42, .72)); q.closePath(); break;
+    case 'rail':
+      q.moveTo(...P(-.18, -.96)); q.lineTo(...P(.18, -.96)); q.lineTo(...P(.18, .36)); q.lineTo(...P(.40, .72)); q.lineTo(...P(.16, .92)); q.lineTo(...P(-.12, .46)); q.closePath(); break;
     default: // blade
       q.moveTo(...P(0, -1.0)); q.lineTo(...P(.17, -.72)); q.lineTo(...P(.17, .40));
       q.lineTo(...P(0, .56)); q.lineTo(...P(-.17, .40)); q.lineTo(...P(-.17, -.72)); q.closePath();

@@ -29,6 +29,12 @@ export const GRADES = {
   // crimson stone, bone, blood. Warm amber key, cyan rim, plum ink.
   tartarus: {
     name: 'tartarus',
+    // GENERATED-TEXTURE INTEGRATION. The authored atlases already contain
+    // coloured brushwork. The former grade re-saturated that colour three
+    // times (AgX, luminance bands, then full-strength violet/gold re-hues),
+    // producing the fluorescent orange/purple posterisation seen on Pages.
+    // Keep this transform deliberately restrained: material maps carry colour;
+    // the grade only shapes value and gives the very darkest ink a cool bias.
     // §3 "histogram must have real content in the bottom 15% AND top 5%".
     // The old stack had a hard CEILING: white 0.78 clamped the display white
     // point, shoulder 0.18 compressed everything under it, and pivot 0.30 sat
@@ -53,23 +59,23 @@ export const GRADES = {
     // number in postfx.js `uExposure: { value: 1.06 }` is only an initialiser;
     // _syncUniforms overwrites it from THIS field every frame, so this is the
     // real exposure knob for Tartarus.
-    exposure: 1.62,
-    agxSlope: [1.06, 1.0, 0.96],
-    agxPower: [1.16, 1.18, 1.24],
+    exposure: 1.36,
+    agxSlope: [1.01, 1.0, 0.99],
+    agxPower: [1.03, 1.03, 1.05],
     // §2 asks for crimson stone and molten gold; the close-ups measured
     // meanSat 0.486-0.497 at mean luma 0.42-0.47, which is the arithmetic
     // definition of pastel. Chroma goes back up now the exposure is off it.
-    agxSat: 1.10,
+    agxSat: 0.92,
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
-    contrast: 1.05,
+    contrast: 0.68,
     // PIVOT FOLLOWS THE FRAME. The S-curve is a power law about this point, so
     // a pivot ABOVE the frame's tonal centre can only push pixels down — and
     // once §9.1 put the ground plane where it belongs, 0.34 sat two stops over
     // everything except the ornament and collapsed the whole image. 0.29 keeps
     // the architecture on the curve's upper arm and the floor on its lower one,
     // which is exactly the separation the value law is asking for.
-    pivot: 0.245,
+    pivot: 0.28,
     // `black` SUBTRACTS a black point — raising it crushes, it does not protect
     // the darks. What keeps the bottom of the frame off dead #000 is the
     // positive violet `lift` below, which has to survive this subtraction.
@@ -77,11 +83,11 @@ export const GRADES = {
     // hard that gold ornament and brazier cores shared one value with lit
     // stone. §9.3 wants real content in the top band; the roll still preserves
     // hue, it just starts later.
-    black: 0.008, white: 0.86, shoulder: 0.30, hiRoll: 0.86,
+    black: 0.001, white: 0.96, shoulder: 0.16, hiRoll: 0.94,
     // §2: the ink ramp bottoms at #07060f — a VIOLET black, not a neutral zero.
     // A negative blue lift clipped the column bases to dead #000.
-    lift:  [ 0.010,  0.004,  0.026 ],
-    gamma: [ 1.00,  1.02,  1.05 ],
+    lift:  [ 0.022,  0.020,  0.028 ],
+    gamma: [ 1.00,  1.00,  1.01 ],
     // The warm gain was rotating every gold surface toward orange before the
     // hue lobes ever saw it. Keep the grade close to neutral and let the
     // PALETTE carry the warmth.
@@ -89,20 +95,20 @@ export const GRADES = {
     // hue that has stopped being a hue. The grade holds red DOWN a touch and
     // lets the palette carry the warmth (measured clipped-channel coverage has
     // to stay under 1.5% of every shipped frame).
-    gain:  [ 1.00,  1.00,  0.99 ],
-    curveR: 1.00, curveG: 1.02, curveB: 1.08,
+    gain:  [ 1.00,  1.00,  1.00 ],
+    curveR: 1.00, curveG: 1.00, curveB: 1.02,
     // §2 Shadow plum #241238 wants B/R ~1.56. The old #42287e measured 1.08 on
     // screen — magenta, not indigo — so the ink ramp was not being honoured.
-    shadowTint: H('#2e2382'),   // ink shadows push INDIGO-violet, never grey
-    midTint:    H('#d8a184'),
-    highTint:   H('#ffdcae'),   // highlights toward warm gold
+    shadowTint: H('#302746'),   // muted plum ink, not electric violet
+    midTint:    H('#f0ddd2'),   // warm-neutral: preserve material identity
+    highTint:   H('#ffe8c5'),   // restrained warm-gold highlight rolloff
     // 0.86 was desaturating the ONE cool element in the frame (the mandated
     // #5fd0ff rim lives in the shadow band by construction — see painterly.js
     // shBoost). Hold chroma in the darks; the ink is a HUE, not a grey.
-    satShadow: 1.08,
+    satShadow: 0.82,
     // measured meanSaturation was 0.68 against a §7 target of 0.28-0.60: jewel
     // tones, not neon. The chroma belongs in the PALETTE, not in the grade.
-    satMid:    1.16,
+    satMid:    0.92,
     // ROUND-4: A PRESCRIPTION THAT DID NOT SURVIVE THE IMAGE. A review round
     // named this as the thing bleaching the rim ("satHigh 0.76 is desaturating
     // the highlights the rim lives in"). Built at 0.88 and 0.94 and looked at:
@@ -113,8 +119,8 @@ export const GRADES = {
     // from 0.61 to 0.65 against a §7 ceiling of 0.60. The chroma the frame was
     // missing was never in the top band. Left at 0.76; the rim is fixed where
     // it is delivered, in painterly.js shBoost.
-    satHigh:   1.04,
-    shadowMix: 0.58, highMix: 0.26, tintStrength: 1.0,
+    satHigh:   0.82,
+    shadowMix: 0.32, highMix: 0.14, tintStrength: 0.48,
     hueLobes: [
       // narrowed + strengthened: 24% of the frame's chroma was sitting in the
       // 300-330deg pink-magenta bin, off the authored ink ramp entirely.
@@ -135,9 +141,9 @@ export const GRADES = {
     // foreground floor, and a repoussoir is supposed to be dark.
     // `floor` is extra vignette weight BELOW frame centre — the foreground
     // repoussoir (§1.8) and the third value band (§9.4).
-    vignette: { amount: 0.62, radius: 0.60, softness: 0.86, depth: 0.14, floor: 0.95, color: H('#120718') },
+    vignette: { amount: 0.24, radius: 0.80, softness: 0.94, depth: 0.07, floor: 0.20, color: H('#1c1726') },
     grain:    { amount: 0.0070, size: 1.0, darkBoost: 1.8 },
-    chroma:   1.35,
+    chroma:   0.45,
     // §1.7 "bloom is a paint layer over a core that has ALREADY gone bright" —
     // not the source of the brightness. At threshold 1.20 / intensity 0.78 it
     // was eating the medallion's polar meander and the anthemion petals into a
@@ -199,15 +205,18 @@ export const GRADES = {
     // §9.3's bands.highlight >= 0.04 must still be met — and it is met the way
     // the law actually intends: from emissive CORES and gold speculars that are
     // genuinely bright, not from a smeared halo sitting over everything.
-    bloom:    { threshold: 3.10, knee: 0.42, intensity: 1.15, tint: H('#ffe0b8'), radius: 0.20, clamp: 1.7 },
+    bloom:    { threshold: 3.35, knee: 0.38, intensity: 0.58, tint: H('#ffe7c9'), radius: 0.16, clamp: 1.35 },
     // §9.7 contact. A 1.75u radius on a 3/4 camera is a soft dirt halo, not an
     // occlusion; 1.25 keeps the darkening where two surfaces actually meet, and
     // the ink goes several stops darker so the base of a column reads planted
     // instead of floating in a lilac smudge.
-    ao:       { intensity: 1.18, radius: 1.25, power: 2.1, bias: 0.035, ink: H('#180c22') },
+    ao:       { intensity: 0.82, radius: 1.10, power: 1.75, bias: 0.04, ink: H('#24182d') },
         // Godrays are ADDITIVE over the whole frame, so at 0.34 they were a second
     // bloom pedestal sitting on the ground plane. 0.12 keeps the shafts.
-    godrays:  { intensity: 0.07, color: H('#ff7a44'), decay: 0.955, density: 0.72, weight: 0.5 },
+    // No screen-space sky shaft in Tartarus. At the fixed gameplay camera the
+    // off-screen anchor produced a conspicuous vertical white ray unrelated to
+    // any visible source; local braziers and rim lights still shape the room.
+    godrays:  { enabled: false, intensity: 0, color: H('#f6a06e'), decay: 0.955, density: 0.72, weight: 0.5 },
     // §1.1 the background must be LOW value and HAZED. At density 0.030 /
     // hazeStart 26 the arena silhouette met a dead-#000 void at a razor edge
     // with no atmospheric band behind it at all.
@@ -266,36 +275,36 @@ export const GRADES = {
   // obsidian isles on a lava sea. Blazing orange key, teal rim, blue-black ink.
   asphodel: {
     name: 'asphodel',
-    exposure: 0.86,
-    agxSlope: [1.10, 0.99, 0.92],
-    agxPower: [1.12, 1.20, 1.30],
-    agxSat: 1.16,
-    contrast: 0.94,
-    pivot: 0.32,
-    black: 0.028, white: 0.74, shoulder: 0.20,
-    lift:  [-0.010, -0.014, -0.008],
-    gamma: [ 0.99,  1.03,  1.08 ],
-    gain:  [ 1.10,  0.98,  0.93 ],
+    exposure: 1.28,
+    agxSlope: [1.02, 1.01, 1.00],
+    agxPower: [1.05, 1.06, 1.08],
+    agxSat: 1.04,
+    contrast: 0.62,
+    pivot: 0.30,
+    black: 0.001, white: 0.94, shoulder: 0.20,
+    lift:  [0.020, 0.019, 0.026],
+    gamma: [1.00, 1.00, 1.02],
+    gain:  [1.02, 1.00, 1.02],
     curveR: 0.94, curveG: 1.03, curveB: 1.10,
     shadowTint: H('#2b3f78'),   // obsidian shadow leans indigo-blue
     midTint:    H('#ffa156'),
     highTint:   H('#fff0b0'),
-    satShadow: 1.08,
-    satMid:    1.28,
+    satShadow: 0.96,
+    satMid:    1.05,
     satHigh:   1.06,
-    shadowMix: 0.48, highMix: 0.36, tintStrength: 1.0,
+    shadowMix: 0.30, highMix: 0.24, tintStrength: 0.72,
     hueLobes: [
       [0.90, 0.095, 0.075],     // magenta -> crimson
       [0.62, 0.060, 0.020],     // blues   -> indigo (narrow: the teal rim must survive)
       [0.48, 0.100, 0.030],     // cyans   -> teal (rim colour)
     ],
-    vignette: { amount: 0.58, radius: 0.62, softness: 0.86, depth: 0.18, floor: 0.48, color: H('#0d0b18') },
+    vignette: { amount: 0.16, radius: 0.84, softness: 0.95, depth: 0.05, floor: 0.18, color: H('#211f31') },
     grain:    { amount: 0.0075, size: 1.0, darkBoost: 1.9 },
     chroma:   1.7,
-    bloom:    { threshold: 1.10, knee: 0.5, intensity: 0.76, tint: H('#ffa03c'), radius: 0.60, clamp: 3.2 },
-    ao:       { intensity: 0.95, radius: 1.65, power: 2.0, bias: 0.04, ink: H('#161a3a') },
-    godrays:  { intensity: 0.34, color: H('#ff8c1a'), decay: 0.962, density: 0.80, weight: 0.55 },
-    fog:      { color: H('#3a1408'), far: H('#0d0b18'), density: 0.026, height: 0.18, haze: H('#150f26'), hazeStart: 32, hazeEnd: 124, hazeDesat: 0.54, hazeR0: 1.12, hazeR1: 2.3, hazeRadial: 1.0 },
+    bloom:    { threshold: 1.58, knee: 0.44, intensity: 0.34, tint: H('#d98d60'), radius: 0.46, clamp: 2.0 },
+    ao:       { intensity: 0.56, radius: 1.25, power: 1.55, bias: 0.055, ink: H('#30354d') },
+    godrays:  { intensity: 0.0, color: H('#ff8c1a'), decay: 0.962, density: 0.0, weight: 0.0 },
+    fog:      { color: H('#4a3b46'), far: H('#29283b'), density: 0.007, height: 0.14, haze: H('#303149'), hazeStart: 46, hazeEnd: 145, hazeDesat: 0.22, hazeR0: 1.24, hazeR1: 2.6, hazeRadial: 0.62 },
     dof:      { range: 50.0, nearRange: 16.0, maxBlur: 0.38, nearMax: 0.14, tilt: 0.08, tiltCenter: 0.60, focusRange: 14.0 },
   },
 
@@ -303,36 +312,46 @@ export const GRADES = {
   // marble, laurel, gold. Pale gold key, rose rim, cool violet-grey ink.
   elysium: {
     name: 'elysium',
-    exposure: 0.82,
+    // Preserve the authored marble/verdant/gold blocks.  The old transform
+    // warmed every luminance band and rolled white at 0.90, turning an entire
+    // arena into one pale-pink surface before the textures could separate.
+    // Keep the shared Elysium exposure contract.  Floor staging is handled by
+    // the floor material and its incident-light response, never by dimming the
+    // actors, VFX or the whole biome.
+    exposure: 0.98,
     agxSlope: [1.02, 1.02, 1.0],
-    agxPower: [1.14, 1.14, 1.18],
+    agxPower: [1.05, 1.05, 1.08],
     agxSat: 1.10,
-    contrast: 0.76,
-    pivot: 0.38,
-    black: 0.020, white: 0.78, shoulder: 0.15,
-    lift:  [-0.008, -0.008, -0.002],
+    contrast: 0.55,
+    pivot: 0.32,
+    black: 0.001, white: 0.96, shoulder: 0.18,
+    lift:  [0.012, 0.012, 0.018],
     gamma: [ 1.00,  1.00,  1.03 ],
     gain:  [ 1.04,  1.02,  0.97 ],
     curveR: 0.99, curveG: 1.00, curveB: 1.05,
-    shadowTint: H('#6a5c9c'),   // marble shadow: cool violet-grey, still not neutral
-    midTint:    H('#ffe0b8'),
-    highTint:   H('#fff4d0'),
+    shadowTint: H('#5b5676'),   // marble shadow: cool violet-grey, still not neutral
+    midTint:    H('#e8ddcb'),   // neutral-warm: the material owns the hue
+    highTint:   H('#ffe8b0'),   // reserve gold for the real highlight band
     satShadow: 1.08,
-    satMid:    1.22,
+    satMid:    1.08,
     satHigh:   1.06,
-    shadowMix: 0.44, highMix: 0.28, tintStrength: 1.0,
+    shadowMix: 0.26, highMix: 0.16, tintStrength: 0.52,
     hueLobes: [
       [0.72, 0.12, 0.040],      // violets -> rose (rim)
       [0.30, 0.12, -0.030],     // greens  -> verdant/olive
       [0.11, 0.09, -0.014],
     ],
-    vignette: { amount: 0.48, radius: 0.68, softness: 0.88, depth: 0.24, floor: 0.40, color: H('#241a3a') },
+    vignette: { amount: 0.18, radius: 0.84, softness: 0.95, depth: 0.06, floor: 0.16, color: H('#302943') },
     grain:    { amount: 0.0060, size: 1.0, darkBoost: 1.5 },
     chroma:   1.1,
-    bloom:    { threshold: 1.05, knee: 0.45, intensity: 0.62, tint: H('#ffe6a3'), radius: 0.58, clamp: 3.2 },
-    ao:       { intensity: 0.88, radius: 1.85, power: 1.9, bias: 0.04, ink: H('#3d3560') },
-    godrays:  { intensity: 0.28, color: H('#ffe6a3'), decay: 0.958, density: 0.76, weight: 0.52 },
-    fog:      { color: H('#3c3a56'), far: H('#191a2e'), density: 0.020, height: 0.13, haze: H('#3a3654'), hazeStart: 38, hazeEnd: 145, hazeDesat: 0.60, hazeR0: 1.12, hazeR1: 2.3, hazeRadial: 1.0 },
+    // Tight, high-gated bloom: braziers and gold glints retain a painted halo
+    // without laying a white pedestal over the marble field.
+    bloom:    { threshold: 1.82, knee: 0.40, intensity: 0.30, tint: H('#fff0bc'), radius: 0.26, clamp: 1.8 },
+    ao:       { intensity: 0.60, radius: 1.40, power: 1.60, bias: 0.05, ink: H('#514a70') },
+    // No unmotivated screen-space shaft: Elysium's illumination comes from
+    // visible braziers, the key, gold trim and rose actor rims.
+    godrays:  { enabled: false, intensity: 0, color: H('#fff0bc'), decay: 0.958, density: 0.62, weight: 0.42 },
+    fog:      { color: H('#514f69'), far: H('#292d45'), density: 0.010, height: 0.13, haze: H('#4a4865'), hazeStart: 46, hazeEnd: 155, hazeDesat: 0.38, hazeR0: 1.20, hazeR1: 2.5, hazeRadial: 0.75 },
     dof:      { range: 56.0, nearRange: 17.0, maxBlur: 0.34, nearMax: 0.13, tilt: 0.08, tiltCenter: 0.60, focusRange: 15.0 },
   },
 };

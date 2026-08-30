@@ -39,7 +39,8 @@ import {
   RECIPES, bakeSet, resolveRecipe, BASE,
 } from './recipes.js';
 import { BakePool } from './bakepool.js';
-import { loadGeneratedAlbedos } from './generated-textures.js';
+import { compositeGeneratedAlbedo, loadGeneratedAlbedos } from './generated-textures.js';
+import { textureProfileForTier } from './texture-budget.js';
 
 const clamp01 = TG.clamp01;
 const now = () => (typeof performance !== 'undefined' ? performance.now() : 0);
@@ -56,11 +57,15 @@ const SHARED_SETS = [
   // every chamber asks for these whatever biome it is, and each one caught
   // blocking the main thread in the sync path is ~0.5s of black screen
   'obsidian', 'lava', 'bone', 'marble.elysium',
+  'characterrig.hound.hide', 'characterrig.hound.limbs', 'characterrig.hound.keratin',
+  'shrine.divine', 'gold.divine',
 ];
 const BIOME_SETS = {
   tartarus: ['floor.tartarus', 'stone.tartarus', 'stone.tartarus.bay',
-    'stone.tartarus.column', 'stone.tartarus.arch', 'rubble.tartarus'],
-  asphodel: ['floor.asphodel', 'stone.asphodel'],
+    'stone.tartarus.column', 'stone.tartarus.arch', 'rubble.tartarus',
+    'stone.tartarus.rim', 'bone.tartarus', 'bronze.tartarus', 'iron.tartarus', 'ceramic.tartarus', 'wood.tartarus'],
+  asphodel: ['floor.asphodel', 'stone.asphodel', 'obsidian.asphodel',
+    'lava.asphodel', 'rubble.asphodel', 'bone.asphodel', 'bronze.asphodel', 'iron.asphodel'],
   elysium: ['floor.elysium', 'marble.elysium'],
 };
 
@@ -80,16 +85,22 @@ export class MaterialLibrary {
     this.stats = { ms: 0, cpu: 0, built: 0, texels: 0, sync: [] };
     this.biome = 'tartarus';
     this.scale = 1;
+    this.generatedScale = 1;
+    this.anisotropy = 4;
     this._t = 0;
   }
 
   async init(ctx) {
     this.ctx = ctx;
     const tier = (ctx.quality && ctx.quality.tier) || 'high';
-    // texScale is the tier's real cost knob: synthesis is O(n^2), so 0.75 is
-    // 56% of the work and 0.5 is 25% of it. A tier that does not move this only
-    // saves GPU bandwidth; moving it is what makes low/med actually boot fast.
-    this.scale = tier === 'low' ? 0.55 : tier === 'med' ? 0.75 : 1.0;
+    // Texture work is quadratic. The old .55/.75/1.0 policy still generated
+    // millions of texels and decoded nine full 1536×1024 atlases. These
+    // browser-first profiles intentionally trade close-up definition for
+    // shorter loading, lower memory pressure and steadier frame delivery.
+    const profile = textureProfileForTier(tier);
+    this.scale = profile.proceduralScale;
+    this.generatedScale = profile.generatedScale;
+    this.anisotropy = profile.anisotropy;
     const q = ctx.quality || {};
     if (typeof q.texScale === 'number' && q.texScale > 0) this.scale = q.texScale;
     else q.texScale = this.scale;          // publish what we chose, so tools can read it
@@ -102,7 +113,10 @@ export class MaterialLibrary {
     // chamber will ask for is baked here, in parallel, before the world builds;
     // whatever the pool cannot deliver falls through to the sync path in set().
     const t0 = now();
-    this._pool = new BakePool(8);
+    // Leave CPU capacity for the browser, input and operating system on weaker
+    // machines instead of occupying every core during procedural texture boot.
+    const workerLimit = tier === 'low' ? 2 : tier === 'med' ? 4 : tier === 'high' ? 6 : 8;
+    this._pool = new BakePool(workerLimit);
     // Decode the authored albedo atlases while the worker pool synthesises PBR
     // support maps. Neither job needs to wait on the other.
     const generated = this._loadGeneratedAlbedos();
@@ -131,7 +145,11 @@ export class MaterialLibrary {
       const renderer = this.ctx && this.ctx.renderer;
       const max = renderer && renderer.capabilities && renderer.capabilities.getMaxAnisotropy
         ? renderer.capabilities.getMaxAnisotropy() : 8;
-      this.generatedMaps = await loadGeneratedAlbedos(Math.min(16, Math.max(1, max)));
+      // Generated atlas cells are retained for lazy materials, so downscaling
+      // them is a large RAM/VRAM saving in addition to reducing seam-processing
+      // work. Procedural normals/ORM keep their normal tier-specific scale.
+      const aniso = Math.min(this.anisotropy, Math.max(1, max));
+      this.generatedMaps = await loadGeneratedAlbedos(aniso, this.generatedScale);
       this._applyGeneratedAlbedos();
     } catch (error) {
       // Procedural albedo remains a complete fallback for offline/file builds,
@@ -145,9 +163,10 @@ export class MaterialLibrary {
     if (!this.generatedMaps.size) return;
     for (const set of this.setCache.values()) {
       const generated = this.generatedMaps.get(set.name);
-      if (!generated || generated === set.map) continue;
-      if (set.map) set.map.dispose();
-      set.map = generated;
+      if (!generated || set.generatedSource === generated) continue;
+      if (set.map && set.map !== set.proceduralMap) set.map.dispose();
+      set.map = compositeGeneratedAlbedo(set.proceduralMap, generated, this.anisotropy);
+      set.generatedSource = generated;
     }
   }
 
@@ -190,12 +209,16 @@ export class MaterialLibrary {
     const n = b.size, key = b.name;
     if (b.error) console.warn('[mats] recipe failed:', key, b.error);
     const generated = this.generatedMaps.get(key);
+    const aniso = this.anisotropy;
+    const proceduralMap = TG.byteTexture(b.map, n, { anisotropy: aniso, srgb: true });
     const set = {
       name: key, size: n,
-      map: generated || TG.byteTexture(b.map, n, { anisotropy: 16, srgb: true }),
-      normalMap: TG.byteTexture(b.normalMap, n, { anisotropy: 16 }),
-      ormMap: TG.byteTexture(b.ormMap, n, { anisotropy: 16 }),
-      emissiveMap: b.emissiveMap ? TG.byteTexture(b.emissiveMap, n, { anisotropy: 4, srgb: true }) : null,
+      proceduralMap,
+      map: generated ? compositeGeneratedAlbedo(proceduralMap, generated, aniso) : proceduralMap,
+      generatedSource: generated || null,
+      normalMap: TG.byteTexture(b.normalMap, n, { anisotropy: aniso }),
+      ormMap: TG.byteTexture(b.ormMap, n, { anisotropy: aniso }),
+      emissiveMap: b.emissiveMap ? TG.byteTexture(b.emissiveMap, n, { anisotropy: Math.min(4, aniso), srgb: true }) : null,
       emissiveIntensity: b.emissiveIntensity ?? 0,
       params: b.params || {},
       paint: b.paint || {},
@@ -302,7 +325,36 @@ export class MaterialLibrary {
     TG.strokes(s, n, { rng, flow: TG.flowField(n, { base: 2.0, swirl: 1.1, freq: 5, seed: 1203 }), count: Math.round(n * 2.7), len: [n * 0.02, n * 0.08], width: [0.8, 1.6], value: [-0.14, -0.04], bristle: 0.8, taper: 2.1 });
     const out = new Float32Array(n * n);
     for (let i = 0; i < out.length; i++) out[i] = clamp01(0.5 + (g[i] - 0.5) * 0.42 + s[i] * 1.05);
-    this._detailTex = TG.fieldTexture(out, n, { anisotropy: 8 });
+
+    // ── THE DETAIL LAYER NOW CARRIES SURFACE, NOT JUST TONE ──────────────────
+    // It used to be `fieldTexture(out)` — one scalar replicated across r,g,b.
+    // The shader multiplied the ALBEDO by it and nothing else, so at the play
+    // camera the micro-scale read as a flat value grain painted on a perfectly
+    // smooth plane: no relief, no lighting response, and one roughness for the
+    // whole surface. Measured on the round-5 baseline, 04_material and
+    // 11_relief_detail came back at rmsContrast 0.127/0.137 against a 0.20
+    // floor with the wall bays reading as flat panels.
+    //
+    // Three of the four channels were carrying a copy of the first, so this
+    // costs one texture fetch — the same fetch — and buys:
+    //   R  the value grain, exactly as before (the albedo look is unchanged)
+    //   GB a tangent-space MICRO-NORMAL, so the grain catches the key and the
+    //      surface has relief at the scale a brush leaves it
+    //   A  a ROUGHNESS modulation at a coarser, incommensurate scale — §1.4's
+    //      "roughness should vary as an ARTISTIC map", and the cheapest way
+    //      there is to make one material read as several.
+    const chip = TG.fbm(n, { freq: 34, octaves: 3, seed: 1204, ppc: 3 });
+    const relief = new Float32Array(n * n);
+    for (let i = 0; i < relief.length; i++) relief[i] = clamp01(out[i] * 0.60 + chip[i] * 0.40);
+    const { gx, gy } = TG.gradientPair(relief, n, 0.34);
+    // dry/polished patches at ~6 periods across the detail tile, i.e. a scale
+    // BETWEEN the grain and the macro layer, which is the octave neither of
+    // them was covering
+    const wet = TG.fbm(n, { freq: 6, octaves: 4, seed: 1205 });
+    const rgh = new Float32Array(n * n);
+    for (let i = 0; i < rgh.length; i++) rgh[i] = clamp01(0.5 + (wet[i] - 0.5) * 1.7 + (chip[i] - 0.5) * 0.35);
+    this._detailTex = TG.byteTexture(TG.packChannels8(out, gx, gy, rgh, n), n,
+      { anisotropy: Math.min(4, this.anisotropy) });
     this._detailTex.name = 'detail.grain';
     return this._detailTex;
   }
@@ -312,18 +364,46 @@ export class MaterialLibrary {
     const n = this._shared(256);
     const a = TG.warp2(TG.fbm(n, { freq: 2, octaves: 5, seed: 2201 }), n, { amp: 0.12, freq: 2, seed: 2202 });
     const b = TG.warp2(TG.fbm(n, { freq: 3, octaves: 5, seed: 2203 }), n, { amp: 0.10, freq: 2, seed: 2204 });
+    const c = TG.warp2(TG.fbm(n, { freq: 5, octaves: 5, seed: 2205 }), n, { amp: 0.09, freq: 3, seed: 2206 });
+    // ── THE MACRO LAYER WAS INERT, AND THAT IS ARITHMETIC, NOT TASTE ─────────
+    // The old encoding put every channel at ~0.455-0.498 with a standard
+    // deviation of 0.05. The shader then computed
+    //     m = (mc*0.5 + m2*0.34 + m3*0.16) * 2.0            -> 0.94 +- 0.032
+    //     m = mix(1, m * mix(1, tint*1.7, 0.5), strength)
+    // For the floor (strength 0.30, tint #4a2c38 -> linear 0.068/0.027/0.041)
+    // that evaluates to a multiply of 0.858/0.847/0.851 with a 1-sigma swing of
+    // 0.010 — i.e. the one term in the shader whose job is to break a large
+    // floor's repeat was a 15% GLOBAL DARKENING with a 1% ripple on it. The
+    // wall (strength 0.40, #6b4a58) measured the same way: 0.834 +- 0.015.
+    // That is the same class of defect as the ink-floor note in painterly.js:
+    // a knob that looked considered and did nothing.
+    //
+    // So the encoding is now explicitly a ZERO-MEAN DEVIATION and the mean
+    // multiply is a separate, named uniform (uMacroLevel) that painterly.js
+    // seeds with the exact legacy constant above — every surface keeps the
+    // average brightness it shipped with, and only the VARIANCE changes. The
+    // fields are contrast-expanded to a standard deviation near 0.26 so the
+    // drift is something a critic can see across a bay.
+    //   R  the broad value drift        (one macroScale period)
+    //   G  a hue / roughness selector, deliberately decorrelated from R
+    //   B  a second value field, sampled by the shader at two SHORTER scales
+    //      so the layer finally has energy at the 3-10m band where a floor's
+    //      repeat actually reads. R alone lives at 80m and could only ever
+    //      contribute a gradient across a 12m frame.
+    const dev = (f) => {
+      const o = TG.normalize01(new Float32Array(f), 0, 1);
+      for (let i = 0; i < o.length; i++) o[i] = clamp01(0.5 + (o[i] - 0.5) * 1.30);
+      return o;
+    };
+    const A = dev(a), B = dev(b), C = dev(c);
     const rgbF = new Float32Array(n * n * 3);
     for (let i = 0; i < n * n; i++) {
-      // biased slightly below 0.5 so the `* 2` in the shader creates large
-      // SHADED regions, not only bright ones — that is the value banding
-      const v = 0.455 + (a[i] - 0.5) * 0.50;
-      const t = 0.5 + (b[i] - 0.5) * 0.34;
       const j = i * 3;
-      rgbF[j] = (v * 1.04 + t * 0.05) * 255;
-      rgbF[j + 1] = v * 255;
-      rgbF[j + 2] = (v * 0.96 + (1 - t) * 0.06) * 255;
+      rgbF[j] = A[i] * 255;
+      rgbF[j + 1] = B[i] * 255;
+      rgbF[j + 2] = C[i] * 255;
     }
-    this._macroTex = TG.rgbTexture(rgbF, n, { linear: true, anisotropy: 4 });
+    this._macroTex = TG.rgbTexture(rgbF, n, { linear: true, anisotropy: Math.min(4, this.anisotropy) });
     this._macroTex.name = 'macro.variation';
     return this._macroTex;
   }
@@ -437,8 +517,9 @@ export class MaterialLibrary {
     const own = {};
     // split THREE material params from our own options
     const MINE = ['triplanar', 'projection', 'triScale', 'triSharp', 'stochastic', 'circScale',
-      'detail', 'detailScale', 'detailStrength',
-      'macro', 'macroScale', 'macroStrength', 'macroTint', 'variation', 'variationTint',
+      'detail', 'detailScale', 'detailStrength', 'detailBump', 'detailRough',
+      'macro', 'macroScale', 'macroStrength', 'macroTint', 'macroLevel', 'macroRough',
+      'variation', 'variationTint',
       'variant', 'rimColor', 'rimPower', 'rimStrength', 'rimDir', 'rimGate', 'shadowTint',
       'shadowDepth', 'rampSoftness', 'rampStrength', 'rampSteps', 'rampLevels', 'keyRef',
       'contourColor', 'contourStrength', 'contourStart', 'repeat', 'size', 'painterly', 'tint', 'envMap',
@@ -677,6 +758,7 @@ export class MaterialLibrary {
     const disposed = new Set();
     for (const s of this.setCache.values()) {
       if (s.map && !disposed.has(s.map)) { s.map.dispose(); disposed.add(s.map); }
+      if (s.proceduralMap && !disposed.has(s.proceduralMap)) { s.proceduralMap.dispose(); disposed.add(s.proceduralMap); }
       if (s.normalMap) s.normalMap.dispose();
       if (s.ormMap) s.ormMap.dispose();
       if (s.emissiveMap) s.emissiveMap.dispose();

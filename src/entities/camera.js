@@ -52,11 +52,10 @@ function cdamp(cur, vel, target, smoothTime, dt, maxSpeed = Infinity) {
 // FRAMING (integration pass). Three numbers here decide whether the frame has
 // a composition at all:
 //
-//   distance/fov  — the arena plans were rescaled to ~25m across so the CHAMBER
-//                   fits this lens. 17.5m at fov 38 shows ~21m of width and
-//                   ~13m of height at the player's plane: the colonnade reaches
-//                   both frame edges, the hero is ~1/8 of frame height, and the
-//                   room reads as a room instead of an unbounded floor.
+//   distance/fov  — the camera follows the hero's LOCAL combat field instead
+//                   of trying to show the full 48-55m chamber. This keeps the
+//                   avatar and telegraphs readable while the larger arena can
+//                   extend beyond the frame for flanking and kiting.
 //   lookHeight    — the single most consequential value in the whole rig. At
 //                   1.10 the camera aims at the hero's waist, the horizon sits
 //                   dead centre and BOTH halves of the frame are floor: the
@@ -76,9 +75,10 @@ function cdamp(cur, vel, target, smoothTime, dt, maxSpeed = Infinity) {
 // compression is preserved) puts the hero at ~18% of frame height, which is
 // where every piece of drapery, pauldron and face work in rig.js starts to
 // exist on screen at all.
-// lookHeight comes down with the distance: at 12.6 an aim point 3.4m above the
-// feet drops the character onto the bottom edge. 3.05 holds them at ~2/3 down
-// the frame with the colonnade still stacked above.
+// lookHeight must keep the player inside the safe gameplay frame at ultra-wide
+// aspect ratios. An aim point above 3m pushed the hero and HUD into the bottom
+// edge on the published 2694x1292 view; 2.25m holds the hero around the lower
+// third while preserving the colonnade and centrepiece above them.
 // PITCH is the number that decides whether the frame HAS a background. At 50deg
 // down with a 34deg lens the TOP of the frame points 33deg BELOW the horizon, so
 // a ray from the lens to the far colonnade lands under the floor: the chamber's
@@ -92,16 +92,16 @@ export const CAM_TUNING = {
   fov: 34,
   pitchDeg: 46,
   yawDeg: 45,
-  distance: 15.4,
-  lookHeight: 3.80,
+  distance: 17.8,
+  lookHeight: 2.25,
   followTime: 0.185,      // spring smooth time, horizontal
   followTimeY: 0.30,
   deadzone: 0.06,
   leadAim: 1.9,
   leadVel: 0.26,
   leadTime: 0.36,
-  heatPull: 2.8,          // metres of pull-back at full combat heat
-  heatFov: 1.6,
+  heatPull: 4.2,          // reveal the enlarged combat field as a wave fills it
+  heatFov: 2.2,
   pushIn: 2.4,            // reward push-in
   dashKick: 0.62,
   dashFov: 2.4,

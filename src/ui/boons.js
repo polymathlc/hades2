@@ -14,6 +14,61 @@ import {
   displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
 } from './ornament.js';
 import { GOD_INFO, SLOTS, RARITY_LABEL, BoonState } from '../game/boons.js';
+import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from './boon-choice.js';
+// Cards never display these atlases at source resolution. Compact browser
+// editions keep the reward screen quick to open on integrated GPUs while the
+// full-resolution files remain available as art masters.
+import godPortraitsUrl from '../assets/ui/generated/web/god-portraits-v1-web.jpg';
+import hephaestusAtlasUrl from '../assets/textures/generated/web/hephaestus-forge-gates-v6-atlas-web.jpg';
+
+const PORTRAIT_GRID = { cols: 5, rows: 2 };
+const PORTRAIT_CELL = {
+  zeus: [0, 0], poseidon: [1, 0], athena: [2, 0], aphrodite: [3, 0], ares: [4, 0],
+  artemis: [0, 1], dionysus: [1, 1], hermes: [2, 1], hecate: [3, 1], selene: [4, 1],
+};
+const godPortraits = typeof Image !== 'undefined' ? new Image() : null;
+if (godPortraits) godPortraits.src = godPortraitsUrl;
+const hephaestusAtlas = typeof Image !== 'undefined' ? new Image() : null;
+if (hephaestusAtlas) hephaestusAtlas.src = hephaestusAtlasUrl;
+
+function drawGodPortrait(g, cx, cy, r, god) {
+  if (god === 'hephaestus' && hephaestusAtlas?.complete && hephaestusAtlas.naturalWidth) {
+    const sw = hephaestusAtlas.naturalWidth / 3;
+    const sh = hephaestusAtlas.naturalHeight / 2;
+    g.save();
+    g.beginPath(); g.arc(cx, cy, r, 0, 6.2832); g.clip();
+    g.filter = 'brightness(1.55) saturate(1.02) contrast(1.04)';
+    g.drawImage(hephaestusAtlas, 2, 2, sw - 4, sh - 4, cx - r, cy - r, r * 2, r * 2);
+    g.filter = 'none';
+    const veil = g.createLinearGradient(cx, cy - r, cx, cy + r);
+    veil.addColorStop(0, 'rgba(8,4,14,0.01)'); veil.addColorStop(0.68, 'rgba(8,4,14,0.03)'); veil.addColorStop(1, 'rgba(8,4,14,0.45)');
+    g.fillStyle = veil; g.fillRect(cx - r, cy - r, r * 2, r * 2);
+    g.restore();
+    return true;
+  }
+  const cell = PORTRAIT_CELL[god];
+  if (!cell || !godPortraits?.complete || !godPortraits.naturalWidth) return false;
+  const sw = godPortraits.naturalWidth / PORTRAIT_GRID.cols;
+  const sh = godPortraits.naturalHeight / PORTRAIT_GRID.rows;
+  const inset = 1.5;
+  // The generated cells are vertical busts. A square crop from the upper cell
+  // keeps the face, crown/helmet and shoulder silhouette inside the medallion.
+  const sx = cell[0] * sw + inset;
+  const sy = cell[1] * sh + inset;
+  const ss = sw - inset * 2;
+  g.save();
+  g.beginPath(); g.arc(cx, cy, r, 0, 6.2832); g.clip();
+  g.filter = 'saturate(0.92) contrast(1.06)';
+  g.drawImage(godPortraits, sx, sy, ss, ss, cx - r, cy - r, r * 2, r * 2);
+  g.filter = 'none';
+  const veil = g.createLinearGradient(cx, cy - r, cx, cy + r);
+  veil.addColorStop(0, 'rgba(8,4,14,0.02)');
+  veil.addColorStop(0.64, 'rgba(8,4,14,0.04)');
+  veil.addColorStop(1, 'rgba(8,4,14,0.48)');
+  g.fillStyle = veil; g.fillRect(cx - r, cy - r, r * 2, r * 2);
+  g.restore();
+  return true;
+}
 
 // ═══════════════════════════════════════════════════════ GOD EMBLEMS ══════
 // Each emblem is authored in a unit circle and scaled by r. Every one draws
@@ -104,6 +159,68 @@ function emblemPath(g, kind, r) {
       g.moveTo(.44 * r, 0); g.arc(0, 0, .44 * r, 0, 6.2832);   // full moon
       cres(-0.74 * r, .40 * r, false);
       cres(0.74 * r, .40 * r, true);
+      break;
+    }
+    case 'hammer': {                                 // Hephaestus — hammer + anvil
+      g.save(); g.rotate(-0.54);
+      g.rect(-.12 * r, -.18 * r, .24 * r, 1.08 * r);
+      g.rect(-.58 * r, -.56 * r, 1.16 * r, .34 * r);
+      g.restore();
+      g.moveTo(...P(-.72, .42)); g.lineTo(...P(.72, .42));
+      g.lineTo(...P(.48, .66)); g.lineTo(...P(.22, .72));
+      g.lineTo(...P(.08, .94)); g.lineTo(...P(-.54, .94));
+      g.lineTo(...P(-.68, .70)); g.closePath();
+      break;
+    }
+    case 'wheat': {                                  // Demeter — grain and frost
+      g.rect(-.055 * r, -.78 * r, .11 * r, 1.58 * r);
+      for (const y of [-.54, -.26, .02, .30]) for (const s of [-1, 1]) {
+        g.moveTo(...P(0, y));
+        g.quadraticCurveTo(s * .46 * r, (y - .18) * r, s * .54 * r, (y + .05) * r);
+        g.quadraticCurveTo(s * .25 * r, (y + .18) * r, 0, (y + .10) * r);
+        g.closePath();
+      }
+      break;
+    }
+    case 'sun': {                                    // Apollo — radiant sun
+      g.moveTo(.34 * r, 0); g.arc(0, 0, .34 * r, 0, 6.2832);
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * 6.2832, da = .10;
+        g.moveTo(Math.cos(a - da) * .46 * r, Math.sin(a - da) * .46 * r);
+        g.lineTo(Math.cos(a) * .92 * r, Math.sin(a) * .92 * r);
+        g.lineTo(Math.cos(a + da) * .46 * r, Math.sin(a + da) * .46 * r);
+        g.closePath();
+      }
+      break;
+    }
+    case 'crown': {                                  // Hera — royal diadem
+      const p = [[-.84,.58],[-.70,-.62],[-.28,-.20],[0,-.86],[.28,-.20],[.70,-.62],[.84,.58]];
+      g.moveTo(...P(p[0][0], p[0][1])); for (let i = 1; i < p.length; i++) g.lineTo(...P(p[i][0], p[i][1]));
+      g.lineTo(...P(.62,.82)); g.lineTo(...P(-.62,.82)); g.closePath();
+      break;
+    }
+    case 'flame': {                                  // Hestia — hearth flame
+      g.moveTo(...P(0, .94));
+      g.bezierCurveTo(...P(-.82, .48), ...P(-.68, -.26), ...P(-.18, -.92));
+      g.bezierCurveTo(...P(-.20, -.28), ...P(.08, -.16), ...P(.26, -.62));
+      g.bezierCurveTo(...P(.86, .10), ...P(.72, .62), ...P(0, .94)); g.closePath();
+      break;
+    }
+    case 'spiral': {                                 // Chaos — primordial spiral
+      for (let i = 0; i < 4; i++) {
+        const rr = (.18 + i * .18) * r;
+        g.moveTo(rr, 0); g.arc(0, 0, rr, i * .38, 5.55 + i * .38);
+        g.arc(0, 0, Math.max(.05 * r, rr - .075 * r), 5.55 + i * .38, i * .38, true);
+        g.closePath();
+      }
+      break;
+    }
+    case 'helm': {                                   // Hades — helm of darkness
+      g.moveTo(...P(-.72, .74)); g.lineTo(...P(-.72, -.10));
+      g.quadraticCurveTo(0, -1.05 * r, .72 * r, -.10 * r);
+      g.lineTo(...P(.72, .74)); g.lineTo(...P(.30, .74));
+      g.lineTo(...P(.18, .10)); g.lineTo(...P(-.18, .10));
+      g.lineTo(...P(-.30, .74)); g.closePath();
       break;
     }
     case 'crescent':                                 // Selene
@@ -210,7 +327,7 @@ export function rarityRing(g, cx, cy, r, rarity, o = {}) {
 }
 
 // ═══════════════════════════════════════════════════════ THE OVERLAY ══════
-const CARD_W = 292, CARD_H = 398, CARD_GAP = 32;
+const CARD_W = 292, CARD_H = 430, CARD_GAP = 32;
 
 export class BoonOverlay {
   constructor(ui) {
@@ -226,16 +343,22 @@ export class BoonOverlay {
     this.title = 'A Boon of the Gods';
     this.subtitle = '';
     this.rects = [];
+    this._inputWasEnabled = true;
+    this._gamepadAcceptArmed = false;
   }
 
   /** ARCHITECTURE §2.9 — ui.showBoonChoice(options) -> Promise<chosenBoon> */
   open(options, o = {}) {
     const list = (options && options.length ? options : this._fallback(o)).slice(0, 3);
-    this.options = list.map(x => normalise(x));
+    this.options = list.map(x => normalise(x, this.ui.boonState));
     this.raw = list;
     this.active = true;
+    const input = this.ui.ctx?.input;
+    this._inputWasEnabled = input ? input.enabled !== false : true;
+    if (input) input.enabled = false;
     this.t0 = this.ui.now();
     this.hover = -1; this.chosen = -1; this.chosenT = 0;
+    this._gamepadAcceptArmed = false;
     const gods = [...new Set(this.options.map(x => x.god))];
     this.title = gods.length === 1 ? `A Boon of ${GOD_INFO[gods[0]]?.name || 'the Gods'}` : 'A Boon of the Gods';
     this.subtitle = gods.length === 1 ? (GOD_INFO[gods[0]]?.title || '') : 'The gods are watching';
@@ -263,12 +386,25 @@ export class BoonOverlay {
     this.ui.hud?.alpha?.set?.(1);
     setTimeout(() => {
       this.active = false;
+      this._restoreInput();
       const r = this._resolve; this._resolve = null;
       if (r) r(picked);
     }, 340);
   }
 
-  cancel() { this.ui.hud?.alpha?.set?.(1); if (this._resolve) { const r = this._resolve; this._resolve = null; this.active = false; r(null); } }
+  _restoreInput() {
+    const input = this.ui.ctx?.input;
+    if (!input) return;
+    const anotherModal = this.ui.nectarUI?.active || this.ui.menus?.screen !== 'game';
+    input.enabled = this._inputWasEnabled && !anotherModal;
+  }
+
+  cancel() {
+    this.ui.hud?.alpha?.set?.(1);
+    const r = this._resolve; this._resolve = null; this.active = false;
+    this._restoreInput();
+    if (r) r(null);
+  }
 
   layout(W, H, S) {
     const cw = CARD_W * S, ch = CARD_H * S, gap = CARD_GAP * S;
@@ -287,6 +423,29 @@ export class BoonOverlay {
       if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) return i;
     }
     return -1;
+  }
+
+  /** One navigation path for keyboard and gamepad, including first focus. */
+  moveSelection(dir) {
+    const n = this.options.length;
+    if (!this.active || !n) return;
+    this.hover = advanceCardFocus(this.hover, dir, n);
+    this.ui.ctx?.audio?.sfx?.('ui.move', { gain: 0.32 });
+    this.ui.dirty = true;
+  }
+
+  gamepad(action) {
+    if (!this.active) return;
+    if (action === 'left') this.moveSelection(-1);
+    else if (action === 'right') this.moveSelection(1);
+    else if (action === 'accept') this.choose(this.hover < 0 ? 0 : this.hover);
+  }
+
+  pollGamepadAccept(down, edge) {
+    const next = releaseGatedEdge(this._gamepadAcceptArmed, down, edge);
+    this._gamepadAcceptArmed = next.armed;
+    if (next.trigger) this.gamepad('accept');
+    return next.trigger;
   }
 
   draw(g, W, H, S, t) {
@@ -376,8 +535,8 @@ export class BoonOverlay {
     // ── footer hint ──
     const fa = ease.out(clamp01((age - 0.55) / 0.4));
     g.save(); g.globalAlpha = fa * 0.8;
-    tracked(g, 'PRESS  1  ·  2  ·  3  TO CLAIM', W / 2, L.y + L.ch + 46 * S, {
-      size: 11.5 * S, track: 0.40, weight: 600, align: 'center', color: rgba('#d8c8a6', 0.78), shadow: '#06030c', shadowDy: 1.4 * S,
+    tracked(g, '1 · 2 · 3  OR CLICK   ·   ARROWS + ENTER   ·   GAMEPAD A', W / 2, L.y + L.ch + 42 * S, {
+      size: 10.5 * S, track: 0.28, weight: 600, align: 'center', color: rgba('#e8d8b6', 0.86), shadow: '#06030c', shadowDy: 1.4 * S,
     });
     g.restore();
   }
@@ -406,15 +565,39 @@ export class BoonOverlay {
     g.restore();
 
     const cx = x + w / 2;
+    // The card number is an affordance, not just a footer instruction. It
+    // keeps the direct-key choice discoverable while the eye compares cards.
+    const keyX = x + 22 * S, keyY = y + 23 * S, keyR = 11 * S;
+    g.save();
+    g.beginPath(); g.arc(keyX, keyY, keyR, 0, 6.2832);
+    g.fillStyle = rgba('#090512', 0.90); g.fill();
+    g.strokeStyle = rgba(st.hovered ? lift(col, 0.42) : PAL.goldMid, st.hovered ? 0.95 : 0.72);
+    g.lineWidth = 1.2 * S; g.stroke();
+    tracked(g, String((st.index || 0) + 1), keyX, keyY + 3.5 * S, {
+      size: 10.5 * S, track: 0, weight: 700, align: 'center', color: st.hovered ? '#fff3c7' : rgba(PAL.parch, 0.84),
+    });
+    g.restore();
+
     // ── medallion ──
-    const mr = 46 * S, my = y + 102 * S;
+    const mr = 49 * S, my = y + 102 * S;
     g.save();
     g.beginPath(); g.arc(cx, my, mr, 0, 6.2832);
     const mg = g.createRadialGradient(cx - mr * 0.3, my - mr * 0.4, mr * 0.05, cx, my, mr);
     mg.addColorStop(0, mix('#2e1a4a', col, 0.30)); mg.addColorStop(0.7, '#180f28'); mg.addColorStop(1, '#0b0715');
     g.fillStyle = mg; g.fill();
     g.restore();
-    godEmblem(g, cx, my, mr * 0.64, o.god, { color: col, glowA: st.hovered ? 0.72 : 0.60, glowR: 2.4 });
+    const hasPortrait = drawGodPortrait(g, cx, my, mr * 0.94, o.god);
+    if (!hasPortrait) {
+      godEmblem(g, cx, my, mr * 0.64, o.god, { color: col, glowA: st.hovered ? 0.72 : 0.60, glowR: 2.4 });
+    } else {
+      // Preserve the fast-read emblem as a small seal without covering the
+      // generated portrait that gives the divine audience its identity.
+      const er = 15 * S, ex = cx + mr * 0.70, ey = my + mr * 0.66;
+      g.save(); g.beginPath(); g.arc(ex, ey, er, 0, 6.2832);
+      g.fillStyle = '#0b0715'; g.fill();
+      g.strokeStyle = rgba(PAL.goldHi, 0.88); g.lineWidth = 1.5 * S; g.stroke(); g.restore();
+      godEmblem(g, ex, ey, er * 0.58, o.god, { color: col, glowA: 0.48, glowR: 1.5 });
+    }
     rarityRing(g, cx, my, mr, o.rarity, { w: 4.6 * S, phase: t * 0.5 + (st.index || 0) });
 
     // duo badge
@@ -434,7 +617,9 @@ export class BoonOverlay {
       size: 13 * S, track: 0.32, weight: 700, align: 'center', color: lift(col, 0.34),
       shadow: '#07040d', shadowDy: 1.6 * S,
     });
-    const epithet = o.duo ? 'A DUO BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
+    const epithet = o.comparison?.kind === 'replace' ? 'SLOT TRANSMUTATION'
+      : o.comparison?.kind === 'upgrade' ? 'RARITY UPGRADE'
+        : o.duo ? 'A DUO BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
     if (epithet) tracked(g, epithet, cx, y + 190 * S, {
       size: 8.6 * S, track: 0.30, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.72),
     });
@@ -486,11 +671,39 @@ export class BoonOverlay {
       size: 10.5 * S, track: 0.30, weight: 600, align: 'center', color: lift(col, 0.50),
     });
 
+    // Hades-style decision clarity: action-slot choices disclose the boon that
+    // will be displaced (or improved) before the player commits. The rarity
+    // transition is repeated in text so colour is never the only signal.
+    let effectTop = py + ph;
+    if (o.comparison) {
+      const cmp = o.comparison;
+      const bh = 37 * S, by = effectTop + 5 * S, bw = w - 42 * S;
+      g.save();
+      plaqueRect(g, cx - bw / 2, by, bw, bh, 4 * S);
+      g.fillStyle = rgba(cmp.kind === 'replace' ? shade(col, 0.72) : '#181026', 0.88); g.fill();
+      g.strokeStyle = rgba(cmp.kind === 'replace' ? col : R.text, 0.55); g.lineWidth = 1 * S; g.stroke();
+      g.restore();
+      const prefix = cmp.kind === 'replace' ? 'REPLACES' : 'IMPROVES';
+      const decision = `${prefix}  ${cmp.fromName}`.toUpperCase();
+      let ds = 8.8 * S;
+      const decisionW = trackedWidth(g, decision, { size: ds, track: 0.18, weight: 700 });
+      if (decisionW > bw - 16 * S) ds *= (bw - 16 * S) / decisionW;
+      tracked(g, decision, cx, by + 14 * S, {
+        size: ds, track: 0.18, weight: 700, align: 'center', color: rgba(PAL.parch, 0.90), shadow: '#05030a', shadowDy: 1,
+      });
+      const from = (RARITY_LABEL[cmp.fromRarity] || cmp.fromRarity || 'Common').toUpperCase();
+      const to = (RARITY_LABEL[cmp.toRarity] || cmp.toRarity || 'Common').toUpperCase();
+      tracked(g, `${from}   →   ${to}`, cx, by + 29 * S, {
+        size: 9.4 * S, track: 0.22, weight: 700, align: 'center', color: R.text, shadow: '#05030a', shadowDy: 1,
+      });
+      effectTop = by + bh;
+    }
+
     // ── effect text, optically centred in whatever room is left ──
     const tw2 = w - 44 * S;
     const lines = wrap(g, o.text, tw2, { size: 14.4 * S, weight: 400, font: bodyFont() });
     const lh = 20 * S;
-    const availTop = py + ph, availBot = y + h - 52 * S;
+    const availTop = effectTop, availBot = y + h - 52 * S;
     const shown = lines.slice(0, 4);
     let ty = availTop + Math.max(6 * S, (availBot - availTop - shown.length * lh) / 2) + lh * 0.74;
     g.font = `400 ${14.4 * S}px ${bodyFont()}`;
@@ -561,7 +774,7 @@ function drawMixed(g, line, cx, y, size, maxW, col) {
 }
 
 /** Accept whatever shape the run system hands us and make it renderable. */
-function normalise(x) {
+function normalise(x, boonState) {
   if (!x) return { name: 'Unknown', text: '', god: 'zeus', rarity: 'common', slot: 'passive', color: PAL.gold };
   const god = x.god || (x.boon && x.boon.god) || (x.gods && x.gods[0]) || 'zeus';
   const rarity = (x.rarity || 'common').toLowerCase();
@@ -573,6 +786,8 @@ function normalise(x) {
     god,
     gods: x.gods || (x.boon && x.boon.gods) || [god],
     duo: !!(x.duo || (x.boon && x.boon.gods)),
+    upgrade: !!x.upgrade,
+    comparison: boonOfferComparison(x, boonState),
     rarity: RARITY[rarity] ? rarity : 'common',
     slot: x.slot || (x.boon && x.boon.slot) || 'passive',
     color: x.color || GOD_INFO[god]?.color || PAL.gold,
