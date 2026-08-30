@@ -592,7 +592,7 @@ for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
   const shot = fired.at(-1);
   assert.ok(shot && shot.damage > 26, `${weapon} Cast temper did not improve damage`);
   if (weapon === 'blade') assert.ok(shot.blastRadius > 0, 'Blade Cast did not erupt');
-  if (weapon === 'spear') assert.ok(shot.pierce > 3, 'Spear Cast did not gain pierce');
+  if (weapon === 'spear') assert.ok(shot.pierce === 1 && shot.skewer >= 2, 'Spear Cast did not turn its old pass-through pierce into lodged-shard skewers');
   if (weapon === 'bow') assert.equal(shot.kind, 'homing', 'Bow Cast did not seek');
   if (weapon === 'shield') assert.ok(shot.kind === 'bounce' && shot.bounces > 0, 'Shield Cast did not ricochet');
 }

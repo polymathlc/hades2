@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { MetaProgression, META_SAVE_KEY } from '../src/game/meta.js';
+import { MetaProgression, META_SAVE_KEY, MIRROR_TALENTS } from '../src/game/meta.js';
 import { BoonState, BOONS } from '../src/game/boons.js';
 
 class MemoryStorage {
@@ -75,6 +75,9 @@ assert.equal(meta.darkness, 4);
 assert.equal(meta.mirrorRank('thickSkin'), 1);
 assert.equal(meta.startingObols(), 15, 'Deep Pockets did not seed a descent');
 assert.ok(meta.rareOrBetterChance('poseidon') > beforeMirrorRarity, 'Dark Foresight did not improve boon rarity');
+const boiling = { castShardBonus: 0 };
+MIRROR_TALENTS.boilingBlood.apply(boiling, 3);
+assert.ok(Math.abs(boiling.castShardBonus - 0.15) < 1e-9, 'Boiling Blood does not deepen the lodged-shard payoff');
 
 const strike = BOONS.find(boon => boon.id === 'zeus.attack');
 const offer = ctx.boons.offer(strike, 'common');

@@ -398,7 +398,7 @@ export function emptyMods() {
     damageTaken: 1, forgeMul: 1,
     // additive
     critChance: 0, critMul: 0, dodge: 0, expose: 0, knockback: 0,
-    maxHealthAdd: 0, maxManaAdd: 0, iframeAdd: 0, deflect: 0,
+    maxHealthAdd: 0, maxManaAdd: 0, iframeAdd: 0, deflect: 0, castShardBonus: 0,
     castRadius: 0, castTicks: 0, castForks: 0, castSeek: 0, castBeam: 0,
     dashRadius: 0, doomDmg: 0, shatterDmg: 0, wallSlamDmg: 0, clearHeal: 0,
     hangoverAmp: 0, retaliate: 0, retaliateDmg: 0, callRefund: 0,

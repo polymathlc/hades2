@@ -3,6 +3,9 @@ import * as THREE from 'three';
 import { BOONS, DUOS, BoonState, GOD_INFO, GOD_KEYS, emptyMods, valuesFor } from '../src/game/boons.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { VFX } from '../src/vfx/index.js';
+import { ProjectileSystem } from '../src/entities/projectiles.js';
+import { buildClipData } from '../src/entities/anim.js';
+import { CAST_SHARD_BASE_BONUS, CAST_SHARD_DURATION, castPresentation } from '../src/entities/cast.js';
 
 const noop = () => {};
 const events = { emit: noop, on: noop };
@@ -233,6 +236,48 @@ for (const god of ['demeter', 'apollo', 'hera', 'hestia']) {
   grant(ctx, 'selene.cast');
   combat.cast({ source: player, origin, dir });
   assert.equal(combat._boonPulses.at(-1).kind, 'beam');
+}
+
+// Cast is a three-shard lodge/return loop, not a generic piercing bolt. The
+// embedded mark buffs only weapon Attack/Special damage, drops on release, and
+// every divine animation family resolves to a real authored clip.
+{
+  const clips = buildClipData();
+  const storm = castPresentation('zeus'), tide = castPresentation('poseidon'), ritual = castPresentation('hecate');
+  assert.ok(clips[storm.clip] && clips[tide.clip] && clips[ritual.clip], 'a divine Cast selected a missing animation');
+  assert.equal(new Set([storm.clip, tide.clip, ritual.clip]).size, 3, 'Cast boons all retained the same player animation');
+  assert.notDeepEqual(storm.core, tide.core, 'divine Cast projectiles retained one shard silhouette');
+
+  const owner = actor('player', 0, 0, 100);
+  owner.castStock = 1; owner.castMax = 3;
+  owner.restoreCastShard = function (n = 1) { this.castStock = Math.min(this.castMax, this.castStock + n); };
+  const target = actor('enemy', 2, 0, 100);
+  target.height = 2;
+  const projectiles = new ProjectileSystem();
+  projectiles.ctx = { events: { emit: noop }, vfx: { burst: noop, impact: noop } };
+  projectiles.combat = { hitboxes: { teamOf: e => e.team === 'player' ? 1 : 2 } };
+  projectiles.pool = [projectiles._blank(0)];
+  const id = projectiles.fire({ x: 1.6, y: 1, z: 0, dx: 1, dz: 0, source: owner, castShard: true, castDuration: CAST_SHARD_DURATION });
+  const shard = projectiles.get(id);
+  assert.ok(projectiles.lodgeCastShard(shard, target, CAST_SHARD_DURATION));
+  assert.equal(target._castShardCount, 1);
+  assert.equal(shard.lodgedTarget, target);
+  assert.ok(projectiles.dropCastShard(shard, 'expired'));
+  assert.equal(target._castShardCount, 0);
+  assert.equal(owner.castStock, 2, 'a fallen Cast shard did not return to stock');
+  projectiles.kill(shard, 'expire');
+  assert.equal(owner.castStock, 2, 'a returned Cast shard was restored twice');
+
+  owner.castStock = 2;
+  const missId = projectiles.fire({ x: 0, y: 1, z: 0, dx: 1, dz: 0, source: owner, castShard: true });
+  projectiles.kill(projectiles.get(missId), 'expire');
+  assert.equal(owner.castStock, 3, 'a missed Cast shard did not return');
+
+  const h = harness();
+  h.enemy._castShardCount = 1;
+  assert.equal(h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player, boonSlot: 'attack' }), 10 * (1 + CAST_SHARD_BASE_BONUS));
+  assert.equal(h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player, boonSlot: 'special' }), 10 * (1 + CAST_SHARD_BASE_BONUS));
+  assert.equal(h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player, boonSlot: 'cast' }), 10, 'the lodged shard incorrectly amplified Cast itself');
 }
 
 // Authored Doom/Hangover power, extended Chill duration, and wall slams.

@@ -28,6 +28,7 @@ import { clamp, clamp01, lerp, damp, dampAngle, shortAngle, smoothstep, ease, TA
 import { buildHumanoid, HERO_SPEC, SLOT_PAINT } from './rig.js';
 import { createAvatarWeapons } from './player-weapons.js';
 import { Animator } from './anim.js';
+import { CAST_SHARD_MAX, castPresentation } from './cast.js';
 
 export const TUNING = {
   // ── locomotion ──────────────────────────────────────────────────────────
@@ -106,6 +107,7 @@ export class Player {
     this.radius = 0.45;
     this.health = 100; this.maxHealth = 100;
     this.mana = 100; this.maxMana = 100;
+    this.castMax = CAST_SHARD_MAX; this.castStock = CAST_SHARD_MAX;
     this.facing = new THREE.Vector2(0, 1);
     this.speed = TUNING.moveSpeed;
     this.alive = true;
@@ -210,6 +212,7 @@ export class Player {
     ctx.events.on('biome.changed', () => { this._retuneIn = 0.2; });
     ctx.ui?.setHealth?.(this.health, this.maxHealth);
     ctx.ui?.setMana?.(this.mana, this.maxMana);
+    ctx.ui?.setCast?.(this.castStock, this.castMax);
 
     // SPAWN. The arena centrepiece stands at the origin, so spawning there puts
     // the hero inside a 4m altar dome — invisible in every shot and clipped in
@@ -646,15 +649,19 @@ export class Player {
   _startCast(ctx) {
     const T = this.tune;
     const castSpeed = ctx.boons?.mods?.castSpeed || 1;
+    if (this.castStock <= 0) { this.buf.cast = 0; ctx.ui?.toast?.('All Cast shards are lodged', { color: '#c9b8ff' }); return; }
     if (this.mana < T.castCost) { this.buf.cast = 0; ctx.ui?.toast?.('Not enough mana', { color: '#5fd0ff' }); return; }
     this.mana -= T.castCost;
     ctx.ui?.setMana?.(this.mana, this.maxMana);
     this.buf.cast = 0;
     this.weapon?.cancel?.(); this.blocking = null;
     this.state = 'cast';
-    this.act = { name: 'cast', t: 0, dur: T.castDur / castSpeed, release: T.castRelease / castSpeed, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
+    const rider = ctx.boons?.mods?.rider?.cast;
+    const style = castPresentation(rider?.god);
+    this.act = { name: 'cast', t: 0, dur: T.castDur / castSpeed, release: T.castRelease / castSpeed, index: 0, hit: false, fired: false, queued: false, dashQueued: false, castStyle: style };
     this._animKey = null;
-    this.animator.play('cast', { fade: 0.06, restart: true });
+    const clipDur = this.animator.duration(style.clip) || T.castDur;
+    this.animator.play(style.clip, { fade: 0.06, restart: true, speed: clipDur / this.act.dur });
     if (this._mouseSeen) this._faceCursor();
     else {
       const w = this._wish(ctx, _v);
@@ -669,13 +676,38 @@ export class Player {
       this.act.fired = true;
       const dir3 = new THREE.Vector3(this.facing.x, 0, this.facing.y);
       const origin = this.position.clone().setY(1.12);
-      ctx.combat?.cast?.({ source: this, origin, dir: dir3, power: 1 });
-      ctx.events.emit('player.cast', { pos: origin, dir: dir3 });
+      if (!this.spendCastShard()) return;
+      const projectile = ctx.combat?.cast?.({ source: this, origin, dir: dir3, power: 1 });
+      if (!projectile) this.restoreCastShard();
       const rider = ctx.boons?.mods?.rider?.cast;
-      ctx.vfx?.burst?.(origin, { count: 12, color: rider?.color || '#5fd0ff', speed: 9, spread: 0.35, kind: rider ? 'rune' : 'spark' });
+      const style = this.act.castStyle || castPresentation(rider?.god);
+      ctx.events.emit('player.cast', { pos: origin, dir: dir3, god: rider?.god || null, form: style.form });
+      ctx.vfx?.burst?.(origin, { count: 12, color: rider?.color || '#5fd0ff', speed: 9, spread: 0.35, kind: style.fx });
       ctx.events.emit('camera.shake', { amp: 0.07, dur: 0.18, freq: 28 });
     }
     if (this.act.t >= this.act.dur) { this.state = 'move'; this._animLock = 0.05; }
+  }
+
+  spendCastShard() {
+    if (this.castStock <= 0) return false;
+    this.castStock--;
+    this.ctx?.ui?.setCast?.(this.castStock, this.castMax);
+    this.ctx?.events?.emit?.('cast.stock', { current: this.castStock, max: this.castMax, change: -1 });
+    return true;
+  }
+
+  restoreCastShard(n = 1) {
+    const before = this.castStock;
+    this.castStock = Math.min(this.castMax, this.castStock + Math.max(0, n | 0));
+    if (this.castStock === before) return false;
+    this.ctx?.ui?.setCast?.(this.castStock, this.castMax);
+    this.ctx?.events?.emit?.('cast.stock', { current: this.castStock, max: this.castMax, change: this.castStock - before });
+    return true;
+  }
+
+  resetCastShards() {
+    this.castStock = this.castMax;
+    this.ctx?.ui?.setCast?.(this.castStock, this.castMax);
   }
 
   // ──────────────────────────────────────────────────────────── physics ────
@@ -859,6 +891,7 @@ export class Player {
   /** used by AGENT-RUN between chambers */
   respawn(pos) {
     this.health = this.maxHealth; this.mana = this.maxMana;
+    this.resetCastShards();
     this.alive = true; this.dead = false; this.state = 'move';
     this.weapon?.cancel?.(); this.blocking = null; this._animKey = null;
     this.iframes = 1.0; this.knock.set(0, 0, 0); this.velocity.set(0, 0, 0);

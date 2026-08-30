@@ -571,6 +571,60 @@ export function buildClipData() {
     { t: 0.60, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
   ]);
 
+  // ── CAST SWEEP — tidal / radiant boons open both arms across the stage ───
+  C.castSweep = new Clip('castSweep', 0.60, [
+    ...stance(0),
+    ...pose(0.16, {
+      pelvis: [-8, -22, 2], spine1: [-5, -14, 0], chest: [-12, -28, -2], head: [-5, -18, 1],
+      clavL: [0, -10, 12], armL: [-58, 0, 42], foreL: [-94, 0, -18], handL: [-20, 0, 0],
+      clavR: [0, 8, -8], armR: [-38, 0, -32], foreR: [-72, 0, 14], handR: [-14, 0, 0],
+      thighL: [-8, 0, 6], shinL: [18, 0, 0], thighR: [-18, 0, -5], shinR: [30, 0, 0],
+    }, 'outQuad'),
+    { t: 0.16, b: 'pelvis', p: [-0.025, -0.045, -0.035], e: 'outQuad' },
+    ...pose(0.30, {
+      pelvis: [12, 18, 0], spine1: [8, 12, 0], spine2: [6, 10, 0], chest: [14, 28, 1], head: [5, 18, 0],
+      clavL: [0, 12, -10], armL: [-88, 0, 30], foreL: [-18, 0, -10], handL: [10, 0, 0],
+      clavR: [0, -12, 10], armR: [-90, 0, -28], foreR: [-16, 0, 10], handR: [10, 0, 0],
+      thighL: [-34, 0, 7], shinL: [30, 0, 0], thighR: [16, 0, -6], shinR: [26, 0, 0],
+    }, 'outQuint'),
+    { t: 0.30, b: 'pelvis', p: [0.025, -0.025, 0.07], e: 'outQuint' },
+    ...pose(0.43, {
+      pelvis: [10, 12, 0], spine1: [7, 8, 0], chest: [10, 18, 0], head: [3, 12, 0],
+      armL: [-96, 0, 38], foreL: [-8, 0, -8], armR: [-96, 0, -36], foreR: [-8, 0, 8],
+      thighL: [-28, 0, 6], shinL: [28, 0, 0], thighR: [12, 0, -5], shinR: [24, 0, 0],
+    }, 'linear'),
+    ...stance(0.60, 'outCubic'),
+    { t: 0.60, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
+  // ── CAST RITUAL — chthonic boons gather low, then invoke overhead ────────
+  C.castRitual = new Clip('castRitual', 0.68, [
+    ...stance(0),
+    ...pose(0.20, {
+      pelvis: [-15, 0, 2], spine1: [-12, 0, 0], spine2: [-10, 0, 0], chest: [-18, 0, 0], head: [-10, 0, 0],
+      clavL: [0, -8, 12], clavR: [0, 8, -12],
+      armL: [-46, 0, 36], foreL: [-112, 0, -22], handL: [-26, 0, 0],
+      armR: [-46, 0, -36], foreR: [-112, 0, 22], handR: [-26, 0, 0],
+      thighL: [-20, 0, 7], shinL: [42, 0, 0], thighR: [-20, 0, -7], shinR: [42, 0, 0],
+    }, 'outQuad'),
+    { t: 0.20, b: 'pelvis', p: [0, -0.10, -0.035], e: 'outQuad' },
+    ...pose(0.34, {
+      pelvis: [9, 0, 0], spine1: [8, 0, 0], spine2: [8, 0, 0], chest: [15, 0, 0], neck: [-7, 0, 0], head: [8, 0, 0],
+      clavL: [0, 0, -10], clavR: [0, 0, 10],
+      armL: [-154, 0, 26], foreL: [-22, 0, -10], handL: [14, 0, 0],
+      armR: [-154, 0, -26], foreR: [-22, 0, 10], handR: [14, 0, 0],
+      thighL: [-32, 0, 7], shinL: [30, 0, 0], thighR: [12, 0, -7], shinR: [26, 0, 0],
+    }, 'outQuint'),
+    { t: 0.34, b: 'pelvis', p: [0, -0.035, 0.055], e: 'outQuint' },
+    ...pose(0.50, {
+      pelvis: [8, 0, 0], spine1: [7, 0, 0], chest: [12, 0, 0], head: [6, 0, 0],
+      armL: [-148, 0, 28], foreL: [-18, 0, -10], armR: [-148, 0, -28], foreR: [-18, 0, 10],
+      thighL: [-26, 0, 6], shinL: [28, 0, 0], thighR: [10, 0, -6], shinR: [24, 0, 0],
+    }, 'linear'),
+    ...stance(0.68, 'outCubic'),
+    { t: 0.68, b: 'pelvis', p: [0.014, 0, 0], e: 'outCubic' },
+  ]);
+
   // ── HURT ─────────────────────────────────────────────────────────────────
   C.hurt = new Clip('hurt', 0.34, [
     ...stance(0),

@@ -43,6 +43,11 @@ export const MIRROR_TALENTS = Object.freeze({
     text: r => `Begin with +${r * 10} maximum Magick.`,
     apply: (m, r) => { m.maxManaAdd += r * 10; },
   },
+  boilingBlood: {
+    name: 'Boiling Blood', max: 5, baseCost: 2, step: 2,
+    text: r => `Attack and Special deal +${25 + r * 5}% to foes carrying your Cast shard.`,
+    apply: (m, r) => { m.castShardBonus += r * 0.05; },
+  },
   darkForesight: {
     name: 'Dark Foresight', max: 5, baseCost: 3, step: 3,
     text: r => `Improve Rare, Epic and Heroic boon odds by ${r * 5}%.`,
