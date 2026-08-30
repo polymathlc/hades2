@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BOONS, BoonState, GOD_INFO, GOD_KEYS } from '../src/game/boons.js';
-import { WeaponRuntime, WEAPON_IDS } from '../src/entities/weapons.js';
+import { WeaponRuntime, WEAPONS, WEAPON_IDS } from '../src/entities/weapons.js';
 import { Player } from '../src/entities/player.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
@@ -17,7 +17,7 @@ import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
 import { TIERS } from '../src/render/renderer.js';
 import { GRADES } from '../src/render/shaders/grades.js';
 import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
-import { ENCOUNTER_POOLS, BOSS_SEQUENCE, bossForDepth, Spawner } from '../src/entities/spawner.js';
+import { ENCOUNTER_POOLS, BOSS_SEQUENCE, FINAL_BOSSES, FINAL_BOSS_DEPTH, bossForDepth, Spawner } from '../src/entities/spawner.js';
 import { lockModalInput, releaseModalInput } from '../src/ui/modal-input.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from '../src/ui/boon-choice.js';
 import { CHARACTER_INFO, characterOwnsWeapon } from '../src/game/characters.js';
@@ -42,11 +42,12 @@ const rng = { f: () => 0.314159, pick: a => a[0] };
 
 // Specialist enemies must be real combat roles, registered in every biome,
 // and expose the state transitions that make their counterplay distinct.
-assert.equal(ROSTER_IDS.length, 12);
+assert.equal(ROSTER_IDS.length, 15);
 const specialistStates = {
   lancer: ['aim', 'charge'],
   siren: ['mark', 'blink', 'slash'],
   oracle: ['ritual', 'release'],
+  riftstalker: ['mark', 'blink', 'slash'],
 };
 for (const [kind, states] of Object.entries(specialistStates)) {
   const def = ROSTER[kind];
@@ -60,16 +61,21 @@ for (const [kind, states] of Object.entries(specialistStates)) {
   }
 }
 
-// Boss rooms advance from the Warden to two unique mythic fights. Later depths
-// retain Heracles instead of wrapping back to an earlier boss.
+// Three regional bosses now lead to an heir-specific finale rather than an
+// endlessly clamped Elysium sequence.
 assert.deepEqual(BOSS_SEQUENCE, ['warden', 'minotaur', 'heracles']);
+assert.deepEqual(FINAL_BOSSES, { zagreus: 'hades', melinoe: 'chronos' });
+assert.equal(FINAL_BOSS_DEPTH, 20);
 assert.equal(bossForDepth(5), 'warden');
 assert.equal(bossForDepth(10), 'minotaur');
 assert.equal(bossForDepth(15), 'heracles');
-assert.equal(bossForDepth(20), 'heracles');
+assert.equal(bossForDepth(20, 'zagreus'), 'hades');
+assert.equal(bossForDepth(20, 'melinoe'), 'chronos');
 for (const [kind, states] of Object.entries({
   minotaur: ['sweepTell', 'chargeTell', 'chargeGo', 'stompTell', 'exposed'],
   heracles: ['clubTell', 'boulderTell', 'leapTell', 'leapHit', 'exposed'],
+  hades: ['sweepTell', 'castTell', 'warpTell', 'exposed'],
+  chronos: ['sweepTell', 'castTell', 'warpTell', 'exposed'],
 })) {
   const def = ROSTER[kind];
   assert.equal(def.boss, true);
@@ -83,6 +89,50 @@ for (const [kind, states] of Object.entries({
   assert.deepEqual(director._bossWaves()[0].list, ['minotaur']);
   director.depth = 15;
   assert.deepEqual(director._bossWaves()[0].list, ['heracles']);
+  director.depth = 20;
+  director.ctx = { run: { selectedCharacter: 'melinoe' } };
+  assert.deepEqual(director._bossWaves()[0].list, ['chronos']);
+}
+
+// The regional route matches the five-depth boss cadence, then jumps from
+// Heracles to the final encounter and terminates after the correct boss.
+{
+  const run = new RunState();
+  assert.equal(run.biomeFor(5), 'tartarus');
+  assert.equal(run.biomeFor(6), 'asphodel');
+  assert.equal(run.biomeFor(10), 'asphodel');
+  assert.equal(run.biomeFor(11), 'elysium');
+  assert.equal(run.biomeFor(15), 'elysium');
+  assert.equal(run.biomeFor(FINAL_BOSS_DEPTH), 'elysium');
+  const bus = new Bus();
+  run.ctx = { events: bus, world: {}, ui: {} };
+  run.depth = 15;
+  run._queueTransition({ index: 2, kind: 'boon' });
+  assert.equal(run._pending.depth, FINAL_BOSS_DEPTH);
+
+  let sealed = null, victory = null;
+  bus.on('run.victory', e => { victory = e; });
+  run.ctx = {
+    CAPTURE: true, events: bus, world: { setCleared: value => { sealed = value; } },
+    ui: { clearPrompts: noop, clearSigils: noop, toast: noop }, spawner: { stop: noop },
+  };
+  run.depth = FINAL_BOSS_DEPTH; run.state = 'playing'; run.roomCleared = false;
+  run.selectedCharacter = 'melinoe'; run._pending = null;
+  run._onCleared({ boss: true });
+  assert.equal(run.state, 'victory');
+  assert.equal(sealed, false);
+  assert.equal(victory.boss, 'chronos');
+}
+
+// The rail remains a fast ranged arm, but no longer deletes a lane with a
+// three-body pierce or clears a whole wave with one bombard.
+{
+  const rail = WEAPONS.rail;
+  assert.ok(rail.charge.fullHold >= 0.48 && rail.charge.recoveryFull >= 0.23);
+  assert.ok(rail.charge.projectile.damageFull <= 14);
+  assert.equal(rail.charge.projectile.pierceFull, 1);
+  assert.ok(rail.charge.projectile.speedFull <= 42);
+  assert.ok(rail.special.damage <= 25 && rail.special.hitbox.radius <= 3.15);
 }
 
 // The Oracle's release is not a cosmetic cast: it heals and wards nearby
@@ -688,8 +738,8 @@ assert.ok(controlText.includes('choose heir / weapon') && controlText.includes('
 assert.ok(controlText.includes('view current boons') && controlText.includes('b / tab'));
 assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
-// Combat chambers are exactly 50% larger than the preceding arena plans and
-// expose no prop colliders: only the radial boundary may constrain movement.
+// Combat chambers are 50% larger and discard perimeter blockers, while sparse
+// tagged mid-arena steles remain as deliberate projectile cover.
 {
   const expected = {
     rotunda: 24.6, oblong: 25.8, cruciform: 25.8, terrace: 24.0,
@@ -699,9 +749,18 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
   const world = new World();
   world.bounds.r = 24.6;
   world.profile.fill(24.6);
-  world.colliders.push({ kind: 'circle', x: 22, z: 0, r: 1 });
+  world.colliders.push(
+    { kind: 'circle', x: 22, z: 0, r: 1 },
+    { kind: 'circle', x: 5, z: 0, r: 1.02, combatCover: true },
+  );
   world._finishColliders(null, {});
-  assert.equal(world.colliders.length, 0, 'decorative arena blockers survived the clear-floor contract');
+  assert.equal(world.colliders.length, 1, 'central cover was removed or perimeter clutter survived');
+  assert.equal(world.colliders[0].combatCover, true);
+  const insideCover = new THREE.Vector3(5, 0, 0);
+  world.collide(insideCover, 0.2);
+  assert.ok(Math.hypot(insideCover.x - 5, insideCover.z) > 1.0, 'central stele does not block movement/projectile collision');
+  const shotLane = world.raycastWalk(new THREE.Vector3(0, 0, 0), new THREE.Vector3(10, 0, 0), 0.16);
+  assert.equal(shotLane.hit, true, 'central stele did not break the straight firing lane');
   const edge = new THREE.Vector3(40, 0, 0);
   world.collide(edge, 0.6);
   assert.ok(edge.x < 24.0 && edge.x > 23.0, 'arena boundary stopped constraining movement');
@@ -761,4 +820,4 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
 assert.equal(GOD_KEYS.length, 17);
 for (const god of ['demeter', 'apollo', 'hera', 'hestia', 'chaos', 'hades']) assert.ok(GOD_INFO[god], `missing expanded god ${god}`);
-console.log('features ok: 12 enemies, 3 unique bosses, 17 gods, two heir-specific pools, 12 arms, 44 Attack/Special/Cast forges, audio bridge');
+console.log('features ok: 15 enemies, 5 unique bosses, heir-specific finales, 17 gods, 12 arms, 44 Attack/Special/Cast forges, audio bridge');

@@ -2411,17 +2411,47 @@ export class World {
   // SCATTER
   // =========================================================================
   _buildScatter(ctx, G) {
-    // Deliberately empty. Rubble, fallen drums and urns looked decorative but
-    // behaved as a jagged second wall once an enemy was knocked toward the
-    // perimeter. Floor detail now comes from the authored material instead.
+    // Three deliberately placed steles break the longest firing lanes. They
+    // sit in the middle band, with broad gaps on every side, rather than among
+    // perimeter architecture where knockback used to pin players and enemies.
+    const { B } = G;
+    const stone = this._M(B.mats.column, { variation: 0.22, litGain: 0.43, ambGain: 0.54, specGain: 1.05 });
+    const trim = this._M(B.mats.leaf, { emissiveIntensity: 0.02, litGain: 0.36, ambGain: 0.42, specGain: 1.55 });
+    const baseGeo = this._keep(new THREE.CylinderGeometry(1.02, 1.10, 0.28, 10));
+    const bodyGeo = this._keep(new THREE.BoxGeometry(1.72, 2.30, 0.64));
+    const capGeo = this._keep(new THREE.BoxGeometry(2.02, 0.24, 0.82));
+    const blocks = (x, z, r) => G.keepOut.some(k => {
+      const rr = r + (k.r || 0) + 0.55;
+      return (x - k.x) * (x - k.x) + (z - k.z) * (z - k.z) < rr * rr;
+    });
+    let built = 0;
+    for (let probe = 0; probe < 24 && built < 3; probe++) {
+      const a = 0.32 + probe * (TAU / 24);
+      const ring = 5.5 + (probe % 2) * 0.75;
+      const x = Math.cos(a) * ring, z = Math.sin(a) * ring;
+      if (!this.insideXZ(x, z, 3.0) || blocks(x, z, 1.02)) continue;
+      const root = new THREE.Group();
+      root.name = `combat.cover.${built + 1}`;
+      root.position.set(x, this.heightAt(x, z), z);
+      root.rotation.y = a + Math.PI * 0.5;
+      const base = new THREE.Mesh(baseGeo, stone); base.position.y = 0.14;
+      const body = new THREE.Mesh(bodyGeo, stone); body.position.y = 1.43;
+      const cap = new THREE.Mesh(capGeo, trim); cap.position.y = 2.58;
+      for (const m of [base, body, cap]) { m.castShadow = true; m.receiveShadow = true; }
+      root.add(base, body, cap); this.root.add(root);
+      this.colliders.push({ kind: 'circle', x, z, r: 1.02, combatCover: true });
+      G.keepOut.push({ x, z, r: 1.85 });
+      built++;
+    }
   }
 
   // =========================================================================
   _finishColliders(ctx, G) {
-    // Clear-floor combat contract: architecture is exterior scenery and the
-    // radial arena profile is the sole movement barrier. This also protects
-    // future room variants from accidentally reintroducing edge traps.
-    this.colliders.length = 0;
+    // Perimeter architecture remains non-solid so it cannot form knockback
+    // traps. Only the sparse, explicitly tagged central firing cover survives.
+    for (let i = this.colliders.length - 1; i >= 0; i--) {
+      if (!this.colliders[i]?.combatCover) this.colliders.splice(i, 1);
+    }
     // A coarse uniform grid so collide() and raycastWalk() stay O(1)-ish even
     // with a hundred solids in a hypostyle hall.
     const R = this.bounds.r + 4;
@@ -2534,7 +2564,11 @@ export class World {
         const rr = c.r + radius;
         const d2 = dx * dx + dz * dz;
         if (d2 < rr * rr) {
-          const d = Math.sqrt(d2) || 1e-5;
+          // An actor can materialise at the exact centre of a circular solid.
+          // With a zero direction the usual radial push is also zero, leaving
+          // it trapped forever; choose a deterministic exit in that one case.
+          if (d2 < 1e-10) { pos.x = c.x + rr; pos.z = c.z; continue; }
+          const d = Math.sqrt(d2);
           const k = (rr - d) / d;
           pos.x += dx * k; pos.z += dz * k;
         }

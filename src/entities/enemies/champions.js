@@ -23,6 +23,20 @@ const HERACLES_PALETTE = {
   blade: '#aeb5b8', bladeEdge: '#ffffff', leather: '#3a2417', glow: '#ffd56a',
 };
 
+const HADES_PALETTE = {
+  skin: '#c8bfd2', skinDeep: '#5a5066', hair: '#17121f', hairTip: '#51415d',
+  cloth: '#35213f', clothDeep: '#100b18', cape: '#25152f', capeLine: '#8ef0d0',
+  metal: '#a78648', metalHot: '#ffe8a0', metalDeep: '#3f2c19',
+  blade: '#9cc8bd', bladeEdge: '#eafff8', leather: '#1c1424', glow: '#70e0b8',
+};
+
+const CHRONOS_PALETTE = {
+  skin: '#d2c9b0', skinDeep: '#665f50', hair: '#191817', hairTip: '#5c5847',
+  cloth: '#24231f', clothDeep: '#090a0b', cape: '#343027', capeLine: '#f0c86a',
+  metal: '#c8a54d', metalHot: '#fff2ac', metalDeep: '#463916',
+  blade: '#d4c990', bladeEdge: '#ffffe8', leather: '#201e18', glow: '#f0c86a',
+};
+
 const WEAK = { physical: -0.65, fire: -0.65, lightning: -0.65, frost: -0.65, poison: -0.65, arcane: -0.65 };
 const PHASE_SPEED = [1, 0.84, 0.70];
 
@@ -125,6 +139,61 @@ function buildClub(ctx) {
   paintGeo(geo, '#6d4023', { y0: -0.5, y1: 2.8, aoLow: 0.42, top: '#bd8242' });
   group.add(mesh(geo, ctx, 'hair', 'heraclesclub'));
   return group;
+}
+
+function buildBident(ctx) {
+  const group = new THREE.Group();
+  const shaft = new THREE.CylinderGeometry(0.065, 0.09, 3.25, 10); shaft.translate(0, 0.85, 0);
+  paintGeo(shaft, '#20162a', { y0: -0.9, y1: 2.6, aoLow: 0.40, top: '#76598b' });
+  const tips = [];
+  for (const side of [-1, 1]) {
+    const tine = new THREE.ConeGeometry(0.13, 0.82, 8); tine.translate(side * 0.22, 2.78, 0); tips.push(tine);
+    const hook = new THREE.ConeGeometry(0.075, 0.44, 7); hook.rotateZ(side * 0.42); hook.translate(side * 0.31, 2.47, 0); tips.push(hook);
+  }
+  const collar = new THREE.TorusGeometry(0.25, 0.04, 8, 24); collar.rotateX(Math.PI / 2); collar.translate(0, 2.34, 0); tips.push(collar);
+  const head = mergeGeometries(tips, false);
+  paintGeo(head, '#a78648', { y0: 2.0, y1: 3.3, aoLow: 0.60, top: '#fff0a8' });
+  group.add(mesh(shaft, ctx, 'hair', 'hadesbident'), mesh(head, ctx, 'metal', 'hadesbident'));
+  return group;
+}
+
+function buildHadesCrown(ctx) {
+  const parts = [];
+  const band = new THREE.TorusGeometry(0.33, 0.045, 8, 28); band.rotateX(Math.PI / 2); parts.push(band);
+  for (const side of [-1, 1]) {
+    const horn = new THREE.ConeGeometry(0.09, 0.62, 7); horn.rotateZ(side * 0.72); horn.translate(side * 0.35, 0.27, 0); parts.push(horn);
+  }
+  const geo = mergeGeometries(parts, false);
+  paintGeo(geo, '#80683a', { y0: -0.3, y1: 0.9, aoLow: 0.58, top: '#ffe8a0' });
+  return mesh(geo, ctx, 'metal', 'hadescrown');
+}
+
+function buildChronosScythe(ctx) {
+  const group = new THREE.Group();
+  const shaft = new THREE.CylinderGeometry(0.06, 0.085, 3.4, 10); shaft.translate(0, 0.78, 0);
+  paintGeo(shaft, '#27231a', { y0: -1.0, y1: 2.7, aoLow: 0.42, top: '#7c6a3b' });
+  const bladeParts = [];
+  const arc = new THREE.TorusGeometry(0.72, 0.095, 7, 30, Math.PI * 0.82); arc.rotateZ(-0.16); arc.translate(0.54, 2.42, 0); bladeParts.push(arc);
+  const point = new THREE.ConeGeometry(0.13, 0.72, 7); point.rotateZ(-1.08); point.translate(1.12, 2.68, 0); bladeParts.push(point);
+  const blade = mergeGeometries(bladeParts, false);
+  paintGeo(blade, '#bda04f', { y0: 1.6, y1: 3.4, aoLow: 0.62, top: '#fff2ac' });
+  group.add(mesh(shaft, ctx, 'hair', 'chronosscythe'), mesh(blade, ctx, 'metal', 'chronosscythe'));
+  return group;
+}
+
+function buildChronosHalo(ctx) {
+  const parts = [];
+  for (let i = 0; i < 3; i++) {
+    const ring = new THREE.TorusGeometry(0.34 + i * 0.13, 0.026 + i * 0.006, 7, 28);
+    ring.rotateX(i === 1 ? Math.PI / 2 : 0); ring.rotateY(i === 2 ? Math.PI / 2 : 0); parts.push(ring);
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = i / 8 * TAU;
+    const tick = new THREE.BoxGeometry(0.035, 0.18, 0.045); tick.rotateZ(-a); tick.translate(Math.cos(a) * 0.56, Math.sin(a) * 0.56, 0); parts.push(tick);
+  }
+  const geo = mergeGeometries(parts, false);
+  paintGeo(geo, '#c8a54d', { y0: -0.8, y1: 0.8, aoLow: 0.62, top: '#fff2ac' });
+  return mesh(geo, ctx, 'glow', 'chronoshalo', { glowKey: '#f0c86a', glow: 0.9 });
 }
 
 function phaseFor(a) {
@@ -377,4 +446,170 @@ export const HERACLES = {
   },
 };
 
-export default { MINOTAUR, HERACLES };
+function makeFinalBossBrain() {
+  return {
+    initial: 'idle', any: bossAny,
+    states: {
+      idle: { enter(a) { a.play('idle', { fade: 0.18 }); }, update(a) { if (a.perc.aware) return 'hunt'; } },
+      hunt: {
+        enter(a) { a.committed = false; a.play('run', { fade: 0.14, speed: 0.82 + a.mem.phase * 0.12 }); },
+        update(a, dt, ctx) {
+          const p = a.perc;
+          a.steer.begin(a.def.speed + a.mem.phase * 0.45).arrive(p.aimX, p.aimZ, 5.0, 0.85)
+            .orbit(p.aimX, p.aimZ, 5.8, a.orbitDir, 0.52, 0.62).avoidWalls(ctx);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ, turn: a.def.turn });
+          if (a.attackCd > 0) return;
+          const r = a.mgr.rng.f();
+          if (a.mem.phase >= 1 && r < 0.28) return 'warpTell';
+          if (p.dist > 6.2 || r < 0.58) return 'castTell';
+          return 'sweepTell';
+        },
+      },
+      sweepTell: {
+        enter(a) {
+          a.committed = true; a.play('attack3', { fade: 0.06, restart: true, speed: 0.58 });
+          a.snapFace(a.perc.dirX, a.perc.dirZ);
+          a.telegraph(a.def.kind === 'chronos' ? 'time cleave' : 'bident sweep', wind(a, 0.84),
+            { shape: 'arc', radius: 5.8, arc: 190, follow: true, color: a.def.identity });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(0.6); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 3.2); if (a.tell.k >= 1) return 'sweepHit';
+        },
+      },
+      sweepHit: {
+        enter(a, ctx) {
+          a.endTell(true); a.strikeCone(ctx, { range: 5.8, arc: 190, damage: 34 + a.mem.phase * 3,
+            type: a.def.finalType, knock: 18, color: a.def.identity, width: 0.78, shake: 0.25 });
+          ctx.events.emit('hit.stop', { ms: 72 });
+        },
+        update(a) { if (a.brain.t > 0.32) return 'exposed'; },
+      },
+      castTell: {
+        enter(a, ctx) {
+          a.committed = true; a.play('cast', { fade: 0.08, restart: true, speed: 0.50 });
+          const p = ctx.player, lead = a.def.kind === 'chronos' ? 0.62 : 0.40;
+          a.mem.tx = a.perc.aimX + (p?.velocity?.x || 0) * lead;
+          a.mem.tz = a.perc.aimZ + (p?.velocity?.z || 0) * lead;
+          a.telegraph(a.def.kind === 'chronos' ? 'time fracture' : 'soul eruption', wind(a, 1.02),
+            { shape: 'disc', radius: 3.3, x: a.mem.tx, z: a.mem.tz, follow: false, color: a.def.identity, core: '#fff3c0' });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(0.15); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 3); if (a.tell.k >= 1) return 'castHit';
+        },
+      },
+      castHit: {
+        enter(a, ctx) {
+          a.endTell(true);
+          ctx.vfx?.beam?.(a.position.clone().setY(a.height * 0.72), new THREE.Vector3(a.mem.tx, 0.28, a.mem.tz),
+            { color: a.def.identity, width: 0.38, life: 0.30, opacity: 0.78 });
+          a.strikeDisc(ctx, a.mem.tx, a.mem.tz, 3.3, { damage: 30 + a.mem.phase * 3, type: 'arcane',
+            knock: 14, color: a.def.identity, shake: 0.22, kind: a.def.kind === 'chronos' ? 'shard' : 'ember' });
+        },
+        update(a) { if (a.brain.t > 0.36) return 'exposed'; },
+      },
+      warpTell: {
+        enter(a, ctx) {
+          a.committed = true; a.play('special', { fade: 0.06, restart: true, speed: 0.52 });
+          const p = ctx.player, dx = a.perc.dirX, dz = a.perc.dirZ, side = a.orbitDir || 1;
+          const safe = a.mgr.safePoint((p?.position.x || 0) - dx * 2.1 - dz * side * 1.2,
+            (p?.position.z || 0) - dz * 2.1 + dx * side * 1.2, { minPlayerDist: 1.8, radius: a.radius });
+          a.mem.tx = safe.x; a.mem.tz = safe.z;
+          a.telegraph(a.def.kind === 'chronos' ? 'time step' : 'shadow gate', wind(a, 0.78),
+            { shape: 'disc', radius: 3.7, x: safe.x, z: safe.z, follow: false, color: a.def.identity, core: '#fff3c0' });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(0); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          if (a.tell.k >= 1) return 'warpHit';
+        },
+      },
+      warpHit: {
+        enter(a, ctx) {
+          const from = a.position.clone().setY(1.2); a.endTell(true); a.position.set(a.mem.tx, 0, a.mem.tz);
+          ctx.world?.collide?.(a.position, a.radius);
+          const p = ctx.player?.position; if (p) a.snapFace(p.x - a.position.x, p.z - a.position.z);
+          ctx.vfx?.beam?.(from, a.position.clone().setY(1.2), { color: a.def.identity, width: 0.48, life: 0.28, opacity: 0.76 });
+          a.strikeDisc(ctx, a.position.x, a.position.z, 3.7, { damage: 32 + a.mem.phase * 3, type: a.def.finalType,
+            knock: 17, color: a.def.identity, shake: 0.28, kind: 'shard' });
+        },
+        update(a) { if (a.brain.t > 0.38) return 'exposed'; },
+      },
+      exposed: exposedState('#fff3c0'), recover: recoverState(),
+      phase: {
+        enter(a, ctx) {
+          a.committed = true; a.iframes = 1.05; a.play('special', { fade: 0.1, restart: true, speed: 0.48 });
+          ctx.engine?.slowmo?.(0.42, 0.72);
+          ctx.ui?.toast?.(a.def.phaseLines?.[Math.max(0, a.mem.phase - 1)] || a.def.label.toUpperCase(), { color: a.def.identity });
+          for (let i = 0; i < 4; i++) ctx.vfx?.shockwave?.(a.position.clone().setY(0.05 + i * 0.42),
+            { radius: 4.2 + i * 2.7, color: a.def.identity, life: 0.56 + i * 0.17 });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(0); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          if (a.brain.t > 1.05) { a.committed = false; return 'hunt'; }
+        },
+      },
+    },
+  };
+}
+
+export const HADES = {
+  kind: 'hades', label: 'Hades, God of the Dead', title: 'Hades, God of the Dead', phases: 3,
+  role: 'FINAL BOSS — bident sweeps, soul eruptions, and shadow gates',
+  identity: '#70e0b8', deathColor: '#70e0b8', tellColor: '#70e0b8', finalType: 'physical',
+  hp: 1480, radius: 1.14, speed: 4.25, accel: 22, turn: 5.8,
+  poise: 999, poiseMax: 330, staggerTime: 0, knockResist: 0.97, crowdPad: 0.9,
+  tokenPool: 'boss', threat: 32, cost: 32, boss: true, captureState: 'sweepTell',
+  deathScale: 2.9, deathShake: 0.38, deathTime: 1.7, spawnTime: 1.3,
+  phaseLines: ['THE DEAD ANSWER THEIR KING', 'THERE IS NO ESCAPE'],
+  perception: { range: 64, reaction: 0.16, aimLambda: 5.4 },
+  spec: {
+    name: 'erebus.hades', height: 3.18,
+    build: { shoulder: 1.62, limb: 1.14, bulk: 1.52 }, palette: HADES_PALETTE,
+    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 10, greaves: true, bracers: true, harness: true, hair: 'swept', eyes: true, weapon: 'none' },
+    glowIntensity: 0.82,
+  },
+  onSpawn(a, ctx) {
+    spawnBoss(a, ctx);
+    attach(a, 'hadesCrown', 'head', buildHadesCrown, ctx, o => { o.position.set(0, 0.20, 0); o.scale.setScalar(1.05); });
+    attach(a, 'hadesBident', 'handR', buildBident, ctx, o => { o.position.set(0.02, -0.48, 0.08); o.rotation.set(-0.18, 0, 0.14); o.scale.setScalar(0.92); });
+  },
+  tick(a, dt, ctx) {
+    tickBoss(a, dt, ctx);
+    if (a.mem.hadesBident) a.mem.hadesBident.rotation.z = 0.14 - (a.tell.active ? a.tell.k * 0.28 : 0);
+  },
+  onDied: bossDied,
+  brain: makeFinalBossBrain(),
+};
+
+export const CHRONOS = {
+  kind: 'chronos', label: 'Chronos, Titan of Time', title: 'Chronos, Titan of Time', phases: 3,
+  role: 'FINAL BOSS — scythe cleaves, time fractures, and temporal steps',
+  identity: '#f0c86a', deathColor: '#f0c86a', tellColor: '#f0c86a', finalType: 'arcane',
+  hp: 1580, radius: 1.16, speed: 4.45, accel: 23, turn: 6.1,
+  poise: 999, poiseMax: 350, staggerTime: 0, knockResist: 0.98, crowdPad: 0.9,
+  tokenPool: 'boss', threat: 34, cost: 34, boss: true, captureState: 'castTell',
+  deathScale: 3.0, deathShake: 0.40, deathTime: 1.75, spawnTime: 1.35,
+  phaseLines: ['THE HOUR IS MINE', 'TIME DEVOURS ALL'],
+  perception: { range: 66, reaction: 0.14, aimLambda: 5.8 },
+  spec: {
+    name: 'erebus.chronos', height: 3.24,
+    build: { shoulder: 1.56, limb: 1.15, bulk: 1.44 }, palette: CHRONOS_PALETTE,
+    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 12, greaves: true, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'none' },
+    glowIntensity: 0.90,
+  },
+  onSpawn(a, ctx) {
+    spawnBoss(a, ctx);
+    attach(a, 'chronosHalo', 'head', buildChronosHalo, ctx, o => { o.position.set(0, 0.18, -0.06); o.scale.setScalar(1.08); });
+    attach(a, 'chronosScythe', 'handR', buildChronosScythe, ctx, o => { o.position.set(0.02, -0.52, 0.08); o.rotation.set(-0.20, 0, 0.12); o.scale.setScalar(0.92); });
+  },
+  tick(a, dt, ctx) {
+    tickBoss(a, dt, ctx);
+    if (a.mem.chronosHalo) a.mem.chronosHalo.rotation.z += dt * (0.8 + a.mem.phase * 0.7);
+    if (a.mem.chronosScythe) a.mem.chronosScythe.rotation.z = 0.12 - (a.tell.active ? a.tell.k * 0.30 : 0);
+  },
+  onDied: bossDied,
+  brain: makeFinalBossBrain(),
+};
+
+export default { MINOTAUR, HERACLES, HADES, CHRONOS };

@@ -30,6 +30,13 @@ const ORACLE_PALETTE = {
   blade: '#b9b5ce', bladeEdge: '#ffffff', leather: '#2a2144', glow: '#c9b8ff',
 };
 
+const RIFT_PALETTE = {
+  skin: '#c8dbea', skinDeep: '#516579', hair: '#0b1630', hairTip: '#274778',
+  cloth: '#27366f', clothDeep: '#101533', cape: '#182754', capeLine: '#74f0ff',
+  metal: '#a9dbe5', metalHot: '#efffff', metalDeep: '#355b6d',
+  blade: '#a8f6ff', bladeEdge: '#ffffff', leather: '#151b34', glow: '#74f0ff',
+};
+
 function mesh(geo, ctx, slot, tag, opts) {
   const out = new THREE.Mesh(geo, charMaterial(ctx, slot, tag, opts));
   out.castShadow = true;
@@ -108,6 +115,20 @@ function buildOracleHalo(ctx) {
   const core = new THREE.OctahedronGeometry(0.13, 0);
   paintGeo(core, '#ffffff', { aoLow: 1 });
   group.add(mesh(halo, ctx, 'metal', 'oracle'), mesh(core, ctx, 'glow', 'oracle', { glowKey: '#c9b8ff', glow: 0.72 }));
+  return group;
+}
+
+function buildRiftCrescent(ctx) {
+  const group = new THREE.Group();
+  const arc = new THREE.TorusGeometry(0.36, 0.055, 7, 30, Math.PI * 1.42);
+  arc.rotateZ(-Math.PI * 0.21);
+  paintGeo(arc, '#a9dbe5', { y0: -0.5, y1: 0.5, aoLow: 0.58, top: '#efffff' });
+  const eye = new THREE.OctahedronGeometry(0.11, 0);
+  paintGeo(eye, '#ffffff', { aoLow: 1 });
+  group.add(
+    mesh(arc, ctx, 'metal', 'riftstalker'),
+    mesh(eye, ctx, 'glow', 'riftstalker', { glowKey: '#74f0ff', glow: 0.95 }),
+  );
   return group;
 }
 
@@ -270,6 +291,103 @@ export const SIREN = {
   },
 };
 
+// Unlike the Siren, which announces a short flank, the Rift Stalker exists
+// specifically to break static firing lines. It waits at range, paints a
+// generous destination tell beside the hero, then crosses cover in one blink.
+// Its low health and long recovery keep the counterplay readable: move off the
+// mark, punish the slash, resume shooting.
+export const RIFT_STALKER = {
+  kind: 'riftstalker', label: 'Rift Stalker',
+  role: 'anti-ranged hunter — teleports beside distant heroes, then leaves a punish window',
+  identity: '#74f0ff', deathColor: '#74f0ff', tellColor: '#74f0ff',
+  hp: 78, radius: 0.52, speed: 4.25, accel: 27, turn: 12,
+  poise: 13, staggerTime: 0.30, knockResist: 0.12,
+  tokenPool: 'melee', threat: 3, cost: 3, spawnTime: 0.70,
+  perception: { range: 38, reaction: 0.26, aimLambda: 6.2 },
+  spec: {
+    name: 'erebus.riftstalker', height: 2.05,
+    build: { shoulder: 0.91, limb: 0.98, bulk: 0.88 }, palette: RIFT_PALETTE,
+    features: { pauldron: 'left', crown: 'none', cape: true, skirt: 10, greaves: true, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'xiphos' },
+    glowIntensity: 0.82,
+  },
+  onSpawn(a, ctx) {
+    a.mem.crescent = attachOnce(a, 'riftCrescent', 'head', buildRiftCrescent, ctx, (o) => {
+      o.position.set(0, 0.27, -0.06); o.rotation.y = Math.PI; o.scale.setScalar(0.92);
+    });
+  },
+  tick(a, dt, ctx) {
+    if (!a.mem.crescent) return;
+    a.mem.crescent.rotation.z = Math.sin(ctx.time.t * 1.9) * 0.12;
+    const eye = a.mem.crescent.children[1];
+    if (eye?.material?.emissiveIntensity != null) eye.material.emissiveIntensity = 0.8 + (a.tell.active ? 2.0 * a.tell.k : 0);
+  },
+  brain: {
+    initial: 'idle',
+    any(a) { return staggerTo(a, 'hurt', 'melee'); },
+    states: {
+      idle: { update(a) { if (a.perc.aware) return 'hunt'; } },
+      hunt: {
+        enter(a) { a.play('run', { fade: 0.14, speed: 0.94 }); },
+        update(a, dt, ctx) {
+          const p = a.perc;
+          a.steer.begin(a.def.speed).orbit(p.aimX, p.aimZ, 8.4, a.orbitDir, 1.0, 0.66).separation(a.mgr.list, 2.1).avoidWalls(ctx);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ });
+          if (a.attackCd <= 0 && p.dist > 4.2 && p.dist < 16 && a.wantToken('melee', p.dist * 0.1)) return 'mark';
+        },
+      },
+      mark: {
+        enter(a, ctx) {
+          a.committed = true; a.play('cast', { fade: 0.08, restart: true, speed: 0.65 });
+          const pl = ctx.player, side = a.orbitDir || 1;
+          const fx = pl?.facing?.x ?? a.perc.dirX, fz = pl?.facing?.z ?? a.perc.dirZ;
+          const safe = a.mgr.safePoint((pl?.position.x || 0) - fz * side * 2.35 - fx * 0.55,
+            (pl?.position.z || 0) + fx * side * 2.35 - fz * 0.55, { minPlayerDist: 1.9 });
+          a.mem.tx = safe.x; a.mem.tz = safe.z;
+          a.telegraph('rift-arrival', 0.82, { shape: 'disc', radius: 1.45, x: safe.x, z: safe.z, follow: false, color: '#74f0ff', core: '#efffff' });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 0.12).separation(a.mgr.list, 1.5);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: a.perc.dirX, faceZ: a.perc.dirZ });
+          if (a.tell.k >= 1) return 'blink';
+        },
+      },
+      blink: {
+        enter(a, ctx) {
+          const from = a.position.clone().setY(1.05); a.endTell(true);
+          a.position.set(a.mem.tx, 0, a.mem.tz); ctx.world?.collide?.(a.position, a.radius);
+          a.iframes = Math.max(a.iframes, 0.16);
+          const p = ctx.player?.position; if (p) a.snapFace(p.x - a.position.x, p.z - a.position.z);
+          ctx.vfx?.beam?.(from, a.position.clone().setY(1.05), { color: '#74f0ff', width: 0.18, life: 0.26, opacity: 0.72 });
+          a.telegraph('rift-slash', 0.38, { shape: 'arc', radius: 2.85, arc: 165, follow: true, color: '#74f0ff' });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(0).separation(a.mgr.list, 1.4); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 9); if (a.tell.k >= 1) return 'slash';
+        },
+      },
+      slash: {
+        enter(a, ctx) {
+          a.endTell(true); a.play('attack3', { fade: 0.04, restart: true });
+          a.strikeCone(ctx, { range: 2.85, arc: 165, damage: 18, type: 'arcane', knock: 7.5, color: '#74f0ff', width: 0.38, shake: 0.08 });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 0.10).separation(a.mgr.list, 1.7); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          if (a.brain.t > 0.42) return 'recover';
+        },
+      },
+      recover: {
+        enter(a) { a.committed = false; },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 1.05).flee(a.perc.aimX, a.perc.aimZ, 1).separation(a.mgr.list, 1.9).avoidWalls(ctx);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out));
+          if (a.brain.t > 0.82) { a.dropToken('melee'); a.attackCd = 2.75; return 'hunt'; }
+        },
+      },
+      hurt: { enter(a) { a.play('hurt', { fade: 0.04, restart: true }); }, update(a, dt, ctx) { a.steer.begin(a.def.speed * 0.3).flee(a.perc.aimX, a.perc.aimZ, 0.5).separation(a.mgr.list, 2); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false }); if (a.stagger <= 0) return 'hunt'; } },
+    },
+  },
+};
+
 export const ORACLE = {
   kind: 'oracle', label: 'Moirai Oracle',
   role: 'healer/ward — its long ritual restores nearby enemies and must be interrupted',
@@ -336,4 +454,4 @@ export const ORACLE = {
   },
 };
 
-export default { LANCER, SIREN, ORACLE };
+export default { LANCER, SIREN, RIFT_STALKER, ORACLE };

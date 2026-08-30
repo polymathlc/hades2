@@ -124,9 +124,12 @@ const FAMILY_LOOK = {
   lancer: { rim: '#77e5ff', mul: 1.16 },  // -> ice blue, the lane charger
   siren: { rim: '#ff74ba', mul: 1.16 },   // -> rose, the blink assassin
   oracle: { rim: '#c9b8ff', mul: 1.14 },  // -> lavender, the ward support
+  riftstalker: { rim: '#74f0ff', mul: 1.18 }, // -> spectral cyan, the anti-ranged hunter
   warden: { rim: '#3aa8ff', mul: 1.12 },  // -> ICE. the boss opposes its own room
   minotaur: { rim: '#ff8a3d', mul: 1.14 },// -> hot amber, the charging boss
   heracles: { rim: '#ffd56a', mul: 1.12 },// -> heroic gold, the final champion
+  hades: { rim: '#ff557c', mul: 1.16 },   // -> royal blood-red, Zagreus finale
+  chronos: { rim: '#f2d071', mul: 1.16 }, // -> aged gold, Melinoe finale
 };
 const ASPHODEL_FAMILY_LOOK = {
   shade:  { rim: '#7fe6df', mul: 1.18 },
@@ -138,9 +141,12 @@ const ASPHODEL_FAMILY_LOOK = {
   lancer: { rim: '#a9edff', mul: 1.20 },
   siren:  { rim: '#ffc2e3', mul: 1.20 },
   oracle: { rim: '#ddd3ff', mul: 1.18 },
+  riftstalker: { rim: '#a5f6ff', mul: 1.22 },
   warden: { rim: '#d6f4ff', mul: 1.18 },
   minotaur: { rim: '#ffd0a6', mul: 1.18 },
   heracles: { rim: '#fff0aa', mul: 1.16 },
+  hades: { rim: '#ff9fb7', mul: 1.20 },
+  chronos: { rim: '#fff1ad', mul: 1.20 },
 };
 let _familyBiome = 'tartarus';
 const familyLook = (kind) => (_familyBiome === 'asphodel' ? ASPHODEL_FAMILY_LOOK : FAMILY_LOOK)[kind];

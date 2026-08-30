@@ -38,12 +38,12 @@ import { GOD_INFO, GOD_KEYS } from './boons.js';
 import { MetaProgression } from './meta.js';
 import { HomeBase, NectarDrop, TitanBloodDrop } from '../world/homebase.js';
 import { CHARACTER_INFO, characterInfo, characterOwnsWeapon, godIdsForCharacter } from './characters.js';
+import { FINAL_BOSS_DEPTH } from '../entities/spawner.js';
 
-// The descent. Three biomes, four chambers each, a boss on the last of each —
-// spawner.js already treats depth % 5 === 0 as a boss room, so the biome
-// lengths line up with its own cadence.
+// The descent uses the same five-depth cadence as spawner.js. Depths 5, 10
+// and 15 are regional bosses; clearing Heracles jumps directly to the
+// heir-specific finale instead of clamping into endless Elysium.
 const BIOMES = ['tartarus', 'asphodel', 'elysium'];
-const CHAMBERS_PER_BIOME = 4;
 
 export class RunState {
   constructor() {
@@ -61,6 +61,7 @@ export class RunState {
     this.startedAt = 0;
     this._pending = null;         // queued transition
     this._deathT = 0;
+    this._victoryT = 0;
     this._bound = false;
     this._home = null;
     this._drops = [];
@@ -129,7 +130,10 @@ export class RunState {
   // ═══════════════════════════════════════════════════════════ chambers ═══
   /** The biome a given depth belongs to. */
   biomeFor(depth) {
-    return BIOMES[Math.min(BIOMES.length - 1, Math.floor(depth / CHAMBERS_PER_BIOME))];
+    const d = Math.max(0, depth | 0);
+    if (d <= 5) return BIOMES[0];
+    if (d <= 10) return BIOMES[1];
+    return BIOMES[2];
   }
   /** Pure function of (runSeed, depth) — the same run replays identically. */
   seedFor(depth) { return (this.seed * 2654435761 + depth * 40503) >>> 0; }
@@ -160,6 +164,7 @@ export class RunState {
     this.roomCleared = false;
     this._pending = null;
     this._deathT = 0;
+    this._victoryT = 0;
     this.obols = 0;
     this.nectar = this.meta?.nectar || 0;
     this.selectedWeapon = null;
@@ -325,6 +330,26 @@ export class RunState {
   _onCleared(e) {
     if (this.state === 'home' || this.state === 'dead' || this.roomCleared) return;
     this.roomCleared = true;
+    if (e?.boss && this.depth >= FINAL_BOSS_DEPTH) {
+      this.state = 'victory';
+      this._victoryT = 0;
+      this.exits.length = 0;
+      this.ctx.world?.setCleared?.(false);
+      this.ctx.ui?.clearPrompts?.();
+      this.ctx.ui?.clearSigils?.();
+      this.ctx.spawner?.stop?.();
+      if (!this.ctx.CAPTURE) this.meta?.awardDarkness?.(8, { source: 'final-boss' });
+      const boss = this.selectedCharacter === 'melinoe' ? 'CHRONOS' : 'HADES';
+      const hero = characterInfo(this.selectedCharacter).name.toUpperCase();
+      this.ctx.events.emit('run.victory', {
+        depth: this.depth, biome: this.biome, boss: boss.toLowerCase(),
+        character: this.selectedCharacter, rooms: this.rooms, kills: this.kills,
+      });
+      this.ctx.ui?.toast?.(`${boss} DEFEATED · ${hero}'S DESCENT COMPLETE`, {
+        color: this.selectedCharacter === 'melinoe' ? '#86e6c1' : '#ff657f', dur: 7.0,
+      });
+      return;
+    }
     this.state = 'cleared';
     // THE DOORS ARE THE REWARD. Unsealing is the only thing that happens on a
     // clear, and it must happen through the world so the sigils, thresholds
@@ -399,7 +424,7 @@ export class RunState {
 
   _queueTransition(d) {
     if (this._pending) return;
-    const next = this.depth + 1;
+    const next = this.depth === 15 ? FINAL_BOSS_DEPTH : this.depth + 1;
     this._pending = { depth: next, biome: this.biomeFor(next), door: d ? d.index : 0, kind: d ? d.kind : null };
     this.state = 'transition';
     this.ctx.events.emit('run.transition', this._pending);
@@ -467,6 +492,11 @@ export class RunState {
     }
     for (let i = this._drops.length - 1; i >= 0; i--) {
       if (this._drops[i]?.update?.(dt)) this._drops.splice(i, 1);
+    }
+    if (this.state === 'victory') {
+      this._victoryT += dt;
+      if (this._victoryT > 9.0) this.enterHome();
+      return;
     }
     if (this._pending) {
       const t = this._pending;

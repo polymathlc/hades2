@@ -534,7 +534,9 @@ export class ProjectileSystem {
       if (p.x * p.x + p.z * p.z > R * R) { this.kill(p, 'expire'); continue; }
 
       // ── world solids (cheap: collide() pushes out in place) ────────────
-      if (p.solid && world && world.collide && (ctx.time.frame + p.slot) % 2 === 0) {
+      // Central cover is intentional ranged counterplay. Check every step so
+      // fast rail bolts cannot tunnel through a thin stele between odd frames.
+      if (p.solid && world && world.collide) {
         _v.set(p.x, p.y, p.z);
         world.collide(_v, p.radius);
         if (Math.abs(_v.x - p.x) > 1e-4 || Math.abs(_v.z - p.z) > 1e-4) {

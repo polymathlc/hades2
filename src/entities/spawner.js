@@ -39,6 +39,7 @@ export const ENCOUNTER_POOLS = {
     { kind: 'lancer', cost: 2, w: (d) => (d >= 2 ? 2.4 : 0) },
     { kind: 'siren', cost: 2, w: (d) => (d >= 3 ? 1.8 : 0) },
     { kind: 'oracle', cost: 3, w: (d) => (d >= 4 ? 1.2 : 0) },
+    { kind: 'riftstalker', cost: 3, w: (d) => (d >= 4 ? 1.4 : 0) },
   ],
   asphodel: [
     { kind: 'hound', cost: 1, w: () => 6 },
@@ -50,6 +51,7 @@ export const ENCOUNTER_POOLS = {
     { kind: 'lancer', cost: 2, w: (d) => (d >= 2 ? 2 : 0) },
     { kind: 'siren', cost: 2, w: (d) => (d >= 1 ? 3 : 0.5) },
     { kind: 'oracle', cost: 3, w: (d) => (d >= 3 ? 1.5 : 0) },
+    { kind: 'riftstalker', cost: 3, w: (d) => (d >= 2 ? 2.0 : 0.4) },
   ],
   elysium: [
     { kind: 'brute', cost: 3, w: () => 4 },
@@ -61,6 +63,7 @@ export const ENCOUNTER_POOLS = {
     { kind: 'lancer', cost: 2, w: () => 4 },
     { kind: 'siren', cost: 2, w: () => 3.5 },
     { kind: 'oracle', cost: 3, w: () => 2.8 },
+    { kind: 'riftstalker', cost: 3, w: () => 3.4 },
   ],
 };
 
@@ -71,8 +74,11 @@ const PACK = { hound: 3, shade: 2 };
 // Boss cadence is every five depths. The first encounter remains the Warden;
 // the second and third are distinct mythic opponents instead of repeats.
 export const BOSS_SEQUENCE = ['warden', 'minotaur', 'heracles'];
-export function bossForDepth(depth) {
+export const FINAL_BOSS_DEPTH = 20;
+export const FINAL_BOSSES = Object.freeze({ zagreus: 'hades', melinoe: 'chronos' });
+export function bossForDepth(depth, character = 'zagreus') {
   const encounter = Math.max(1, Math.floor((depth | 0) / 5));
+  if (encounter >= 4) return FINAL_BOSSES[character] || FINAL_BOSSES.zagreus;
   return BOSS_SEQUENCE[Math.min(BOSS_SEQUENCE.length, encounter) - 1];
 }
 
@@ -130,9 +136,9 @@ export class Spawner {
         for (let i = 0; i < n && left > 0; i++) { list.push(pick.kind); left -= pick.cost; }
       }
       // an escalation wave always carries one shape-changer if it can afford it
-      const shapers = ['herald', 'brute', 'lancer', 'siren', 'oracle'];
+      const shapers = ['herald', 'brute', 'lancer', 'siren', 'oracle', 'riftstalker'];
       if (w === nWaves - 1 && depth >= 3 && !list.some(kind => shapers.includes(kind))) {
-        const specialist = depth >= 7 ? 'oracle' : depth >= 5 ? (depth % 2 ? 'siren' : 'herald') : 'lancer';
+        const specialist = depth >= 9 ? (depth % 2 ? 'riftstalker' : 'oracle') : depth >= 5 ? (depth % 2 ? 'siren' : 'herald') : 'lancer';
         list.push(specialist);
       }
       waves.push({
@@ -169,7 +175,8 @@ export class Spawner {
   }
 
   _bossWaves() {
-    const boss = bossForDepth(this.depth);
+    const character = this.ctx?.run?.selectedCharacter || this.ctx?.player?.characterId || 'zagreus';
+    const boss = bossForDepth(this.depth, character);
     return [
       { list: [boss], delay: 1.1, stagger: 0, trigger: 'immediate' },
       { list: ['shade', 'shade'], delay: 8.0, stagger: 0.3, trigger: 'timed' },
