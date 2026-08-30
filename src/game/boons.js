@@ -14,6 +14,7 @@
 import { GODS } from '../materials/palette.js';
 import { EXPANDED_BOONS, EXPANDED_DUOS } from './boon-expansion.js';
 import { CANON_BOONS, CANON_DUOS } from './canonical-boons.js';
+import { HADES2_BOONS } from './hades2-boons.js';
 
 export const SLOTS = {
   attack:  { name: 'Attack',  glyph: 'sword' },
@@ -23,6 +24,7 @@ export const SLOTS = {
   call:    { name: 'Call',    glyph: 'horn' },
   passive: { name: 'Boon',    glyph: 'laurel' },
   forge:   { name: 'Weapon Forge', glyph: 'hammer' },
+  gain:    { name: 'Magick Gain', glyph: 'moons' },
 };
 
 export const RARITIES = ['common', 'rare', 'epic', 'heroic'];
@@ -33,7 +35,7 @@ export const RARITY_WEIGHT = { common: 62, rare: 26, epic: 9, heroic: 3 };
 
 const rarityRank = (rarity) => Math.max(0, RARITIES.indexOf(rarity));
 const nextRarity = (rarity) => RARITIES[Math.min(RARITIES.length - 1, rarityRank(rarity) + 1)];
-const CORE_SLOTS = Object.freeze(['attack', 'special', 'cast', 'dash', 'call']);
+const CORE_SLOTS = Object.freeze(['attack', 'special', 'cast', 'dash', 'call', 'gain']);
 
 export const GOD_INFO = {
   zeus:      { name: 'Zeus',      title: 'God of Thunder',        color: GODS.zeus,      status: 'shock', emblem: 'bolt' },
@@ -354,6 +356,41 @@ export const BOONS = [
     (m, v) => { m.forge.shield.castMul *= 1 + v.pct / 100; m.forge.shield.castBounces = Math.max(m.forge.shield.castBounces, v.bounces); },
     { weapon: 'shield', forgeAction: 'cast' }),
 ];
+
+// Every additional Infernal/Nocturnal Arm gets a complete three-action forge
+// family. The first card changes the weapon's rule (shockwave or split shot),
+// while the other two improve Special and Cast independently.
+const EXTENDED_FORGE = {
+  fists:  { noun: 'Knuckles', attack: 'Quake Knuckles', trait: 'nova' },
+  rail:   { noun: 'Chamber', attack: 'Triple Chamber', trait: 'triple' },
+  staff:  { noun: 'Moonstone', attack: 'Resonant Moonstone', trait: 'nova' },
+  blades: { noun: 'Sisters', attack: 'Forked Sisters', trait: 'triple' },
+  flames: { noun: 'Embers', attack: 'Threefold Embers', trait: 'triple' },
+  axe:    { noun: 'Crescent', attack: 'Seismic Crescent', trait: 'nova' },
+  skull:  { noun: 'Shells', attack: 'Blast-Forged Shells', trait: 'blast' },
+  coat:   { noun: 'Jets', attack: 'Quake Jets', trait: 'nova' },
+};
+for (const [weapon, spec] of Object.entries(EXTENDED_FORGE)) {
+  BOONS.push(
+    B(`hephaestus.${weapon}.attack`, 'hephaestus', 'forge', spec.attack, { pct: 20, dmg: 24, radius: 2.6 },
+      v => `${spec.noun} Attack gains +${v.pct}% damage and ${spec.trait === 'triple' ? 'full charges split into three shots' : spec.trait === 'blast' ? `full shots explode across ${v.radius}m` : `hits release a ${v.dmg}-damage forged shockwave`}.`,
+      (m, v) => {
+        const f = m.forge[weapon]; f.attackMul *= 1 + v.pct / 100;
+        if (spec.trait === 'triple') f.triple = true;
+        else if (spec.trait === 'blast') f.blast = Math.max(f.blast || 0, v.radius);
+        else f.nova = Math.max(f.nova || 0, v.dmg);
+      }, { weapon, forgeAction: 'attack' }),
+    B(`hephaestus.${weapon}.special`, 'hephaestus', 'forge', `Tempered ${spec.noun}`, { pct: 24 },
+      v => `${spec.noun} Special gains +${v.pct}% damage and poise-breaking force.`,
+      (m, v) => { m.forge[weapon].specialMul *= 1 + v.pct / 100; }, { weapon, forgeAction: 'special' }),
+    B(`hephaestus.${weapon}.cast`, 'hephaestus', 'forge', `${spec.noun} Witch-Cast`, { pct: 18, turn: 5 },
+      v => `Cast gains +${v.pct}% damage and ${v.turn} seeking while wielding this arm.`,
+      (m, v) => { m.forge[weapon].castMul *= 1 + v.pct / 100; m.forge[weapon].castSeek = Math.max(m.forge[weapon].castSeek || 0, v.turn); },
+      { weapon, forgeAction: 'cast' }),
+  );
+}
+BOONS.push(...HADES2_BOONS);
+const MELINOE_CORE_GODS = new Set(HADES2_BOONS.map(b => b.god));
 BOONS.push(...EXPANDED_BOONS);
 for (const boon of CANON_BOONS) if (!BOONS.some(existing => existing.id === boon.id)) BOONS.push(boon);
 
@@ -414,6 +451,14 @@ export function emptyMods() {
       spear: { attackMul: 1, specialMul: 1, castMul: 1, trident: false, recallBlast: 0, homing: 0, castPierce: 0 },
       bow: { attackMul: 1, specialMul: 1, castMul: 1, triple: false, blast: 0, homing: 0, castSeek: 0 },
       shield: { attackMul: 1, specialMul: 1, castMul: 1, ram: 0, bank: 0, reflect: 0, castBounces: 0 },
+      fists: { attackMul: 1, specialMul: 1, castMul: 1, nova: 0, castSeek: 0 },
+      rail: { attackMul: 1, specialMul: 1, castMul: 1, triple: false, castSeek: 0 },
+      staff: { attackMul: 1, specialMul: 1, castMul: 1, nova: 0, castSeek: 0 },
+      blades: { attackMul: 1, specialMul: 1, castMul: 1, triple: false, castSeek: 0 },
+      flames: { attackMul: 1, specialMul: 1, castMul: 1, triple: false, castSeek: 0 },
+      axe: { attackMul: 1, specialMul: 1, castMul: 1, nova: 0, castSeek: 0 },
+      skull: { attackMul: 1, specialMul: 1, castMul: 1, blast: 0, castSeek: 0 },
+      coat: { attackMul: 1, specialMul: 1, castMul: 1, nova: 0, castSeek: 0 },
     },
   };
 }
@@ -637,7 +682,10 @@ export class BoonState {
     const protectedSlots = new Set(this.granted
       .filter(rec => !rec.duo && CORE_SLOTS.includes(rec.slot) && rarityRank(rec.rarity) >= rarityRank('epic'))
       .map(rec => rec.slot));
+    const hero = o.character || this.ctx?.player?.characterId || null;
     const eligible = b => gods.includes(b.god)
+      && (!b.hero || !hero || b.hero === hero)
+      && !(hero === 'melinoe' && MELINOE_CORE_GODS.has(b.god) && CORE_SLOTS.includes(b.slot) && b.hero !== 'melinoe')
       && (!b.weapon || !o.weapon || b.weapon === o.weapon)
       && !(CORE_SLOTS.includes(b.slot) && protectedSlots.has(b.slot) && !this.byId.has(b.id));
     const pool = BOONS.filter(b => eligible(b) && !this.byId.has(b.id));

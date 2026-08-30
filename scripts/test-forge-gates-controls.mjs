@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { BOONS, BoonState, GOD_INFO, GOD_KEYS } from '../src/game/boons.js';
-import { WeaponRuntime } from '../src/entities/weapons.js';
+import { WeaponRuntime, WEAPON_IDS } from '../src/entities/weapons.js';
 import { Player } from '../src/entities/player.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { planDoorChoices } from '../src/world/doors.js';
@@ -20,6 +20,7 @@ import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
 import { ENCOUNTER_POOLS, BOSS_SEQUENCE, bossForDepth, Spawner } from '../src/entities/spawner.js';
 import { lockModalInput, releaseModalInput } from '../src/ui/modal-input.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from '../src/ui/boon-choice.js';
+import { CHARACTER_INFO, characterOwnsWeapon } from '../src/game/characters.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -235,14 +236,36 @@ assert.ok(planA.every(x => x.kind !== 'weapon'), 'a chamber gate can replace the
   assert.ok(favored > base * 1.55, `invested god did not appear more often (${base} -> ${favored})`);
 }
 
-// The Crossroads owns four physical, hovering arms and reports the selected
-// one through its interaction callback.
+// Each heir has a disjoint six-arm arsenal and a distinct god gate pool.
+assert.equal(CHARACTER_INFO.zagreus.weapons.length, 6);
+assert.equal(CHARACTER_INFO.melinoe.weapons.length, 6);
+assert.equal(new Set([...CHARACTER_INFO.zagreus.weapons, ...CHARACTER_INFO.melinoe.weapons]).size, 12);
+for (const C of Object.values(CHARACTER_INFO)) {
+  const plan = planDoorChoices(3, () => 0.314159, null, C.gods);
+  assert.ok(plan.every(choice => C.gods.includes(choice.god)), `${C.name} received a cross-game god gate`);
+}
+assert.equal(BOONS.filter(b => b.hero === 'melinoe' && b.h2Core).length, 45);
+assert.equal(BOONS.filter(b => b.hero === 'melinoe' && b.slot === 'gain').length, 9);
+assert.equal(CHARACTER_INFO.melinoe.gods.length, 9, 'special encounters leaked into ordinary Melinoe gates');
+for (const special of ['artemis', 'selene', 'hecate', 'hades', 'chaos']) {
+  assert.ok(!CHARACTER_INFO.melinoe.gods.includes(special), `${special} became an ordinary Olympian door`);
+}
+{
+  const state = new BoonState({ player: { characterId: 'melinoe' } });
+  const offers = state.roll(rng, { count: 20, god: 'apollo', character: 'melinoe', allowDuo: false });
+  const actionOffers = offers.filter(o => ['attack', 'special', 'cast', 'dash', 'gain'].includes(o.slot));
+  assert.ok(actionOffers.length >= 5);
+  assert.ok(actionOffers.every(o => o.boon.hero === 'melinoe' && o.boon.sourceGame === 'Hades II'),
+    'a Zagreus-era core boon leaked into Melinoe offers');
+}
+
+// The Crossroads builds only the selected heir's six compatible hovering arms.
 {
   let selected = null, selections = 0;
   const home = new HomeBase({}, { onWeapon: id => (selected = id, selections++, true) });
   const stone = new THREE.MeshStandardMaterial(), bronze = new THREE.MeshStandardMaterial(), dark = new THREE.MeshStandardMaterial();
   home._buildArmory(stone, bronze, dark);
-  assert.deepEqual(home.armory.map(a => a.id).sort(), ['blade', 'bow', 'shield', 'spear']);
+  assert.deepEqual(home.armory.map(a => a.id).sort(), ['blade', 'bow', 'fists', 'rail', 'shield', 'spear']);
   assert.ok(home.armory.every(a => a.hover.position.y > 1.5), 'an Infernal Arm is not hovering');
   assert.equal(home._selectWeapon('bow'), true);
   assert.equal(selected, 'bow');
@@ -250,6 +273,19 @@ assert.ok(planA.every(x => x.kind !== 'weapon'), 'a chamber gate can replace the
   assert.equal(home.armory.filter(a => a.selected).length, 1);
   home._selectWeapon('bow');
   assert.equal(selections, 1, 'holding Interact repeated the same home equip');
+  home.dispose(); stone.dispose(); bronze.dispose(); dark.dispose();
+}
+
+{
+  let character = null;
+  const home = new HomeBase({}, { character: 'zagreus', onCharacter: id => (character = id, true), onWeapon: () => true });
+  const stone = new THREE.MeshStandardMaterial(), bronze = new THREE.MeshStandardMaterial(), dark = new THREE.MeshStandardMaterial();
+  home._armoryMats = { stone, bronze, dark };
+  home._buildArmory(stone, bronze, dark, 'zagreus');
+  assert.equal(home._selectCharacter('melinoe'), true);
+  assert.equal(character, 'melinoe');
+  assert.deepEqual(home.armory.map(a => a.id), CHARACTER_INFO.melinoe.weapons);
+  assert.equal(home.selectedWeapon, null);
   home.dispose(); stone.dispose(); bronze.dispose(); dark.dispose();
 }
 
@@ -271,6 +307,15 @@ assert.ok(planA.every(x => x.kind !== 'weapon'), 'a chamber gate can replace the
   combat.unlockWeapon();
   assert.equal(combat.equip('bow')?.name, 'Heart-Seeking Bow');
   assert.equal(equippedEvents, 2);
+}
+
+{
+  const events = new Bus();
+  const combat = Object.create(CombatSystem.prototype);
+  combat.ctx = { player: { characterId: 'melinoe' }, events, ui: { toast: noop } };
+  combat.runtimes = new Map(); combat.weaponId = 'staff'; combat.weaponLocked = false;
+  assert.equal(combat.equip('blade'), null, 'Melinoe equipped an Infernal Arm');
+  assert.ok(characterOwnsWeapon('melinoe', combat.equip('axe')?.id));
 }
 
 // Even if a duo is unlocked and forced, an unrelated god gate cannot show it.
@@ -311,6 +356,44 @@ function harness(weaponId, actor = null) {
   ctx.combat = combat;
   const runtime = new WeaponRuntime(combat, player, weaponId);
   return { ctx, player, combat, runtime, fired, hitboxes };
+}
+
+// A full Nocturnal Arm charge is an Ω move: it spends Magick, announces the
+// action, and still resolves through the selected weapon's normal boon path.
+{
+  const melinoe = {
+    characterId: 'melinoe', position: new THREE.Vector3(), facing: new THREE.Vector2(1, 0), radius: 0.5,
+    health: 100, maxHealth: 100, mana: 100, maxMana: 100, state: 'move', onWeaponState: noop,
+  };
+  const { ctx, runtime, fired } = harness('staff', melinoe);
+  let omega = null;
+  ctx.events.on('weapon.omega', e => { omega = e; });
+  runtime.press('special');
+  runtime.update(1.0);
+  runtime.release('special');
+  assert.equal(melinoe.mana, 80);
+  assert.equal(omega?.weapon, 'staff');
+  assert.ok(fired.length > 0 && fired[0].damage >= 54, 'Staff Ω Special did not release its full projectile');
+}
+
+// Melinoe's Cast is a cursor-positioned binding circle, not a lodged Zagreus
+// Bloodstone projectile.
+{
+  const hitboxes = [];
+  const player = {
+    characterId: 'melinoe', position: new THREE.Vector3(), aimPoint: new THREE.Vector3(7, 0, 2),
+    radius: 0.5, maxHealth: 100, health: 100, maxMana: 100, mana: 100,
+  };
+  const ctx = { player, events: new Bus(), ui: { setHealth: noop, setMana: noop }, vfx: { shockwave: noop, burst: noop } };
+  ctx.boons = new BoonState(ctx);
+  const combat = Object.create(CombatSystem.prototype);
+  combat.ctx = ctx; combat.weaponId = 'staff'; combat._v3a = new THREE.Vector3(); combat._v3b = new THREE.Vector3();
+  combat.hitboxes = { spawn: spec => (hitboxes.push(spec), hitboxes.length) };
+  combat.projectiles = { fire: () => { throw new Error('Melinoe binding Cast incorrectly fired a shard'); } };
+  const result = combat.cast({ source: player, origin: new THREE.Vector3(0, 1.1, 0), dir: new THREE.Vector3(1, 0, 0) });
+  assert.equal(result, 1);
+  assert.equal(hitboxes[0].tag, 'melinoe:binding-circle');
+  assert.ok(hitboxes[0].x > 6 && hitboxes[0].z > 1 && hitboxes[0].radius >= 2.75);
 }
 
 // Hades-style Dash-Strike routing: the authored blade dashcut used to be dead
@@ -496,7 +579,7 @@ for (const [weaponId, tag] of [['blade', 'blade:dashcut'], ['spear', 'spear:dash
   assert.equal(runtime.step?.name, 'punch1', 'unsupported dash route swallowed the Shield attack');
 }
 
-for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
+for (const weapon of WEAPON_IDS) {
   const { ctx } = harness(weapon);
   const offers = ctx.boons.roll(rng, { count: 3, god: 'hephaestus', weapon, allowDuo: false });
   assert.equal(offers.length, 3, `${weapon} forge did not offer three cards`);
@@ -601,7 +684,7 @@ for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
 const controlText = CONTROL_ROWS.flat().join(' ').toLowerCase();
 for (const action of ['move', 'aim', 'attack', 'special', 'cast', 'dash', 'call', 'interact', 'pause']) assert.ok(controlText.includes(action));
 assert.ok(!controlText.includes('debug') && !controlText.includes('map'));
-assert.ok(controlText.includes('approach an arm at home'));
+assert.ok(controlText.includes('choose heir / weapon') && controlText.includes('approach at home'));
 assert.ok(controlText.includes('view current boons') && controlText.includes('b / tab'));
 assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
@@ -678,4 +761,4 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
 assert.equal(GOD_KEYS.length, 17);
 for (const god of ['demeter', 'apollo', 'hera', 'hestia', 'chaos', 'hades']) assert.ok(GOD_INFO[god], `missing expanded god ${god}`);
-console.log('features ok: 12 enemies, 3 unique bosses, 17 gods, god-locked gates, 20 Attack/Special/Cast forges, audio bridge');
+console.log('features ok: 12 enemies, 3 unique bosses, 17 gods, two heir-specific pools, 12 arms, 44 Attack/Special/Cast forges, audio bridge');

@@ -37,6 +37,7 @@
 import { GOD_INFO, GOD_KEYS } from './boons.js';
 import { MetaProgression } from './meta.js';
 import { HomeBase, NectarDrop, TitanBloodDrop } from '../world/homebase.js';
+import { CHARACTER_INFO, characterInfo, characterOwnsWeapon, godIdsForCharacter } from './characters.js';
 
 // The descent. Three biomes, four chambers each, a boss on the last of each —
 // spawner.js already treats depth % 5 === 0 as a boss room, so the biome
@@ -65,6 +66,7 @@ export class RunState {
     this._drops = [];
     this._rewardedBosses = new Set();
     this.selectedWeapon = null;
+    this.selectedCharacter = 'zagreus';
   }
 
   async init(ctx) {
@@ -92,7 +94,17 @@ export class RunState {
     ctx.events.on('run.abandon', () => this.enterHome());
     ctx.events.on('home.altarClosed', () => this._home?.releaseAltar?.());
     ctx.events.on('capture.state', ({ name, args }) => {
-      if (name === 'home') this.enterHome({ initial: true });
+      if (name === 'home') {
+        this.enterHome({ initial: true });
+        if (args?.character) this._home?._selectCharacter?.(args.character);
+        if (args?.weapon) this._home?._selectWeapon?.(args.weapon);
+        if (args?.character || args?.weapon) {
+          if (ctx.ui?.toasts) ctx.ui.toasts.length = 0;
+          const C = characterInfo(this.selectedCharacter);
+          const arm = this.selectedWeapon ? ctx.combat?.runtimes?.get?.(ctx.player)?.weapon : null;
+          ctx.ui?.toast?.(`${C.name.toUpperCase()} · ${(arm?.name || C.game).toUpperCase()}`, { color: C.color, dur: 2.8 });
+        }
+      }
       else if (name === 'altar') {
         this.enterHome({ initial: true });
         if (this.meta && this.meta.nectar < 6) this.meta.nectar = 6; // capture-only preview; never save
@@ -151,13 +163,27 @@ export class RunState {
     this.obols = 0;
     this.nectar = this.meta?.nectar || 0;
     this.selectedWeapon = null;
+    this.selectedCharacter = ctx.player?.characterId || this.selectedCharacter || 'zagreus';
     ctx.ui?.setResources?.(0, this.nectar, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
 
     this._home = new HomeBase(ctx, {
       onPortal: () => this.startRun(),
       onAltar: () => ctx.ui?.showHomeUpgrades?.(this.meta),
       onMirror: () => ctx.ui?.showHomeUpgrades?.(this.meta, 'mirror'),
+      character: this.selectedCharacter,
+      onCharacter: (id) => {
+        if (!CHARACTER_INFO[id]) return false;
+        this.selectedCharacter = id;
+        this.selectedWeapon = null;
+        ctx.player?.setCharacter?.(id);
+        const fallback = characterInfo(id).defaultWeapon;
+        ctx.combat?.equip?.(fallback, { force: true, silent: true });
+        ctx.ui?.toast?.(`${CHARACTER_INFO[id].name.toUpperCase()} · ${CHARACTER_INFO[id].game.toUpperCase()} ARSENAL`, { color: CHARACTER_INFO[id].color, dur: 2.5 });
+        ctx.events.emit('home.characterSelected', { id, character: CHARACTER_INFO[id] });
+        return true;
+      },
       onWeapon: (id) => {
+        if (!characterOwnsWeapon(this.selectedCharacter, id)) return false;
         const weapon = ctx.combat?.equip?.(id, { force: true, silent: true });
         if (!weapon) return false;
         this.selectedWeapon = id;
@@ -167,7 +193,7 @@ export class RunState {
       },
     }).enter();
     ctx.events.emit('home.entered', { nectar: this.nectar, titanBlood: this.meta?.titanBlood || 0,
-      darkness: this.meta?.darkness || 0, gods: this.meta?.snapshot?.().gods || {} });
+      darkness: this.meta?.darkness || 0, gods: this.meta?.snapshot?.().gods || {}, character: this.selectedCharacter });
     return this;
   }
 
@@ -175,10 +201,15 @@ export class RunState {
   startRun() {
     if (this.state !== 'home') return false;
     const ctx = this.ctx;
-    if (!this.selectedWeapon) {
-      ctx.ui?.toast?.('CHOOSE AN INFERNAL ARM BEFORE ENTERING', { color: '#7ee0ff', dur: 2.5 });
+    if (!this.selectedCharacter || !CHARACTER_INFO[this.selectedCharacter]) {
+      ctx.ui?.toast?.('CHOOSE ZAGREUS OR MELINOE BEFORE ENTERING', { color: '#86e6c1', dur: 2.5 });
       return false;
     }
+    if (!this.selectedWeapon) {
+      ctx.ui?.toast?.('CHOOSE A COMPATIBLE ARM BEFORE ENTERING', { color: '#7ee0ff', dur: 2.5 });
+      return false;
+    }
+    if (!characterOwnsWeapon(this.selectedCharacter, this.selectedWeapon)) return false;
     const boundWeapon = ctx.combat?.lockWeapon?.(this.selectedWeapon)
       || ctx.combat?.equip?.(this.selectedWeapon, { force: true, silent: true });
     if (!boundWeapon) return false;
@@ -201,10 +232,12 @@ export class RunState {
     this.enterRoom(0, 'tartarus');
     ctx.events.emit('run.started', {
       seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0, darkness: this.meta?.darkness || 0,
-      weapon: this.selectedWeapon,
+      weapon: this.selectedWeapon, character: this.selectedCharacter,
     });
     return true;
   }
+
+  godPool() { return godIdsForCharacter(this.selectedCharacter); }
 
   /**
    * enterRoom(depth, biome, o) — build the chamber and open the encounter.
@@ -337,9 +370,10 @@ export class RunState {
   async _claimBoon(d) {
     const state = this.ctx.boons;
     const rng = this._rng?.fork ? this._rng.fork(`boon:${this.depth}:${d?.index || 0}`) : this._rng;
-    const god = d?.god && GOD_INFO[d.god] ? d.god : (rng?.pick ? rng.pick(GOD_KEYS) : GOD_KEYS[(this.depth + (d?.index || 0)) % GOD_KEYS.length]);
+    const pool = this.godPool();
+    const god = d?.god && pool.includes(d.god) ? d.god : (rng?.pick ? rng.pick(pool) : pool[(this.depth + (d?.index || 0)) % pool.length]);
     const offers = state?.roll?.(rng, {
-      count: 3, god, weapon: this.ctx.combat?.weaponId,
+      count: 3, god, weapon: this.ctx.combat?.weaponId, character: this.selectedCharacter,
       allowDuo: false, upgradeChance: 0.58,
     }) || [];
     const choice = this.ctx.ui?.showBoonChoice?.(offers, { upgradeChance: 0.58 });

@@ -12,6 +12,9 @@ export const GOD_TRACKS = Object.freeze(['boon', 'passive', 'devotion']);
 export const WEAPON_TRACKS = Object.freeze(['attack', 'special', 'cast']);
 export const META_WEAPONS = Object.freeze({
   blade: 'Stygian Blade', spear: 'Eternal Spear', bow: 'Heart-Seeking Bow', shield: 'Shield of Chaos',
+  fists: 'Twin Fists of Malphon', rail: 'Adamant Rail',
+  staff: "Witch's Staff", blades: 'Sister Blades', flames: 'Umbral Flames',
+  axe: 'Moonstone Axe', skull: 'Argent Skull', coat: 'Black Coat',
 });
 
 // The Mirror of Night is a separate persistent tree paid for with Darkness

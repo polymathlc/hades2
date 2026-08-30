@@ -57,6 +57,7 @@ export class HUD {
     this.hpPulse = 0;
 
     this.weapon = { id: 'blade', name: 'Stygian Blade' };
+    this.character = { id: 'zagreus', name: 'Zagreus' };
     this.weaponCd = 0;                    // 0..1 remaining
     this.specialCd = 0;
     this.castCd = 0;
@@ -99,6 +100,7 @@ export class HUD {
     this.ui.dirty = true;
   }
   setWeapon(w) { if (w) { this.weapon = { id: w.id || w, name: w.name || String(w) }; this.ui.dirty = true; } }
+  setCharacter(c) { if (c) { this.character = { id: c.id || c, name: c.name || String(c) }; this.ui.dirty = true; } }
   addBoon(rec) {
     if (!rec) return;
     const before = this.boons;
@@ -207,8 +209,8 @@ export class HUD {
     g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, r * 1.5, 0, 6.2832); g.fill();
     g.restore();
 
-    tracked(g, this.weapon.name.toUpperCase(), cx, cy + r * 1.62, {
-      size: 8.4 * S, track: 0.20, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.85),
+    tracked(g, `${this.character.name} · ${this.weapon.name}`.toUpperCase(), Math.max(8 * S, cx - r * 0.9), cy + r * 1.62, {
+      size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.85),
       shadow: '#05030b', shadowDy: 1,
     });
   }
@@ -589,6 +591,23 @@ function weaponGlyph(q, cx, cy, r, id) {
       q.moveTo(...P(0, -.96)); q.bezierCurveTo(...P(.80, -.82), ...P(.82, .16), ...P(0, .96));
       q.bezierCurveTo(...P(-.82, .16), ...P(-.80, -.82), ...P(0, -.96)); q.closePath();
       break;
+    case 'staff':
+      q.moveTo(...P(-.08, .95)); q.lineTo(...P(.08, .95)); q.lineTo(...P(.08, -.62)); q.lineTo(...P(-.08, -.62)); q.closePath();
+      q.arc(...P(0, -.64), r * .34, Math.PI * .20, Math.PI * 1.80); break;
+    case 'blades':
+      q.moveTo(...P(-.44, -.92)); q.lineTo(...P(-.12, .58)); q.lineTo(...P(-.28, .92)); q.lineTo(...P(-.56, -.70)); q.closePath();
+      q.moveTo(...P(.44, -.92)); q.lineTo(...P(.12, .58)); q.lineTo(...P(.28, .92)); q.lineTo(...P(.56, -.70)); q.closePath(); break;
+    case 'flames':
+      q.arc(...P(0, -.08), r * .58, 0, Math.PI * 2); q.moveTo(...P(0, -.92)); q.lineTo(...P(.23, -.48)); q.lineTo(...P(0, -.28)); q.lineTo(...P(-.23, -.48)); q.closePath(); break;
+    case 'axe':
+      q.moveTo(...P(-.08, -.96)); q.lineTo(...P(.08, -.96)); q.lineTo(...P(.08, .96)); q.lineTo(...P(-.08, .96)); q.closePath();
+      q.moveTo(...P(.02, -.78)); q.lineTo(...P(.84, -.58)); q.lineTo(...P(.56, -.12)); q.lineTo(...P(.02, -.28)); q.closePath(); break;
+    case 'skull':
+      q.arc(...P(0, -.12), r * .66, Math.PI, 0); q.lineTo(...P(.46, .55)); q.lineTo(...P(.18, .88)); q.lineTo(...P(-.18, .88)); q.lineTo(...P(-.46, .55)); q.closePath(); break;
+    case 'fists': case 'coat':
+      q.moveTo(...P(-.62, -.50)); q.lineTo(...P(.50, -.50)); q.lineTo(...P(.66, .30)); q.lineTo(...P(.32, .90)); q.lineTo(...P(-.42, .72)); q.closePath(); break;
+    case 'rail':
+      q.moveTo(...P(-.18, -.96)); q.lineTo(...P(.18, -.96)); q.lineTo(...P(.18, .36)); q.lineTo(...P(.40, .72)); q.lineTo(...P(.16, .92)); q.lineTo(...P(-.12, .46)); q.closePath(); break;
     default: // blade
       q.moveTo(...P(0, -1.0)); q.lineTo(...P(.17, -.72)); q.lineTo(...P(.17, .40));
       q.lineTo(...P(0, .56)); q.lineTo(...P(-.17, .40)); q.lineTo(...P(-.17, -.72)); q.closePath();

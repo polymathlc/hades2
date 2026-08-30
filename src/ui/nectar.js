@@ -8,6 +8,7 @@ import {
   MIRROR_TALENTS, MIRROR_TRACKS,
 } from '../game/meta.js';
 import { lockModalInput, releaseModalInput } from './modal-input.js';
+import { weaponIdsForCharacter } from '../game/characters.js';
 
 export class NectarOverlay {
   constructor(ui) {
@@ -38,7 +39,7 @@ export class NectarOverlay {
     this.active = true;
     this._openedAt = page === 'mirror' ? 'mirror' : 'altar';
     this.selected = Math.max(0, Math.min(GOD_KEYS.length - 1, this.selected));
-    this.selectedWeapon = Math.max(0, Math.min(Object.keys(META_WEAPONS).length - 1, this.selectedWeapon));
+    this.selectedWeapon = Math.max(0, Math.min(this._weaponIds().length - 1, this.selectedWeapon));
     this.selectedMirror = Math.max(0, Math.min(MIRROR_TRACKS.length - 1, this.selectedMirror));
     this._setPage(page);
     this.t0 = this.ui.now();
@@ -69,7 +70,7 @@ export class NectarOverlay {
       return;
     }
     if (this.page === 'weapons') {
-      const weapon = Object.keys(META_WEAPONS)[this.selectedWeapon];
+      const weapon = this._weaponIds()[this.selectedWeapon];
       const result = this.meta?.upgradeWeapon?.(weapon, track);
       if (result?.ok) {
         this.ui.ctx?.audio?.sfx?.('ui.boon', { gain: 0.75 });
@@ -157,6 +158,7 @@ export class NectarOverlay {
   }
 
   _tracks() { return this.page === 'weapons' ? WEAPON_TRACKS : this.page === 'mirror' ? ['rank'] : GOD_TRACKS; }
+  _weaponIds() { return weaponIdsForCharacter(this.ui.ctx?.player?.characterId || 'zagreus').filter(id => META_WEAPONS[id]); }
   _setPage(page) {
     this.page = ['gods', 'weapons', 'mirror'].includes(page) ? page : 'gods';
     this.track = this._tracks()[0];
@@ -166,7 +168,7 @@ export class NectarOverlay {
     this._setPage(pages[(pages.indexOf(this.page) + delta + pages.length) % pages.length]);
   }
   _moveSelection(delta) {
-    const n = this.page === 'weapons' ? Object.keys(META_WEAPONS).length : this.page === 'mirror' ? MIRROR_TRACKS.length : GOD_KEYS.length;
+    const n = this.page === 'weapons' ? this._weaponIds().length : this.page === 'mirror' ? MIRROR_TRACKS.length : GOD_KEYS.length;
     const key = this.page === 'weapons' ? 'selectedWeapon' : this.page === 'mirror' ? 'selectedMirror' : 'selected';
     this[key] = (this[key] + delta + n) % n;
   }
@@ -272,7 +274,7 @@ export class NectarOverlay {
 
   _drawWeaponPage(g, o) {
     const { listX, listY, listW, dx, dw, S, t } = o;
-    const weapons = Object.keys(META_WEAPONS), rowH = 96 * S;
+    const weapons = this._weaponIds(), rowH = 76 * S;
     for (let i = 0; i < weapons.length; i++) {
       const weapon = weapons[i], y = listY + i * rowH, on = i === this.selectedWeapon;
       plaqueRect(g, listX, y, listW, rowH - 10 * S, 7 * S);
@@ -394,7 +396,10 @@ export class NectarOverlay {
   }
 
   _weaponGlyph(g, cx, cy, r, weapon) {
-    const glyph = { blade: '†', spear: '↟', bow: '⌒', shield: '◇' }[weapon] || '◆';
+    const glyph = {
+      blade: '†', spear: '↟', bow: '⌒', shield: '◇', fists: '✊', rail: '▰',
+      staff: '☾', blades: '⋔', flames: '◉', axe: '⚒', skull: '☠', coat: '⬡',
+    }[weapon] || '◆';
     g.save(); g.translate(cx, cy);
     const grad = g.createRadialGradient(-r * 0.25, -r * 0.35, 0, 0, 0, r);
     grad.addColorStop(0, '#4b2531'); grad.addColorStop(1, '#100911');

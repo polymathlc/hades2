@@ -25,8 +25,9 @@
 
 import * as THREE from 'three';
 import { clamp, clamp01, lerp, damp, dampAngle, shortAngle, smoothstep, ease, TAU } from '../core/math.js';
-import { buildHumanoid, HERO_SPEC, SLOT_PAINT } from './rig.js';
+import { buildHumanoid, HERO_SPEC, MELINOE_SPEC, SLOT_PAINT } from './rig.js';
 import { createAvatarWeapons } from './player-weapons.js';
+import { CHARACTER_INFO, characterInfo } from '../game/characters.js';
 import { Animator } from './anim.js';
 import { CAST_SHARD_MAX, castPresentation } from './cast.js';
 
@@ -94,6 +95,22 @@ const WEAPON_ANIM = {
             loose: 'loose', kick: 'special' },
   shield: { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
             punch1: 'bash1', punch2: 'bash2' },
+  fists:  { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
+            jab1: 'bash1', jab2: 'bash2', jab3: 'attack1', jab4: 'bash2', dashupper: 'rush', uppercut: 'special' },
+  rail:   { _fallback: 'loose', _charge: 'draw', _block: 'guard', _rush: 'rush',
+            loose: 'loose', bombard: 'castSweep' },
+  staff:  { _fallback: 'thrust1', _charge: 'throwWind', _block: 'guard', _rush: 'rush',
+            staff1: 'thrust1', staff2: 'spin', staff3: 'castSweep', loose: 'throw' },
+  blades: { _fallback: 'attack1', _charge: 'draw', _block: 'guard', _rush: 'dash',
+            knife1: 'attack1', knife2: 'attack2', knife3: 'attack3', shadowcut: 'dash', loose: 'loose' },
+  flames: { _fallback: 'loose', _charge: 'castRitual', _block: 'guard', _rush: 'rush',
+            loose: 'cast', orbit: 'castSweep' },
+  axe:    { _fallback: 'attack3', _charge: 'spin', _block: 'guard', _rush: 'rush',
+            hew1: 'attack3', hew2: 'spin', moonwall: 'special' },
+  skull:  { _fallback: 'loose', _charge: 'castRitual', _block: 'guard', _rush: 'rush',
+            loose: 'throw', skullrush: 'rush' },
+  coat:   { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
+            gauntlet1: 'bash1', gauntlet2: 'bash2', gauntlet3: 'special', jetpunch: 'rush', rockets: 'castSweep' },
 };
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -135,6 +152,7 @@ export class Player {
     this._ghostQueue = [];
     this._retuneIn = 0;
     this._retuneAt = 0;
+    this.characterId = 'zagreus';
   }
 
   async init(ctx) {
@@ -143,39 +161,16 @@ export class Player {
     this.root.name = 'player';
     ctx.scene.add(this.root);
 
-    this.rig = buildHumanoid(HERO_SPEC, ctx);
-    // the per-slot painterly table, reachable at runtime: mutate and call
-    // player.rig.retune() to re-publish it over every character material.
-    this.slotPaint = SLOT_PAINT;
-    this.root.add(this.rig.root);
-    this.weaponVisual = createAvatarWeapons(this.rig, ctx.combat?.weaponId || 'blade');
+    this._buildAvatar(ctx, this.characterId);
     this._offWeaponVisual = ctx.events.on('weapon.equipped', (info) => {
       if (info?.actor === this) this.weaponVisual?.equip(info.id);
     });
-    this.animator = new Animator(this.rig);
-    this.animator.play('idle', { fade: 0 });
-    this.height = this.rig.height;
-
-    // ── dash after-images: frozen pose snapshots, additive, in the rim hue ──
-    const rimHex = (ctx.lighting && ctx.lighting.rim && ctx.lighting.rim.color)
-      ? '#' + ctx.lighting.rim.color.getHexString() : '#5fd0ff';
-    this.ghosts = [];
-    for (let i = 0; i < TUNING.dashGhosts; i++) {
-      const mat = new THREE.MeshBasicMaterial({
-        color: new THREE.Color(rimHex), transparent: true, opacity: 0,
-        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: true,
-      });
-      const g = this.rig.makeGhost(mat);
-      g.group.visible = false; g.mat = mat; g.life = 0;
-      ctx.scene.add(g.group);
-      this.ghosts.push(g);
-    }
 
     // ── dash-ready tell: a thin additive ring that snaps at the player's feet ─
     const ringGeo = new THREE.RingGeometry(0.56, 0.66, 44);
     ringGeo.rotateX(-Math.PI / 2);
     this.readyMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color(rimHex), transparent: true, opacity: 0,
+      color: new THREE.Color(this.characterRimHex), transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: true,
     });
     this.readyRing = new THREE.Mesh(ringGeo, this.readyMat);
@@ -233,6 +228,71 @@ export class Player {
     this.root.position.copy(this.position);
     this.root.rotation.y = Math.atan2(this.facing.x, this.facing.y);
     this.animator.update(0);
+  }
+
+  _buildAvatar(ctx, id) {
+    const character = characterInfo(id);
+    const spec = character.id === 'melinoe' ? MELINOE_SPEC : HERO_SPEC;
+    this.characterId = character.id;
+    this.rig = buildHumanoid(spec, ctx);
+    // the per-slot painterly table, reachable at runtime: mutate and call
+    // player.rig.retune() to re-publish it over every character material.
+    this.slotPaint = SLOT_PAINT;
+    this.root.add(this.rig.root);
+    const current = character.weapons.includes(ctx.combat?.weaponId) ? ctx.combat.weaponId : character.defaultWeapon;
+    this.weaponVisual = createAvatarWeapons(this.rig, current, character.weapons);
+    this.animator = new Animator(this.rig);
+    this.animator.play('idle', { fade: 0 });
+    this.height = this.rig.height;
+
+    const rimHex = character.id === 'melinoe' ? character.color
+      : ((ctx.lighting && ctx.lighting.rim && ctx.lighting.rim.color)
+        ? '#' + ctx.lighting.rim.color.getHexString() : '#5fd0ff');
+    this.characterRimHex = rimHex;
+    this.ghosts = [];
+    for (let i = 0; i < TUNING.dashGhosts; i++) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: new THREE.Color(rimHex), transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: true,
+      });
+      const ghost = this.rig.makeGhost(mat);
+      ghost.group.visible = false; ghost.mat = mat; ghost.life = 0;
+      ctx.scene.add(ghost.group);
+      this.ghosts.push(ghost);
+    }
+    this._ghostIdx = 0;
+    this._ghostQueue.length = 0;
+    return character;
+  }
+
+  _disposeAvatar() {
+    this.weaponVisual?.dispose?.();
+    this.weaponVisual = null;
+    for (const ghost of this.ghosts || []) {
+      ghost.group?.removeFromParent?.();
+      ghost.mat?.dispose?.();
+    }
+    this.ghosts = [];
+    this.rig?.root?.removeFromParent?.();
+    this.rig?.dispose?.();
+    this.rig = null;
+  }
+
+  /** Rebuild the active heir at the Crossroads while preserving controller state. */
+  setCharacter(id) {
+    const character = CHARACTER_INFO[id];
+    if (!character || character.id === this.characterId || !this.ctx) return character || null;
+    this.weapon?.cancel?.();
+    this.blocking = null;
+    this._animKey = null;
+    this._disposeAvatar();
+    this._buildAvatar(this.ctx, id);
+    this.readyMat?.color?.set?.(this.characterRimHex);
+    this.root.position.copy(this.position);
+    this.root.rotation.y = Math.atan2(this.facing.x, this.facing.y);
+    this.animator.update(0);
+    this.ctx.events?.emit?.('character.changed', { id, character, actor: this });
+    return character;
   }
 
   // ─────────────────────────────────────────────────────────── capture ────
@@ -649,10 +709,14 @@ export class Player {
   _startCast(ctx) {
     const T = this.tune;
     const castSpeed = ctx.boons?.mods?.castSpeed || 1;
-    if (this.castStock <= 0) { this.buf.cast = 0; ctx.ui?.toast?.('All Cast shards are lodged', { color: '#c9b8ff' }); return; }
-    if (this.mana < T.castCost) { this.buf.cast = 0; ctx.ui?.toast?.('Not enough mana', { color: '#5fd0ff' }); return; }
-    this.mana -= T.castCost;
-    ctx.ui?.setMana?.(this.mana, this.maxMana);
+    const witchCast = this.characterId === 'melinoe';
+    if (!witchCast && this.castStock <= 0) { this.buf.cast = 0; ctx.ui?.toast?.('All Cast shards are lodged', { color: '#c9b8ff' }); return; }
+    if (witchCast && this.mana < T.castCost) { this.buf.cast = 0; ctx.ui?.toast?.('Not enough Magick', { color: '#86e6c1' }); return; }
+    if (witchCast) {
+      this.mana -= T.castCost;
+      ctx.ui?.setMana?.(this.mana, this.maxMana);
+      ctx.events?.emit?.('magick.spent', { amount: T.castCost, source: 'cast', character: this.characterId });
+    }
     this.buf.cast = 0;
     this.weapon?.cancel?.(); this.blocking = null;
     this.state = 'cast';
@@ -676,9 +740,10 @@ export class Player {
       this.act.fired = true;
       const dir3 = new THREE.Vector3(this.facing.x, 0, this.facing.y);
       const origin = this.position.clone().setY(1.12);
-      if (!this.spendCastShard()) return;
+      const usesShard = this.characterId !== 'melinoe';
+      if (usesShard && !this.spendCastShard()) return;
       const projectile = ctx.combat?.cast?.({ source: this, origin, dir: dir3, power: 1 });
-      if (!projectile) this.restoreCastShard();
+      if (!projectile && usesShard) this.restoreCastShard();
       const rider = ctx.boons?.mods?.rider?.cast;
       const style = this.act.castStyle || castPresentation(rider?.god);
       ctx.events.emit('player.cast', { pos: origin, dir: dir3, god: rider?.god || null, form: style.form });
@@ -922,11 +987,9 @@ export class Player {
   dispose() {
     if (this._onKey) { removeEventListener('keydown', this._onKey); this._onKey = null; }
     this._offWeaponVisual?.(); this._offWeaponVisual = null;
-    this.weaponVisual?.dispose?.(); this.weaponVisual = null;
-    this.rig?.dispose?.();
+    this._disposeAvatar();
     this.readyRing?.geometry?.dispose?.();
     this.readyMat?.dispose?.();
-    for (const g of this.ghosts || []) g.mat?.dispose?.();
   }
 }
 

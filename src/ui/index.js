@@ -24,6 +24,7 @@ import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
 import { WorldLabels } from './worldlabels.js';
 import { BoonState, BOONS, DUOS, GOD_INFO } from '../game/boons.js';
+import { CHARACTER_INFO } from '../game/characters.js';
 
 const REF_W = 1600, REF_H = 900;
 
@@ -122,6 +123,8 @@ export class UI {
     E.on('titanBlood.changed', (i) => { if (i && i.total != null) this.setResources(null, null, i.total); });
     E.on('darkness.changed', (i) => { if (i && i.total != null) this.setResources(null, null, null, i.total); });
     E.on('weapon.equipped', (i) => this.hud.setWeapon(i));
+    E.on('character.changed', (i) => this.hud.setCharacter(i?.character || i));
+    E.on('home.characterSelected', (i) => this.hud.setCharacter(i?.character || i));
     E.on('room.entered', (i) => { if (i && i.room) this.setRoom(i.room.depth, i.room.biome); });
     E.on('biome.changed', (i) => { if (i && i.name) this.setRoom(null, i.name); });
     E.on('player.dashed', () => { this.hud.setDash(Math.max(0, this.hud.dash - 1)); });
@@ -186,6 +189,7 @@ export class UI {
 
     // sensible starting state so the HUD is never empty-looking
     this.hud.setHealth(ctx.player?.health ?? 100, ctx.player?.maxHealth ?? 100);
+    this.hud.setCharacter(CHARACTER_INFO?.[ctx.player?.characterId] || { id: 'zagreus', name: 'Zagreus' });
     this.hud.setMana(ctx.player?.mana ?? 100, ctx.player?.maxMana ?? 100);
     this.hud.setRoom(ctx.run?.depth || 1, ctx.run?.biome || 'tartarus');
     this.hud.roomT = -9;
@@ -420,7 +424,7 @@ export class UI {
     else if (name === 'loadout') this.setupCaptureLoadout(ctx);
     else if (name === 'combat') {
       // the combat frame should carry the HUD too — it is what the player sees
-      this.setupCaptureHUD(ctx, { quiet: true });
+      this.setupCaptureHUD(ctx, { quiet: true, character: args?.character, weapon: args?.weapon });
     }
   }
 
@@ -438,20 +442,27 @@ export class UI {
     h.setHealth(120, 120); h.hpFill.snap(1); h.hpGhost = 1;
     h.setMana(64, 100); h.mpFill.snap(0.64);
     h.setCast(2, 3); h.setDash(1, 2);
-    h.setWeapon({ id: 'blade', name: 'Stygian Blade' });
+    const character = CHARACTER_INFO[o.character || ctx.player?.characterId] || CHARACTER_INFO.zagreus;
+    const runtimeWeapon = ctx.combat?.runtimes?.get?.(ctx.player)?.weapon;
+    h.setCharacter(character);
+    h.setWeapon(runtimeWeapon || { id: o.weapon || character.defaultWeapon, name: String(o.weapon || character.defaultWeapon) });
     h.weaponCd = 0.34;
     h.obols = 137; h.nectar = 4; h.titanBlood = 2;
     h.depth = 7; h.biome = (ctx.run && ctx.run.biome) || 'tartarus';
     h.roomT = -99;                                  // the plaque already says it; no banner
     h.boons.length = 0; h.boonPop.clear();
-    const tray = [
+    const tray = character.id === 'melinoe' ? [
+      ['apollo', 'epic', 'attack'], ['hera', 'rare', 'special'],
+      ['hestia', 'heroic', 'cast'], ['demeter', 'common', 'dash'],
+      ['zeus', 'rare', 'gain'], ['hephaestus', 'common', 'passive'],
+    ] : [
       ['zeus', 'epic', 'attack'], ['aphrodite', 'rare', 'special'],
-      ['hecate', 'heroic', 'cast'], ['hermes', 'common', 'dash'],
+      ['athena', 'heroic', 'cast'], ['hermes', 'common', 'dash'],
       ['artemis', 'rare', 'passive'], ['poseidon', 'common', 'call'],
     ];
     for (const [god, rarity, slot] of tray) h.addBoon({
       id: `${god}.capture.${slot}`, god, rarity, slot,
-      name: slot === 'passive' ? 'Pressure Points' : `${GOD_INFO[god]?.name || god} ${slot}`,
+      name: `${GOD_INFO[god]?.name || god} ${slot}`,
     });
     h.boonPop.clear();
 

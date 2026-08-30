@@ -227,6 +227,7 @@ export const HERO_SPEC = {
     bracers: true,
     harness: true,
     hair: 'swept',         // 'swept' | 'short' | 'none'
+    witchArm: 'none',      // 'left' | 'right' | 'none'
     eyes: true,
     // Player weapons are separate hand-mounted models (player-weapons.js),
     // allowing the equipped arm to change silhouette at runtime.
@@ -242,6 +243,49 @@ export const HERO_SPEC = {
   // the §1.2 complement. A bigger, cooler eye reads as a SHAPE.
   glowIntensity: 0.30,
   rim: null,               // optional { color, strength } override for this actor
+};
+
+// Melinoe is not a recolour of Zagreus. Her narrower build, moon crown,
+// asymmetrical silver arm, dark witch-cloth and mint/orange spell accents give
+// her a different read even when both heirs are standing idle at game scale.
+export const MELINOE_PALETTE = {
+  skin:      '#e7bd9e',
+  skinDeep:  '#a86d58',
+  hair:      '#d9d1bd',
+  hairTip:   '#83c8ae',
+  cloth:     '#253b35',
+  clothDeep: '#101c1b',
+  cape:      '#182a29',
+  capeLine:  '#ef9157',
+  metal:     '#b9c8bd',
+  metalHot:  '#eef6d8',
+  metalDeep: '#536c65',
+  blade:     '#8eb9aa',
+  bladeEdge: '#e2f3da',
+  leather:   '#211d29',
+  glow:      '#77f0c2',
+};
+
+export const MELINOE_SPEC = {
+  name: 'erebus.melinoe',
+  height: 1.98,
+  build: { shoulder: 0.88, limb: 0.94, bulk: 0.86 },
+  palette: MELINOE_PALETTE,
+  features: {
+    pauldron: 'right',
+    crown: 'moon',
+    cape: true,
+    skirt: 10,
+    greaves: false,
+    bracers: true,
+    harness: true,
+    hair: 'swept',
+    witchArm: 'left',
+    eyes: true,
+    weapon: 'none',
+  },
+  glowIntensity: 0.38,
+  rim: { color: '#84f2c8', strength: 0.76 },
 };
 
 /** deep-ish merge so a caller can override one feature without restating all. */
@@ -723,6 +767,20 @@ function buildParts(spec) {
     }
     add(prim(new THREE.SphereGeometry(1, 10, 8), { pos: [0, 1.812, 0.172], scale: [0.016, 0.019, 0.011] }),
       'glow', P.glow, { mode: 'rigid', bone: 'head' });
+  } else if (F.crown === 'moon') {
+    // The witch's lunar circlet: a thin silver band, central moonstone and two
+    // rising horn arcs. It deliberately breaks the round laurel silhouette.
+    add(prim(new THREE.TorusGeometry(0.176, 0.0105, 7, 34), { pos: [0, 1.808, -0.012], rot: [90, 0, 0], scale: [1, 1.04, 1] }),
+      'metal', P.metal, { mode: 'rigid', bone: 'head' });
+    for (const s of [-1, 1]) {
+      add(tubeGeo([
+        { p: [0.040 * s, 1.842, 0.152], r: 0.012 },
+        { p: [0.092 * s, 1.902, 0.126], r: 0.010 },
+        { p: [0.120 * s, 1.948, 0.076], r: 0.0035 },
+      ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'metal', P.metalHot, { mode: 'rigid', bone: 'head' });
+    }
+    add(prim(new THREE.OctahedronGeometry(0.031, 0), { pos: [0, 1.865, 0.174], scale: [0.78, 1.25, 0.52] }),
+      'glow', P.glow, { mode: 'rigid', bone: 'head' });
   }
 
   // ── pauldrons ────────────────────────────────────────────────────────────
@@ -831,13 +889,15 @@ function buildParts(spec) {
   // ── arms / hands / bracers ───────────────────────────────────────────────
   for (const s of [1, -1]) {
     const S = s > 0 ? 'L' : 'R';
+    const spectral = (F.witchArm === 'left' && S === 'L') || (F.witchArm === 'right' && S === 'R');
     add(tubeGeo([
       { p: [0.232 * s, 1.470, 0.004], r: 0.090 },
       { p: [0.242 * s, 1.320, -0.004], r: 0.073 },
       { p: [0.245 * s, 1.155, -0.012], r: 0.059 },
       { p: [0.248 * s, 1.020, 0.000], r: 0.056 },
       { p: [0.250 * s, 0.910, 0.012], r: 0.047 },
-    ], { radial: 12, capStart: 'round', capScale: 0.7, capEnd: 'flat' }), 'skin', P.skin, { only: 'body' });
+    ], { radial: 12, capStart: 'round', capScale: 0.7, capEnd: 'flat' }), spectral ? 'glow' : 'skin',
+      spectral ? ((x, y) => y < 1.19 ? P.glow : P.metalHot) : P.skin, { only: 'body' });
     // ── HAND ───────────────────────────────────────────────────────────────
     // WAS: one smooth-skinned stub tube — a chamfered block with no fingers and
     // no thumb, AND (the worse half of the bug) bound with `only:'body'` while
@@ -853,14 +913,14 @@ function buildParts(spec) {
       { p: [0.251 * s, 0.862, 0.026], r: 0.043, sx: 1.06, sz: 0.78 },
       { p: [0.252 * s, 0.822, 0.038], r: 0.038, sx: 1.02, sz: 0.76 },
       { p: [0.252 * s, 0.792, 0.048], r: 0.028, sx: 0.94, sz: 0.70 },
-    ], { radial: 10, capStart: 'round', capEnd: 'round', capScale: 0.85 }), 'skin', P.skin,
+    ], { radial: 10, capStart: 'round', capEnd: 'round', capScale: 0.85 }), spectral ? 'glow' : 'skin', spectral ? P.glow : P.skin,
       { mode: 'rigid', bone: HN });
     // knuckle roll across the front of the fist — the arris that catches the key
     add(tubeGeo([
       { p: [0.215 * s, 0.868, 0.052], r: 0.0125 },
       { p: [0.252 * s, 0.872, 0.058], r: 0.0135 },
       { p: [0.286 * s, 0.866, 0.050], r: 0.0115 },
-    ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, { mode: 'rigid', bone: HN });
+    ], { radial: 8, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.metalHot : P.skin, { mode: 'rigid', bone: HN });
     // three finger ridges curling back under the grip
     for (let fi = 0; fi < 3; fi++) {
       const dx = (-0.026 + fi * 0.026) * s;
@@ -868,14 +928,21 @@ function buildParts(spec) {
         { p: [0.252 * s + dx, 0.866, 0.058], r: 0.0115 },
         { p: [0.253 * s + dx, 0.836, 0.056], r: 0.0110 },
         { p: [0.253 * s + dx, 0.812, 0.040], r: 0.0095 },
-      ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'skin', P.skinDeep, { mode: 'rigid', bone: HN });
+      ], { radial: 7, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.metalDeep : P.skinDeep, { mode: 'rigid', bone: HN });
     }
     // thumb — laid across the grip, 42deg off the fist axis
     add(tubeGeo([
       { p: [0.216 * s, 0.884, 0.030], r: 0.0155 },
       { p: [0.205 * s, 0.856, 0.052], r: 0.0140 },
       { p: [0.212 * s, 0.832, 0.068], r: 0.0105 },
-    ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'skin', P.skin, { mode: 'rigid', bone: HN });
+    ], { radial: 8, capStart: 'round', capEnd: 'round' }), spectral ? 'glow' : 'skin', spectral ? P.glow : P.skin, { mode: 'rigid', bone: HN });
+    if (spectral) {
+      for (let ri = 0; ri < 3; ri++) {
+        add(prim(new THREE.TorusGeometry(0.064 - ri * 0.006, 0.007, 6, 18), {
+          pos: [0.249 * s, 1.07 - ri * 0.075, 0.004], rot: [90, 0, 0],
+        }), 'glow', ri === 1 ? P.metalHot : P.glow, { mode: 'rigid', bone: 'fore' + S });
+      }
+    }
     if (F.bracers) {
       add(tubeGeo([{ p: [0.247 * s, 1.118, -0.008], r: 0.068 }, { p: [0.250 * s, 0.938, 0.010], r: 0.061 }],
         { radial: 12, capStart: 'flat', capEnd: 'flat' }), 'metal', P.metalDeep, { mode: 'rigid', bone: 'fore' + S });
@@ -1199,4 +1266,4 @@ export function buildHumanoid(spec_, ctx) {
   return rig;
 }
 
-export default { buildHumanoid, HERO_SPEC, HERO_PALETTE, mergeSpec, tubeGeo, sheetGeo, prim, solveSkinWeights, linRGB };
+export default { buildHumanoid, HERO_SPEC, HERO_PALETTE, MELINOE_SPEC, MELINOE_PALETTE, mergeSpec, tubeGeo, sheetGeo, prim, solveSkinWeights, linRGB };

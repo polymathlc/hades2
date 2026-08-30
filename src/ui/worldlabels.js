@@ -108,8 +108,10 @@ export class WorldLabels {
 
   prompt(worldPos, text, o = {}) {
     if (!worldPos) return;
-    this.prompts.push({ p: new THREE.Vector3(worldPos.x, (worldPos.y || 0) + (o.height != null ? o.height : 1.6), worldPos.z), text: String(text), key: o.key || 'E', until: this.ui.now() + (o.dur || 1e9), t0: this.ui.now() });
-    if (this.prompts.length > 8) this.prompts.shift();
+    this.prompts.push({ p: new THREE.Vector3(worldPos.x, (worldPos.y || 0) + (o.height != null ? o.height : 1.6), worldPos.z),
+      world: new THREE.Vector3(worldPos.x, worldPos.y || 0, worldPos.z),
+      text: String(text), key: o.key || 'E', until: this.ui.now() + (o.dur || 1e9), t0: this.ui.now(), maxDistance: o.maxDistance ?? Infinity });
+    if (this.prompts.length > 24) this.prompts.shift();
     this.ui.dirty = true;
   }
   clearPrompts() { this.prompts.length = 0; this.ui.dirty = true; }
@@ -178,6 +180,9 @@ export class WorldLabels {
 
     // ── interaction prompts ──
     for (const pr of this.prompts) {
+      const player = this.ui.ctx?.player?.position;
+      if (player && Number.isFinite(pr.maxDistance)
+        && Math.hypot(player.x - pr.world.x, player.z - pr.world.z) > pr.maxDistance) continue;
       this._proj(pr.p, cam, W, H, o);
       if (!o.ok) continue;
       this._prompt(g, o.x, o.y, S, t, pr);

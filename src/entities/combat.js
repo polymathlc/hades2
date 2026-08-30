@@ -33,6 +33,7 @@ import { HitboxSystem, TEAM } from './hitbox.js';
 import { ProjectileSystem } from './projectiles.js';
 import { WEAPONS, WEAPON_IDS, WeaponRuntime } from './weapons.js';
 import { CAST_SHARD_BASE_BONUS, CAST_SHARD_DURATION, castPresentation } from './cast.js';
+import { characterOwnsWeapon } from '../game/characters.js';
 
 const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 
@@ -155,12 +156,16 @@ export class CombatSystem {
   /** Equip at the Crossroads. During a descent only the bound arm is legal. */
   equip(id, o = {}) {
     if (!WEAPONS[id]) return null;
+    const p = this.ctx.player;
+    if (p?.characterId && !characterOwnsWeapon(p.characterId, id) && !o.allowCrossCharacter) {
+      this.ctx.ui?.toast?.('THAT ARM BELONGS TO THE OTHER HEIR', { color: '#86e6c1' });
+      return null;
+    }
     if (this.weaponLocked && id !== this.weaponId && !o.force) {
       this.ctx.ui?.toast?.('INFERNAL ARM BOUND FOR THIS DESCENT', { color: WEAPONS[this.weaponId]?.palette?.body || '#c9b8ff' });
       return null;
     }
     this.weaponId = id;
-    const p = this.ctx.player;
     // runtimeFor(actor, id) already performs the swap when the id differs.
     // Calling equip() again here emitted duplicate HUD/audio events.
     if (p) this.runtimeFor(p, id);
@@ -231,6 +236,30 @@ export class CombatSystem {
     const damage = mods?.castBeam
       ? 14 * power * (mods?.castMul || 1) * forgeCastMul * (mods?.dmgMul || 1)
       : normalDamage;
+    if (source === this.ctx.player && source.characterId === 'melinoe') {
+      const aim = source.aimPoint || this._v3a.set(origin.x + dir.x * 6, 0, origin.z + dir.z * 6);
+      let dx = aim.x - source.position.x, dz = aim.z - source.position.z;
+      const distance = Math.hypot(dx, dz) || 1;
+      const reach = Math.min(9.5, distance);
+      dx /= distance; dz /= distance;
+      const x = source.position.x + dx * reach, z = source.position.z + dz * reach;
+      const radius = 2.75 + Math.min(1.4, (mods?.castRadius || 0) * 0.2);
+      const id = this.hitboxes.spawn({
+        shape: 'circle', owner: source, source, follow: false, x, z, radius,
+        t0: 0.08, t1: 0.34, life: 0.38, maxTargets: 14, damage,
+        type: rider?.type || 'arcane', knockback: 1.1, poiseDamage: damage * 0.5, hitstop: 62,
+        status: rider?.status || 'chill', statusStacks: rider?.stacks || 2, statusPower: rider?.statusPower || 0,
+        color, crit: rider?.critChance || 0, expose: rider?.expose || 0,
+        boonGod: god, boonSlot: 'cast', tag: 'melinoe:binding-circle',
+      });
+      this.ctx.vfx?.shockwave?.(this._v3a.set(x, 0.06, z), { radius, color, life: 0.72 });
+      this.ctx.vfx?.burst?.(this._v3b.set(x, 0.18, z), { count: 26, color, speed: 5.5, spread: 1.0, kind: fxKind });
+      this.ctx.events.emit('cast.binding', { source, x, z, radius, god });
+      if (forge && (forge.castMul > 1 || forge.castBlast || forge.castPierce || forge.castSeek || forge.castBounces)) {
+        this.ctx.events.emit('forge.triggered', { weapon: this.weaponId, effect: 'cast' });
+      }
+      return id;
+    }
     const forgeSeek = forge?.castSeek || 0;
     const forgeBounces = forge?.castBounces || 0;
     const castHoming = Math.max(mods?.castSeek ? 7.5 : 0, forgeSeek);
@@ -812,8 +841,9 @@ export class CombatSystem {
   // instead, authored backwards from t=2.0: every entry below is placed so that
   // it is at its most readable moment in the captured frame.
   _captureState(name, ctx, args = {}) {
-    if (args?.weapon && WEAPONS[args.weapon]) this.equip(args.weapon);
-    if (name === 'combat') { this._cap.on = true; this._cap.t = 0; this._cap.i = 0; if (!args?.weapon) this.equip('blade'); }
+    if (args?.character) ctx.player?.setCharacter?.(args.character);
+    if (name !== 'home' && args?.weapon && WEAPONS[args.weapon]) this.equip(args.weapon, { force: true, silent: true });
+    if (name === 'combat') { this._cap.on = true; this._cap.t = 0; this._cap.i = 0; if (!args?.weapon) this.equip('blade', { force: true, silent: true }); }
     else if (name) {
       // leaving the combat frame: this harness runs every shot on ONE page, so
       // without an explicit teardown the bolts and telegraphs bleed into the

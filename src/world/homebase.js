@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { GOD_INFO, GOD_KEYS } from '../game/boons.js';
 import { WEAPONS, WEAPON_IDS } from '../entities/weapons.js';
+import { CHARACTER_INFO, CHARACTER_IDS, characterInfo, weaponIdsForCharacter } from '../game/characters.js';
 
 const PORTAL_POS = new THREE.Vector3(0, 0, -7.0);
 const ALTAR_POS = new THREE.Vector3(6.4, 0, 0.2);
@@ -19,6 +20,12 @@ const ARMORY_POS = {
   spear:  new THREE.Vector3(-2.25, 0, 6.75),
   bow:    new THREE.Vector3(2.25, 0, 6.75),
   shield: new THREE.Vector3(6.3, 0, 4.3),
+  fists:  new THREE.Vector3(-4.8, 0, 6.55),
+  rail:   new THREE.Vector3(4.8, 0, 6.55),
+};
+const CHARACTER_POS = {
+  zagreus: new THREE.Vector3(-2.65, 0, 2.75),
+  melinoe: new THREE.Vector3(2.65, 0, 2.75),
 };
 
 function standard(color, emissive = 0x000000, emissiveIntensity = 0) {
@@ -32,12 +39,15 @@ export class HomeBase {
     this.onAltar = o.onAltar || (() => {});
     this.onMirror = o.onMirror || (() => {});
     this.onWeapon = o.onWeapon || (() => false);
+    this.onCharacter = o.onCharacter || (() => false);
+    this.selectedCharacter = characterInfo(o.character).id;
     this.root = new THREE.Group();
     this.root.name = 'home.base';
     this._geo = [];
     this._ownedMats = [];
     this._portalTriggered = false;
     this.armory = [];
+    this.characterStations = [];
     this.selectedWeapon = null;
     this.t = 0;
   }
@@ -67,7 +77,9 @@ export class HomeBase {
     this._buildPortal(stone, bronze, dark);
     this._buildAltar(shrine, bronze, dark);
     this._buildMirror(stone, bronze, dark);
-    this._buildArmory(stone, bronze, dark);
+    this._armoryMats = { stone, bronze, dark };
+    this._buildCharacters(stone, bronze, dark);
+    this._buildArmory(stone, bronze, dark, this.selectedCharacter);
 
     // Crossroads lighting is subject-first: a broad cool fill preserves the
     // hero silhouette while a small warm forge bounce separates the altar.
@@ -88,17 +100,26 @@ export class HomeBase {
       ctx.cameraRig?.snap?.(p.position);
     }
 
-    ctx.ui?.clearPrompts?.();
-    ctx.ui?.prompt?.(PORTAL_POS, 'WALK THROUGH · BEGIN THE DESCENT', { key: 'W', height: 4.75, dur: 1e9 });
-    ctx.ui?.prompt?.(ALTAR_POS, 'OFFER NECTAR · ALTAR OF THE GODS', { key: 'F', height: 3.0, dur: 1e9 });
-    ctx.ui?.prompt?.(MIRROR_POS, 'MIRROR OF NIGHT · SPEND DARKNESS', { key: 'F', height: 3.25, dur: 1e9 });
-    ctx.ui?.prompt?.(new THREE.Vector3(0, 0, -2.5), 'CONTROLS & AUDIO SETTINGS', { key: 'H', height: 2.0, dur: 1e9 });
-    for (const arm of this.armory) {
-      ctx.ui?.prompt?.(arm.position, `${WEAPONS[arm.id].name.toUpperCase()} · EQUIP FOR THIS DESCENT`, { key: 'E', height: 3.35, dur: 1e9 });
-    }
+    this._publishPrompts();
     ctx.ui?.setRoom?.(0, 'crossroads');
-    ctx.ui?.toast?.('THE CROSSROADS · HOME', { color: '#d8b6ff', dur: 3.0 });
+    ctx.ui?.toast?.('THE CROSSROADS · CHOOSE YOUR HEIR AND ARM', { color: '#d8b6ff', dur: 3.0 });
     return this;
+  }
+
+  _publishPrompts() {
+    const ctx = this.ctx;
+    ctx.ui?.clearPrompts?.();
+    ctx.ui?.prompt?.(PORTAL_POS, 'WALK THROUGH · BEGIN THE DESCENT', { key: 'W', height: 4.75, dur: 1e9, maxDistance: 3.4 });
+    ctx.ui?.prompt?.(ALTAR_POS, 'OFFER NECTAR · ALTAR OF THE GODS', { key: 'F', height: 3.0, dur: 1e9, maxDistance: 2.7 });
+    ctx.ui?.prompt?.(MIRROR_POS, 'MIRROR OF NIGHT · SPEND DARKNESS', { key: 'F', height: 3.25, dur: 1e9, maxDistance: 2.7 });
+    ctx.ui?.prompt?.(new THREE.Vector3(0, 0, -2.5), 'CONTROLS & AUDIO SETTINGS', { key: 'H', height: 2.0, dur: 1e9, maxDistance: 2.5 });
+    for (const arm of this.armory) {
+      ctx.ui?.prompt?.(arm.position, `${WEAPONS[arm.id].name.toUpperCase()} · EQUIP FOR THIS DESCENT`, { key: 'E', height: 3.35, dur: 1e9, maxDistance: 2.25 });
+    }
+    for (const station of this.characterStations) {
+      const C = CHARACTER_INFO[station.id];
+      ctx.ui?.prompt?.(station.position, `${C.name.toUpperCase()} · ${C.game.toUpperCase()} HERO`, { key: 'E', height: 3.45, dur: 1e9, maxDistance: 2.25 });
+    }
   }
 
   _buildPortal(stone, bronze, dark) {
@@ -224,6 +245,41 @@ export class HomeBase {
     this.mirrorLight = light;
   }
 
+  _buildCharacters(stone, bronze, dark) {
+    for (let i = 0; i < CHARACTER_IDS.length; i++) {
+      const id = CHARACTER_IDS[i], C = CHARACTER_INFO[id];
+      const station = new THREE.Group();
+      station.name = `home.character.${id}`;
+      station.position.copy(CHARACTER_POS[id]);
+      this.root.add(station);
+      const base = this._mesh(new THREE.CylinderGeometry(1.05, 1.25, 0.28, 16), stone, station); base.position.y = 0.14;
+      const haloMat = this._m(new THREE.MeshStandardMaterial({ color: C.color, emissive: C.color, emissiveIntensity: 1.15, roughness: 0.25, metalness: 0.55 }));
+      const halo = this._mesh(new THREE.TorusGeometry(0.75, 0.055, 8, 36), haloMat, station); halo.rotation.x = Math.PI / 2; halo.position.y = 0.38;
+      const figure = new THREE.Group(); figure.name = `home.character.${id}.figure`; figure.position.y = 0.42; station.add(figure);
+      const body = this._mesh(new THREE.CylinderGeometry(0.24, 0.34, 1.10, 9), id === 'melinoe' ? dark : bronze, figure); body.position.y = 0.84;
+      const head = this._mesh(new THREE.SphereGeometry(0.24, 14, 10), haloMat, figure); head.position.y = 1.56;
+      if (id === 'zagreus') {
+        const crown = this._mesh(new THREE.TorusGeometry(0.26, 0.035, 7, 24), bronze, figure); crown.rotation.x = Math.PI / 2; crown.position.y = 1.74;
+        const shoulder = this._mesh(new THREE.SphereGeometry(0.26, 12, 8), bronze, figure); shoulder.scale.set(1.2, 0.45, 0.8); shoulder.position.set(-0.25, 1.28, 0);
+      } else {
+        const moon = this._mesh(new THREE.TorusGeometry(0.25, 0.035, 7, 24, Math.PI * 1.5), haloMat, figure); moon.rotation.z = 0.78; moon.position.y = 1.79;
+        const arm = this._mesh(new THREE.CylinderGeometry(0.06, 0.075, 0.72, 8), haloMat, figure); arm.position.set(0.30, 1.08, 0); arm.rotation.z = -0.18;
+        const mantle = this._mesh(new THREE.ConeGeometry(0.48, 1.05, 9, 1, true), dark, figure); mantle.position.y = 0.83;
+      }
+      const light = new THREE.PointLight(C.color, id === this.selectedCharacter ? 4.8 : 2.0, 6.5, 2); light.position.y = 1.7; station.add(light);
+      this.characterStations.push({ id, position: CHARACTER_POS[id], station, figure, halo, light, phase: i * Math.PI, selected: id === this.selectedCharacter });
+    }
+  }
+
+  _armoryPosition(index, count) {
+    if (count === 6) {
+      const x = [-7.0, -4.4, -1.55, 1.55, 4.4, 7.0][index];
+      const z = [4.0, 6.25, 7.25, 7.25, 6.25, 4.0][index];
+      return new THREE.Vector3(x, 0, z);
+    }
+    return new THREE.Vector3(-6.3 + index * (12.6 / Math.max(1, count - 1)), 0, index === 0 || index === count - 1 ? 4.3 : 6.75);
+  }
+
   _rod(a, b, radius, material, parent) {
     const delta = b.clone().sub(a), length = delta.length();
     const mesh = this._mesh(new THREE.CylinderGeometry(radius, radius, length, 10), material, parent);
@@ -266,12 +322,48 @@ export class HomeBase {
         stud.position.set(Math.cos(a) * 0.56, Math.sin(a) * 0.56, 0.22);
       }
       parent.rotation.x = -0.10;
+    } else if (id === 'fists' || id === 'coat') {
+      const cuff = this._mesh(new THREE.CylinderGeometry(id === 'coat' ? 0.34 : 0.25, 0.22, 0.85, 10), body, parent); cuff.position.y = -0.15;
+      const plate = this._mesh(new THREE.BoxGeometry(id === 'coat' ? 0.85 : 0.65, 0.34, 0.28), core, parent); plate.position.set(0, 0.25, 0.10);
+      for (const sx of [-1, 1]) {
+        const spike = this._mesh(new THREE.ConeGeometry(0.10, 0.48, 6), body, parent); spike.position.set(sx * 0.25, 0.60, 0); spike.rotation.z = Math.PI;
+      }
+    } else if (id === 'rail') {
+      const bodyM = this._mesh(new THREE.BoxGeometry(0.38, 1.45, 0.32), body, parent); bodyM.position.y = -0.2;
+      const barrel = this._mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.10, 10), core, parent); barrel.position.y = 0.95;
+      const muzzle = this._mesh(new THREE.TorusGeometry(0.18, 0.045, 8, 20), core, parent); muzzle.rotation.x = Math.PI / 2; muzzle.position.y = 1.52;
+    } else if (id === 'staff') {
+      const shaft = this._mesh(new THREE.CylinderGeometry(0.06, 0.075, 2.65, 10), dark, parent); shaft.position.y = -0.10;
+      const moon = this._mesh(new THREE.TorusGeometry(0.36, 0.075, 9, 30, Math.PI * 1.55), core, parent); moon.position.y = 1.45; moon.rotation.z = 0.76;
+      const gem = this._mesh(new THREE.OctahedronGeometry(0.17, 0), body, parent); gem.position.y = 1.45;
+    } else if (id === 'blades') {
+      for (const sx of [-1, 1]) {
+        const knife = this._mesh(new THREE.ConeGeometry(0.15, 1.20, 4), sx > 0 ? core : body, parent); knife.position.set(sx * 0.18, 0.18, 0); knife.rotation.set(0, Math.PI / 4, sx > 0 ? 0.12 : -0.12);
+        const grip = this._mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.46, 8), dark, parent); grip.position.set(sx * 0.18, -0.65, 0);
+      }
+    } else if (id === 'flames') {
+      const grip = this._mesh(new THREE.CylinderGeometry(0.08, 0.11, 1.1, 10), dark, parent); grip.position.y = -0.25;
+      for (let i = 0; i < 3; i++) {
+        const ring = this._mesh(new THREE.TorusGeometry(0.24 + i * 0.09, 0.045, 8, 24), i === 2 ? core : body, parent); ring.position.y = 0.45; ring.rotation.x = Math.PI / 2 + i * 0.2;
+      }
+      const ember = this._mesh(new THREE.OctahedronGeometry(0.22, 1), core, parent); ember.position.y = 0.55;
+    } else if (id === 'axe') {
+      const shaft = this._mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.45, 10), dark, parent); shaft.position.y = -0.1;
+      const head = this._mesh(new THREE.BoxGeometry(1.20, 0.38, 0.22), body, parent); head.position.set(0.28, 1.22, 0); head.rotation.z = 0.18;
+      const edge = this._mesh(new THREE.ConeGeometry(0.45, 0.82, 4), core, parent); edge.position.set(0.82, 1.20, 0); edge.rotation.set(0, Math.PI / 4, Math.PI / 2);
+    } else if (id === 'skull') {
+      const skull = this._mesh(new THREE.DodecahedronGeometry(0.58, 1), body, parent); skull.scale.set(1, 1.12, 0.88);
+      for (const sx of [-1, 1]) {
+        const eye = this._mesh(new THREE.OctahedronGeometry(0.11, 0), core, parent); eye.position.set(sx * 0.18, 0.08, 0.48);
+      }
+      const jaw = this._mesh(new THREE.BoxGeometry(0.62, 0.22, 0.38), core, parent); jaw.position.y = -0.47;
     }
   }
 
-  _buildArmory(stone, bronze, dark) {
-    for (let i = 0; i < WEAPON_IDS.length; i++) {
-      const id = WEAPON_IDS[i], weapon = WEAPONS[id], position = ARMORY_POS[id];
+  _buildArmory(stone, bronze, dark, characterId = this.selectedCharacter) {
+    const ids = weaponIdsForCharacter(characterId);
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i], weapon = WEAPONS[id], position = this._armoryPosition(i, ids.length);
       const station = new THREE.Group();
       station.name = `home.armory.${id}`;
       station.position.copy(position);
@@ -299,6 +391,26 @@ export class HomeBase {
       light.position.y = 2.15; station.add(light);
       this.armory.push({ id, position, station, hover, ring, light, phase: i * Math.PI * 0.5, selected: false });
     }
+  }
+
+  _clearArmory() {
+    for (const arm of this.armory) arm.station.removeFromParent();
+    this.armory.length = 0;
+    this.selectedWeapon = null;
+  }
+
+  _selectCharacter(id) {
+    if (!CHARACTER_INFO[id]) return false;
+    if (id !== this.selectedCharacter) {
+      if (this.onCharacter(id) === false) return false;
+      this.selectedCharacter = id;
+      this._clearArmory();
+      const mats = this._armoryMats;
+      this._buildArmory(mats.stone, mats.bronze, mats.dark, id);
+      this._publishPrompts();
+    }
+    for (const station of this.characterStations) station.selected = station.id === id;
+    return true;
   }
 
   _selectWeapon(id) {
@@ -373,6 +485,13 @@ export class HomeBase {
       arm.ring.material.opacity = arm.selected ? 1 : 0.72;
       arm.light.intensity = (arm.selected ? 6.2 : 2.6) + Math.sin(this.t * 3.2 + arm.phase) * 0.45;
     }
+    for (const station of this.characterStations) {
+      station.figure.position.y = 0.42 + Math.sin(this.t * 1.7 + station.phase) * 0.08;
+      station.figure.rotation.y += dt * (station.selected ? 0.55 : 0.18);
+      station.halo.rotation.z -= dt * (station.selected ? 1.1 : 0.3);
+      station.halo.material.emissiveIntensity = station.selected ? 2.8 : 1.15;
+      station.light.intensity = (station.selected ? 5.2 : 2.0) + Math.sin(this.t * 2.4 + station.phase) * 0.35;
+    }
 
     const p = this.ctx.player?.position;
     if (!p) return;
@@ -393,10 +512,19 @@ export class HomeBase {
         this.onMirror();
         return;
       }
+      let nearestCharacter = null, characterDistance = Infinity;
+      for (const station of this.characterStations) {
+        const d = Math.hypot(p.x - station.position.x, p.z - station.position.z);
+        if (d < characterDistance) { nearestCharacter = station; characterDistance = d; }
+      }
       let nearest = null, distance = Infinity;
       for (const arm of this.armory) {
         const d = Math.hypot(p.x - arm.position.x, p.z - arm.position.z);
         if (d < distance) { nearest = arm; distance = d; }
+      }
+      if (nearestCharacter && characterDistance < 1.75 && characterDistance <= distance) {
+        this._selectCharacter(nearestCharacter.id);
+        return;
       }
       if (nearest && distance < 2.05) {
         this._selectWeapon(nearest.id);

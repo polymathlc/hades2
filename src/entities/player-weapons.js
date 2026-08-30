@@ -205,23 +205,142 @@ function shieldModel(mats, geometries) {
   return g;
 }
 
-const BUILDERS = { blade: bladeModel, spear: spearModel, bow: bowModel, shield: shieldModel };
-const HAND = { blade: 'handR', spear: 'handR', bow: 'handL', shield: 'handL' };
+function fistsModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.fists'; g.userData.design = 'malphon-lion-gauntlets';
+  const cuffG = new THREE.CylinderGeometry(0.105, 0.085, 0.30, 10); geometries.add(cuffG);
+  const cuff = addMesh(g, cuffG, mats.body, 'avatar.weapon.fists.cuff'); cuff.position.y = -0.05;
+  const knuckleG = new THREE.BoxGeometry(0.30, 0.13, 0.16); geometries.add(knuckleG);
+  const knuckle = addMesh(g, knuckleG, mats.edge, 'avatar.weapon.fists.knuckles'); knuckle.position.set(0, -0.23, 0.07);
+  for (let i = -1; i <= 1; i++) {
+    const clawG = new THREE.ConeGeometry(0.035, 0.24, 5); geometries.add(clawG);
+    const claw = addMesh(g, clawG, mats.glow, `avatar.weapon.fists.claw.${i + 1}`);
+    claw.position.set(i * 0.085, -0.41, 0.09); claw.rotation.z = Math.PI;
+  }
+  g.rotation.z = -0.05; return g;
+}
+
+function railModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.rail'; g.userData.design = 'adamant-rail-cannon';
+  const bodyG = new THREE.BoxGeometry(0.18, 0.72, 0.16); geometries.add(bodyG);
+  const body = addMesh(g, bodyG, mats.body, 'avatar.weapon.rail.body'); body.position.y = -0.30;
+  const barrelG = new THREE.CylinderGeometry(0.055, 0.072, 0.72, 10); geometries.add(barrelG);
+  const barrel = addMesh(g, barrelG, mats.edge, 'avatar.weapon.rail.barrel'); barrel.position.y = -0.82;
+  const muzzleG = new THREE.TorusGeometry(0.075, 0.018, 6, 16); geometries.add(muzzleG);
+  const muzzle = addMesh(g, muzzleG, mats.glow, 'avatar.weapon.rail.muzzle'); muzzle.rotation.x = Math.PI / 2; muzzle.position.y = -1.19;
+  const stockG = new THREE.BoxGeometry(0.13, 0.30, 0.13); geometries.add(stockG);
+  const stock = addMesh(g, stockG, mats.dark, 'avatar.weapon.rail.stock'); stock.position.set(0, 0.22, -0.03); stock.rotation.z = -0.18;
+  return g;
+}
+
+function staffModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.staff'; g.userData.design = 'descura-crescent-staff';
+  const shaftG = new THREE.CylinderGeometry(0.024, 0.032, 1.58, 9); geometries.add(shaftG);
+  const shaft = addMesh(g, shaftG, mats.dark, 'avatar.weapon.staff.shaft'); shaft.position.y = -0.35;
+  const crownG = new THREE.TorusGeometry(0.17, 0.025, 7, 24, Math.PI * 1.55); geometries.add(crownG);
+  const crown = addMesh(g, crownG, mats.edge, 'avatar.weapon.staff.crescent'); crown.position.y = -1.18; crown.rotation.z = 0.72;
+  const gemG = new THREE.OctahedronGeometry(0.085, 0); geometries.add(gemG);
+  const gem = addMesh(g, gemG, mats.glow, 'avatar.weapon.staff.moonstone'); gem.position.y = -1.18;
+  return g;
+}
+
+function bladesModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.blades'; g.userData.design = 'lim-oros-sister-knives';
+  for (const [i, x] of [-0.065, 0.065].entries()) {
+    const bladeG = new THREE.ConeGeometry(0.065, 0.62, 4); geometries.add(bladeG);
+    const blade = addMesh(g, bladeG, i ? mats.edge : mats.body, `avatar.weapon.blades.sister.${i}`);
+    blade.position.set(x, -0.40, i ? -0.025 : 0.025); blade.rotation.set(0, Math.PI / 4, Math.PI + (i ? -0.08 : 0.08));
+    const gripG = new THREE.CylinderGeometry(0.025, 0.03, 0.19, 8); geometries.add(gripG);
+    const grip = addMesh(g, gripG, mats.dark, `avatar.weapon.blades.grip.${i}`); grip.position.set(x, 0.0, i ? -0.025 : 0.025);
+  }
+  return g;
+}
+
+function flamesModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.flames'; g.userData.design = 'ygnium-umbral-torches';
+  const handleG = new THREE.CylinderGeometry(0.035, 0.05, 0.46, 9); geometries.add(handleG);
+  const handle = addMesh(g, handleG, mats.dark, 'avatar.weapon.flames.handle'); handle.position.y = -0.08;
+  for (let i = 0; i < 3; i++) {
+    const ringG = new THREE.TorusGeometry(0.10 + i * 0.035, 0.016, 6, 18); geometries.add(ringG);
+    const ring = addMesh(g, ringG, i === 2 ? mats.glow : mats.body, `avatar.weapon.flames.ring.${i}`);
+    ring.position.y = -0.38; ring.rotation.x = Math.PI / 2 + i * 0.22;
+  }
+  const fireG = new THREE.OctahedronGeometry(0.10, 1); geometries.add(fireG);
+  const fire = addMesh(g, fireG, mats.glow, 'avatar.weapon.flames.core'); fire.position.y = -0.48; fire.scale.set(0.8, 1.5, 0.8);
+  return g;
+}
+
+function axeModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.axe'; g.userData.design = 'zorephet-moonstone-axe';
+  const shaftG = new THREE.CylinderGeometry(0.032, 0.040, 1.52, 9); geometries.add(shaftG);
+  const shaft = addMesh(g, shaftG, mats.dark, 'avatar.weapon.axe.shaft'); shaft.position.y = -0.36;
+  const headG = new THREE.BoxGeometry(0.54, 0.18, 0.10); geometries.add(headG);
+  const head = addMesh(g, headG, mats.body, 'avatar.weapon.axe.head'); head.position.set(0.16, -1.11, 0); head.rotation.z = 0.20;
+  const edgeG = new THREE.ConeGeometry(0.25, 0.48, 4); geometries.add(edgeG);
+  const edge = addMesh(g, edgeG, mats.edge, 'avatar.weapon.axe.moon-edge'); edge.position.set(0.39, -1.09, 0); edge.rotation.set(0, Math.PI / 4, Math.PI / 2);
+  const gemG = new THREE.OctahedronGeometry(0.075, 0); geometries.add(gemG);
+  const gem = addMesh(g, gemG, mats.glow, 'avatar.weapon.axe.gem'); gem.position.set(0.10, -1.11, 0.07);
+  return g;
+}
+
+function skullModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.skull'; g.userData.design = 'revaal-argent-skull';
+  const skullG = new THREE.DodecahedronGeometry(0.22, 1); geometries.add(skullG);
+  const skull = addMesh(g, skullG, mats.body, 'avatar.weapon.skull.cranium'); skull.position.y = -0.28; skull.scale.set(1, 1.1, 0.88);
+  for (const s of [-1, 1]) {
+    const eyeG = new THREE.OctahedronGeometry(0.045, 0); geometries.add(eyeG);
+    const eye = addMesh(g, eyeG, mats.glow, `avatar.weapon.skull.eye.${s}`); eye.position.set(s * 0.075, -0.30, 0.18);
+  }
+  const jawG = new THREE.BoxGeometry(0.24, 0.10, 0.17); geometries.add(jawG);
+  const jaw = addMesh(g, jawG, mats.edge, 'avatar.weapon.skull.jaw'); jaw.position.set(0, -0.48, 0.02);
+  return g;
+}
+
+function coatModel(mats, geometries) {
+  const g = new THREE.Group(); g.name = 'avatar.weapon.coat'; g.userData.design = 'xinth-jet-gauntlet';
+  const armG = new THREE.CylinderGeometry(0.12, 0.095, 0.48, 10); geometries.add(armG);
+  const arm = addMesh(g, armG, mats.body, 'avatar.weapon.coat.gauntlet'); arm.position.y = -0.12;
+  const plateG = new THREE.BoxGeometry(0.32, 0.34, 0.10); geometries.add(plateG);
+  const plate = addMesh(g, plateG, mats.edge, 'avatar.weapon.coat.shield-plate'); plate.position.set(0, -0.18, 0.10);
+  for (const s of [-1, 1]) {
+    const jetG = new THREE.ConeGeometry(0.055, 0.26, 8); geometries.add(jetG);
+    const jet = addMesh(g, jetG, mats.glow, `avatar.weapon.coat.jet.${s}`); jet.position.set(s * 0.10, 0.18, -0.05);
+  }
+  return g;
+}
+
+const BUILDERS = {
+  blade: bladeModel, spear: spearModel, bow: bowModel, shield: shieldModel,
+  fists: fistsModel, rail: railModel, staff: staffModel, blades: bladesModel,
+  flames: flamesModel, axe: axeModel, skull: skullModel, coat: coatModel,
+};
+const HAND = {
+  blade: 'handR', spear: 'handR', bow: 'handL', shield: 'handL', fists: 'handR', rail: 'handR',
+  staff: 'handR', blades: 'handR', flames: 'handL', axe: 'handR', skull: 'handL', coat: 'handL',
+};
 
 export const AVATAR_WEAPON_DESIGNS = Object.freeze({
   blade: 'leaf-xiphos',
   spear: 'dory-leaf-spear',
   bow: 'recurve-heart-bow',
   shield: 'chaos-hoplite-shield',
+  fists: 'malphon-lion-gauntlets',
+  rail: 'adamant-rail-cannon',
+  staff: 'descura-crescent-staff',
+  blades: 'lim-oros-sister-knives',
+  flames: 'ygnium-umbral-torches',
+  axe: 'zorephet-moonstone-axe',
+  skull: 'revaal-argent-skull',
+  coat: 'xinth-jet-gauntlet',
 });
 
-export function createAvatarWeapons(rig, initialId = 'blade') {
+export function createAvatarWeapons(rig, initialId = 'blade', allowedIds = WEAPON_IDS) {
   if (!rig?.bones?.handR || !rig?.bones?.handL) throw new Error('Avatar weapons require handR and handL bones');
   const materials = new Set();
   const geometries = new Set();
   const groups = {};
 
-  for (const id of WEAPON_IDS) {
+  const ids = allowedIds.filter(id => WEAPONS[id] && BUILDERS[id]);
+  for (const id of ids) {
     const mats = materialsFor(id, materials);
     const group = BUILDERS[id](mats, geometries);
     group.visible = false;
@@ -235,8 +354,8 @@ export function createAvatarWeapons(rig, initialId = 'blade') {
     groups,
     currentId: null,
     equip(id) {
-      const next = groups[id] ? id : 'blade';
-      for (const key of WEAPON_IDS) groups[key].visible = key === next;
+      const next = groups[id] ? id : (groups.blade ? 'blade' : Object.keys(groups)[0]);
+      for (const key of ids) groups[key].visible = key === next;
       visual.currentId = next;
       return groups[next];
     },
