@@ -293,6 +293,7 @@ export const WEAPONS = {
     id: 'rail', name: 'Adamant Rail', kind: 'ranged', character: 'zagreus',
     palette: { core: '#fff4cf', body: '#80566f', glow: '#ff9b42' },
     buffer: 0.20, moveScale: 0.62, critChance: 0.09, critMul: 2.05,
+    magazine: { capacity: 6, reload: 1.35 },
     charge: { action: 'attack', minHold: 0.04, fullHold: 0.48, windup: 0.035, recovery: 0.16, recoveryFull: 0.23,
       tell: { color: '#ff9b42' }, projectile: { kind: 'straight', speed: 34, speedFull: 42, radius: 0.16, life: 1.05,
         damage: 7, damageFull: 14, pierce: 1, pierceFull: 1, type: 'physical', knockback: 1.0, knockbackFull: 2.0,
@@ -468,7 +469,7 @@ export class WeaponRuntime {
   constructor(combat, wielder, weaponId = 'blade') {
     this.combat = combat; this.ctx = combat.ctx; this.actor = wielder;
     this.equip(weaponId);
-    this.state = 'idle';        // idle | attack | charge | block | rush
+    this.state = 'idle';        // idle | attack | charge | block | rush | reload
     this.step = null; this.stepIndex = -1;
     this.t = 0; this.dur = 0;
     this.hbId = 0; this.fired = false;
@@ -487,7 +488,11 @@ export class WeaponRuntime {
     const w = WEAPONS[id] || WEAPONS.blade;
     this.weapon = w; this.weaponId = w.id;
     this.state = 'idle'; this.step = null; this.stepIndex = -1; this.charge = 0;
-    this.ctx?.events.emit('weapon.equipped', { id: w.id, name: w.name, actor: this.actor });
+    this.ammoMax = w.magazine?.capacity || 0;
+    this.ammo = this.ammoMax;
+    this.reloadT = 0; this._reloadQueued = false;
+    this.ctx?.events.emit('weapon.equipped', { id: w.id, name: w.name, actor: this.actor, ammo: this.ammo, maxAmmo: this.ammoMax });
+    if (this.ammoMax) this.ctx?.events.emit('weapon.ammo', { weapon: w.id, current: this.ammo, max: this.ammoMax, actor: this.actor });
     return w;
   }
 
@@ -496,6 +501,7 @@ export class WeaponRuntime {
   get cancellable() { return this.state !== 'attack' || (this.step && this.t >= this.step.cancel); }
   get moveScale() {
     if (this.state === 'idle') return 1;
+    if (this.state === 'reload') return 0.46;
     if (this.state === 'block' || this.state === 'charge') return this.weapon.moveScale;
     if (this.step && this.t >= this.step.cancel) return this.weapon.moveScale;
     return 0.06;
@@ -506,6 +512,7 @@ export class WeaponRuntime {
     const w = this.weapon;
     if (action === 'attack') {
       this.actionSlot = 'attack';
+      if (this.weaponId === 'rail' && this.ammo <= 0) { if (this.state === 'idle') this._beginReload(); return; }
       if (w.charge && w.charge.action === 'attack') { this.holding = true; if (!this.busy) this._beginCharge(); return; }
       if (this.state === 'attack') { this.queued = true; return; }
       this.buffer = w.buffer;
@@ -541,8 +548,11 @@ export class WeaponRuntime {
     else if (this.state === 'block') this._endBlock();
   }
   cancel() {
+    const cancelledReload = this.state === 'reload';
     if (this.hbId) { this.combat.hitboxes.cancel(this.hbId); this.hbId = 0; }
     this.state = 'idle'; this.step = null; this.queued = false; this.dashQueued = false; this.charge = 0;
+    this.reloadT = 0; this._reloadQueued = false;
+    if (cancelledReload) this.ctx.events.emit('weapon.reload.cancel', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: this.actor });
   }
 
   // ───────────────────────────────────────────────────────────── update ────
@@ -575,6 +585,7 @@ export class WeaponRuntime {
       case 'charge': this._stepCharge(actionDt); break;
       case 'rush': this._stepRush(dt); break;
       case 'block': this._stepBlock(dt); break;
+      case 'reload': this._stepReload(dt); break;
     }
   }
 
@@ -589,6 +600,7 @@ export class WeaponRuntime {
       return;
     }
     if (this.t >= s.dur) {
+      if (this._reloadQueued) { this._beginReload(); return; }
       this.state = 'idle'; this.step = null; this.queued = false;
       // Completion is a hard input boundary. No dash intent from this attack
       // may affect the next standing press.
@@ -836,6 +848,11 @@ export class WeaponRuntime {
       shake: full ? 0.2 : 0.08,
     };
     const id = this.combat.projectiles.fire(spec);
+    if (this.weaponId === 'rail' && slot === 'attack') {
+      this.ammo = Math.max(0, this.ammo - 1);
+      this._reloadQueued = this.ammo <= 0;
+      this.ctx.events.emit('weapon.ammo', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: A });
+    }
     const spread = full && ((this.weaponId === 'spear' && forge?.trident) || forge?.triple);
     if (spread) {
       for (const angle of [-0.16, 0.16]) {
@@ -864,6 +881,32 @@ export class WeaponRuntime {
     if (slot === 'special' && rider?.deflect) this.combat.activateDeflect(A, rider.deflect, rider.color);
     this.ctx.events.emit('weapon.loose', { weapon: this.weaponId, charge: k, full, actor: A });
     if (full) this.ctx.engine?.slowmo?.(0.55, 0.10);
+  }
+
+  // ───────────────────────────────────────────────────────────── reload ───
+  _beginReload() {
+    const mag = this.weapon.magazine;
+    if (!mag || this.ammo >= this.ammoMax) return false;
+    this.state = 'reload'; this.step = null; this.t = 0; this.reloadT = mag.reload;
+    this.holding = false; this.charge = 0; this._reloadQueued = false;
+    this.actor.onWeaponState?.('reload', mag);
+    this.ctx.events.emit('weapon.reload.begin', {
+      weapon: this.weaponId, duration: mag.reload, current: this.ammo, max: this.ammoMax, actor: this.actor,
+    });
+    this.ctx.audio?.sfx?.('shield.block', { pos: this.actor.position, gain: 0.48, rate: 0.78 });
+    if (this.actor === this.ctx.player) this.ctx.ui?.toast?.('ADAMANT RAIL · RELOADING', { color: '#ffb15c', dur: 1.15 });
+    return true;
+  }
+
+  _stepReload(dt) {
+    const mag = this.weapon.magazine;
+    if (!mag) { this.state = 'idle'; return; }
+    this.t += dt; this.reloadT = Math.max(0, mag.reload - this.t);
+    if (this.t < mag.reload) return;
+    this.ammo = this.ammoMax; this.reloadT = 0; this.state = 'idle';
+    this.ctx.events.emit('weapon.ammo', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: this.actor });
+    this.ctx.events.emit('weapon.reload.end', { weapon: this.weaponId, current: this.ammo, max: this.ammoMax, actor: this.actor });
+    this.ctx.audio?.sfx?.('charge.full', { pos: this.actor.position, gain: 0.40, rate: 1.22 });
   }
 
   // ────────────────────────────────────────────────── shield rush / block ──

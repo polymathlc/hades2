@@ -133,6 +133,7 @@ for (const [kind, states] of Object.entries({
   assert.equal(rail.charge.projectile.pierceFull, 1);
   assert.ok(rail.charge.projectile.speedFull <= 42);
   assert.ok(rail.special.damage <= 25 && rail.special.hitbox.radius <= 3.15);
+  assert.deepEqual(rail.magazine, { capacity: 6, reload: 1.35 });
 }
 
 // The Oracle's release is not a cosmetic cast: it heals and wards nearby
@@ -406,6 +407,33 @@ function harness(weaponId, actor = null) {
   ctx.combat = combat;
   const runtime = new WeaponRuntime(combat, player, weaponId);
   return { ctx, player, combat, runtime, fired, hitboxes };
+}
+
+// Adamant Rail has a real finite magazine. The sixth projectile empties it,
+// forces a non-firing reload window, then restores exactly one magazine.
+{
+  const { ctx, runtime, fired } = harness('rail');
+  let reloads = 0, reloadEnds = 0;
+  ctx.events.on('weapon.reload.begin', () => reloads++);
+  ctx.events.on('weapon.reload.end', () => reloadEnds++);
+  for (let shot = 0; shot < runtime.ammoMax; shot++) {
+    runtime.press('attack');
+    runtime.update(runtime.weapon.charge.fullHold + 0.01);
+    runtime.release('attack');
+    runtime.update(runtime.weapon.charge.recoveryFull + 0.01);
+  }
+  assert.equal(fired.length, 6);
+  assert.equal(runtime.ammo, 0);
+  assert.equal(runtime.state, 'reload');
+  assert.equal(reloads, 1);
+  runtime.press('attack');
+  runtime.update(runtime.weapon.magazine.reload - 0.02);
+  assert.equal(fired.length, 6, 'empty Rail fired during reload');
+  assert.equal(runtime.state, 'reload');
+  runtime.update(0.03);
+  assert.equal(runtime.state, 'idle');
+  assert.equal(runtime.ammo, runtime.ammoMax);
+  assert.equal(reloadEnds, 1);
 }
 
 // A full Nocturnal Arm charge is an Ω move: it spends Magick, announces the

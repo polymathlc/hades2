@@ -686,6 +686,9 @@ export class Player {
     } else if (st === 'rush') {
       clip = map._rush;
       span = (W._rushTime || 0.22) + ((chg && chg.recovery) || 0.3);
+    } else if (st === 'reload') {
+      clip = map._charge;
+      span = W.weapon?.magazine?.reload || 1.2;
     }
     if (!clip || !this.animator.clips[clip]) clip = map._fallback;
     if (!this.animator.clips[clip]) return;

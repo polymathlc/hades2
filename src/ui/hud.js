@@ -57,6 +57,8 @@ export class HUD {
     this.hpPulse = 0;
 
     this.weapon = { id: 'blade', name: 'Stygian Blade' };
+    this.ammo = { cur: 0, max: 0 };
+    this.reloadRemaining = 0; this.reloadTotal = 0;
     this.character = { id: 'zagreus', name: 'Zagreus' };
     this.weaponCd = 0;                    // 0..1 remaining
     this.specialCd = 0;
@@ -99,7 +101,25 @@ export class HUD {
     this.roomT = this.ui.now();
     this.ui.dirty = true;
   }
-  setWeapon(w) { if (w) { this.weapon = { id: w.id || w, name: w.name || String(w) }; this.ui.dirty = true; } }
+  setWeapon(w) {
+    if (!w) return;
+    this.weapon = { id: w.id || w, name: w.name || String(w) };
+    const cap = w.maxAmmo ?? w.magazine?.capacity;
+    if (cap != null) this.ammo = { cur: w.ammo ?? cap, max: cap };
+    else if (this.weapon.id !== 'rail') this.ammo = { cur: 0, max: 0 };
+    this.reloadRemaining = 0; this.reloadTotal = 0;
+    this.ui.dirty = true;
+  }
+  setAmmo(i) {
+    if (!i || i.weapon !== 'rail') return;
+    this.ammo.cur = Math.max(0, i.current | 0); this.ammo.max = Math.max(1, i.max | 0);
+    this.ui.dirty = true;
+  }
+  setReload(i) {
+    const d = Math.max(0, i?.duration || 0);
+    this.reloadRemaining = d; this.reloadTotal = d;
+    this.ui.dirty = true;
+  }
   setCharacter(c) { if (c) { this.character = { id: c.id || c, name: c.name || String(c) }; this.ui.dirty = true; } }
   addBoon(rec) {
     if (!rec) return;
@@ -121,6 +141,10 @@ export class HUD {
     if (this.hpFlash > 0) this.hpFlash = Math.max(0, this.hpFlash - dt * 3.6);
     if (this.hpPulse > 0) this.hpPulse = Math.max(0, this.hpPulse - dt * 2.4);
     this.weaponCd = Math.max(0, this.weaponCd - dt);
+    if (this.reloadRemaining > 0) {
+      this.reloadRemaining = Math.max(0, this.reloadRemaining - dt);
+      this.ui.dirty = true;
+    }
     if (this.hpFill.v !== this.hpFill.t || this.mpFill.v !== this.mpFill.t || this.hpFlash > 0 || this.hpGhost > f + 1e-4) this.ui.dirty = true;
   }
 
@@ -209,7 +233,13 @@ export class HUD {
     g.fillStyle = rg; g.beginPath(); g.arc(cx, cy, r * 1.5, 0, 6.2832); g.fill();
     g.restore();
 
-    tracked(g, `${this.character.name} · ${this.weapon.name}`.toUpperCase(), Math.max(8 * S, cx - r * 0.9), cy + r * 1.62, {
+    const isRail = this.weapon.id === 'rail' || /adamant rail/i.test(this.weapon.name);
+    const ammoMax = this.ammo.max || 6;
+    const ammoCur = this.ammo.max ? this.ammo.cur : ammoMax;
+    const loading = this.reloadRemaining > 0;
+    const railState = loading ? `RELOADING ${this.reloadRemaining.toFixed(1)}S` : `AMMO ${ammoCur}/${ammoMax}`;
+    const weaponLine = `${this.character.name} · ${this.weapon.name}${isRail ? ` · ${railState}` : ''}`.toUpperCase();
+    tracked(g, weaponLine, Math.max(8 * S, cx - r * 0.9), cy + r * 1.62, {
       size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.85),
       shadow: '#05030b', shadowDy: 1,
     });

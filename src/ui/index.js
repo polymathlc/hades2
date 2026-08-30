@@ -123,6 +123,10 @@ export class UI {
     E.on('titanBlood.changed', (i) => { if (i && i.total != null) this.setResources(null, null, i.total); });
     E.on('darkness.changed', (i) => { if (i && i.total != null) this.setResources(null, null, null, i.total); });
     E.on('weapon.equipped', (i) => this.hud.setWeapon(i));
+    E.on('weapon.ammo', (i) => { if (!i?.actor || i.actor === ctx.player) this.hud.setAmmo(i); });
+    E.on('weapon.reload.begin', (i) => { if (!i?.actor || i.actor === ctx.player) this.hud.setReload(i); });
+    E.on('weapon.reload.end', (i) => { if (!i?.actor || i.actor === ctx.player) { this.hud.setAmmo(i); this.hud.setReload(null); } });
+    E.on('weapon.reload.cancel', (i) => { if (!i?.actor || i.actor === ctx.player) this.hud.setReload(null); });
     E.on('character.changed', (i) => this.hud.setCharacter(i?.character || i));
     E.on('home.characterSelected', (i) => this.hud.setCharacter(i?.character || i));
     E.on('room.entered', (i) => { if (i && i.room) this.setRoom(i.room.depth, i.room.biome); });
@@ -446,6 +450,7 @@ export class UI {
     const runtimeWeapon = ctx.combat?.runtimes?.get?.(ctx.player)?.weapon;
     h.setCharacter(character);
     h.setWeapon(runtimeWeapon || { id: o.weapon || character.defaultWeapon, name: String(o.weapon || character.defaultWeapon) });
+    if ((o.weapon || runtimeWeapon?.id) === 'rail') h.setAmmo({ weapon: 'rail', current: 3, max: 6 });
     h.weaponCd = 0.34;
     h.obols = 137; h.nectar = 4; h.titanBlood = 2;
     h.depth = 7; h.biome = (ctx.run && ctx.run.biome) || 'tartarus';
