@@ -223,9 +223,11 @@ function tickBoss(a, dt, ctx) {
 
 function bossDied(a, info, ctx) {
   ctx.events.emit('boss.defeated', { entity: a, pos: a.position.clone(), name: a.def.label });
-  ctx.engine?.slowmo?.(0.28, 1.4);
-  for (let i = 0; i < 4; i++) ctx.vfx?.shockwave?.(a.position.clone().setY(0.05 + i * 0.38), {
-    radius: 4 + i * 2.3, color: a.def.identity, life: 0.7 + i * 0.15,
+  // A short impact beat reads as intentional; the former 1.4 seconds at 28%
+  // speed looked indistinguishable from a browser freeze on slower machines.
+  ctx.engine?.slowmo?.(0.52, 0.62);
+  for (let i = 0; i < 2; i++) ctx.vfx?.shockwave?.(a.position.clone().setY(0.05 + i * 0.42), {
+    radius: 4.5 + i * 4.2, color: a.def.identity, life: 0.62 + i * 0.16, density: 0.46,
   });
 }
 

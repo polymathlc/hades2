@@ -585,7 +585,7 @@ export class Enemy {
     const dir = info && info.dir ? info.dir : null;
     ctx.vfx?.death?.(_v.copy(this.position).setY(this.height * 0.5), {
       color: this.def.deathColor || this.def.identity || '#8ef0d0',
-      scale: this.def.deathScale ?? 1, dir,
+      scale: this.def.deathScale ?? 1, dir, boss: !!this.def.boss,
     });
     ctx.events.emit('camera.shake', { amp: this.def.deathShake ?? 0.05, dur: 0.2, freq: 27 });
     ctx.audio?.sfx?.('enemyDeath', { pos: this.position });

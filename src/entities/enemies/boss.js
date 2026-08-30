@@ -174,9 +174,9 @@ export const WARDEN = {
   },
   onDied(a, info, ctx) {
     ctx.events.emit('boss.defeated', { entity: a, pos: a.position.clone() });
-    ctx.engine?.slowmo?.(0.28, 1.4);
-    for (let i = 0; i < 4; i++) {
-      ctx.vfx?.shockwave?.(a.position.clone().setY(0.05 + i * 0.4), { radius: 4 + i * 2.2, color: '#ff5a3c', life: 0.7 + i * 0.15 });
+    ctx.engine?.slowmo?.(0.52, 0.62);
+    for (let i = 0; i < 2; i++) {
+      ctx.vfx?.shockwave?.(a.position.clone().setY(0.05 + i * 0.42), { radius: 4.5 + i * 4.2, color: '#ff5a3c', life: 0.62 + i * 0.16, density: 0.46 });
     }
   },
   brain: {

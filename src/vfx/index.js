@@ -56,6 +56,7 @@ export class VFX {
     this.root = null;
     this._pending = [];
     this._budget = 1;
+    this._tierBudget = 1;
     this._doom = new Map();
   }
 
@@ -65,6 +66,12 @@ export class VFX {
     this.rng = new RNG('vfx');
     const tier = (ctx.quality && ctx.quality.tier) || 'high';
     const cap = tier === 'low' ? 700 : tier === 'med' ? 1400 : 2400;
+    // Particle count must follow the selected graphics tier even when the
+    // pool is empty. Previously Low emitted the same boss-death burst as
+    // Ultra until the pool was already saturated, which made degradation
+    // arrive one frame too late to prevent the hitch.
+    this._tierBudget = tier === 'low' ? 0.38 : tier === 'med' ? 0.62 : tier === 'high' ? 0.82 : 1;
+    this._budget = this._tierBudget;
 
     this.root = new THREE.Group();
     this.root.name = 'vfx';
@@ -88,10 +95,9 @@ export class VFX {
 
     ctx.events.on('biome.changed', ({ name }) => this.setBiome(name));
     ctx.events.on('capture.state', ({ name }) => this._captureState(name, ctx));
-    ctx.events.on('entity.died', (d) => {
-      if (!d || !d.pos || d.entity === ctx.player) return;
-      this.death(d.pos, { color: d.color, scale: d.scale || 1 });
-    });
+    // Enemy.onDied is the sole death-effect authority because it knows the
+    // enemy's authored colour, direction and scale. Listening to entity.died
+    // here as well used to emit a complete second death burst for every kill.
     ctx.events.on('room.built', () => this.clear());
     return this;
   }
@@ -442,7 +448,7 @@ export class VFX {
       color: o.color, size: o.size ?? 1, lifeMul: o.lifeMul ?? 1,
     });
     if (o.glow !== false) {
-      this.particles.emit('mote', 2, { x: pos.x, y: pos.y ?? 0.9, z: pos.z, size: 1.2, color: o.color || this.biome.rim });
+      this.particles.emit('mote', Math.max(1, Math.round(2 * this._budget)), { x: pos.x, y: pos.y ?? 0.9, z: pos.z, size: 1.2, color: o.color || this.biome.rim });
     }
     return this;
   }
@@ -478,6 +484,12 @@ export class VFX {
     const body = o.color || GODS.hecate;
     const P = this.particles;
     const x = pos.x, y = (pos.y ?? 0.9), z = pos.z;
+    // deathScale controls spatial drama, not unbounded particle count. Bosses
+    // use scales near 3, so multiplying every layer by that value caused the
+    // largest single-frame allocation in the game. Preserve the large flash,
+    // ring and soul column while capping density and applying the tier budget.
+    const densityScale = o.boss ? Math.min(1.25, Math.sqrt(Math.max(0.5, s))) : Math.min(1.6, s);
+    const count = (base, min = 1) => Math.max(min, Math.round(base * densityScale * this._budget));
 
     // 1 — the flash
     P.emit('flash', 1, { x, y: y + 0.2, z, size: 0.62 * s, color: '#ffffff' });
@@ -486,11 +498,11 @@ export class VFX {
 
     // 2 — the directional burst of shade-wisps
     const d = o.dir || null;
-    P.emit('wisp', Math.round(13 * s), {
+    P.emit('wisp', count(13, 3), {
       x, y, z, dx: d ? d.x : 0, dy: 1.0, dz: d ? d.z : 0, spread: d ? 0.75 : 1.15, speed: 0.85, color: body,
     });
-    P.emit('smoke', Math.round(6 * s), { x, y, z, dy: 1, spread: 0.9, speed: 0.5, size: 1.1 * s });
-    P.emit('spark', Math.round(10 * s), { x, y, z, dy: 0.9, spread: 1.25, speed: 0.9, color: body });
+    P.emit('smoke', count(6, 2), { x, y, z, dy: 1, spread: 0.9, speed: 0.5, size: 1.1 * Math.min(s, 2) });
+    P.emit('spark', count(10, 3), { x, y, z, dy: 0.9, spread: 1.25, speed: 0.9, color: body });
     this.decals.spawn(x, 0, z, { kind: 'ichor', size: 1.5 * s, rot: this.rng.range(0, 6.283), opacity: 0.6 });
 
     // 3 — dissolve upward: a soul column plus three staggered ember releases
@@ -500,8 +512,8 @@ export class VFX {
     });
     for (let k = 0; k < 3; k++) {
       this._at(0.08 + k * 0.12, () => {
-        P.emit('ember', Math.round(7 * s), { x, y: y - 0.3 + k * 0.45, z, dy: 1, spread: 0.42, speed: 0.55, color: body });
-        P.emit('rune', 1, { x, y: y + 0.35 + k * 0.5, z, size: 0.7 * s, color: body });
+        P.emit('ember', count(7, 2), { x, y: y - 0.3 + k * 0.45, z, dy: 1, spread: 0.42, speed: 0.55, color: body });
+        if (this._budget >= 0.5 || k === 1) P.emit('rune', 1, { x, y: y + 0.35 + k * 0.5, z, size: 0.7 * s, color: body });
       });
     }
     return this;
@@ -536,16 +548,18 @@ export class VFX {
     const color = o.color || this.biome.key;
     const R = o.radius ?? 3;
     const life = o.life ?? 0.45;
+    const density = Math.max(0, o.density ?? 1);
+    const q = this._budget * density;
     this.rings.spawn(pos.x, (pos.y ?? 0) + 0.04, pos.z, {
       radius: R, life, color, core: '#fff6e0', thick: 0.40, ease: 2.7, opacity: o.opacity ?? 0.85,
     });
-    if (R > 2.4) this.rings.spawn(pos.x, (pos.y ?? 0) + 0.05, pos.z, {
+    if (R > 2.4 && q >= 0.58) this.rings.spawn(pos.x, (pos.y ?? 0) + 0.05, pos.z, {
       radius: R * 0.55, life: life * 0.72, color: o.core || '#fff2cf', thick: 0.22, ease: 3.1, opacity: 0.35,
       phase: o.phase ?? 0,
     });
-    this.particles.emit('dust', 16, { x: pos.x, y: 0.10, z: pos.z, spread: R * 0.22, speed: 0.9, size: 1.1 });
-    this.particles.emit('sparkFine', 12, { x: pos.x, y: 0.16, z: pos.z, dy: 0.28, spread: 1.45, speed: 1.1, color });
-    this.particles.emit('mote', 1, { x: pos.x, y: 0.42, z: pos.z, size: 0.8, color });
+    this.particles.emit('dust', Math.max(3, Math.round(16 * q)), { x: pos.x, y: 0.10, z: pos.z, spread: R * 0.22, speed: 0.9, size: 1.1 });
+    this.particles.emit('sparkFine', Math.max(3, Math.round(12 * q)), { x: pos.x, y: 0.16, z: pos.z, dy: 0.28, spread: 1.45, speed: 1.1, color });
+    if (q >= 0.5) this.particles.emit('mote', 1, { x: pos.x, y: 0.42, z: pos.z, size: 0.8, color });
     return this;
   }
 
@@ -579,7 +593,8 @@ export class VFX {
 
     // graceful degradation: if the pool is saturated, thin new emissions
     const load = this.particles.count / this.particles.cap;
-    this._budget = load > 0.9 ? 0.45 : load > 0.72 ? 0.72 : 1;
+    const loadBudget = load > 0.9 ? 0.45 : load > 0.72 ? 0.72 : 1;
+    this._budget = this._tierBudget * loadBudget;
   }
 
   lateUpdate(alpha, ctx) {

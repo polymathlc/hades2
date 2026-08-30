@@ -543,6 +543,20 @@ export class HomeBase {
   }
 }
 
+// All boss drops share these immutable meshes. Rebuilding a LatheGeometry and
+// TorusGeometry at the moment a boss dies caused needless CPU/driver churn.
+let _rewardGeometry = null;
+function rewardGeometry() {
+  if (_rewardGeometry) return _rewardGeometry;
+  const profile = [new THREE.Vector2(0.0, 0.0), new THREE.Vector2(0.28, 0.04), new THREE.Vector2(0.34, 0.34), new THREE.Vector2(0.24, 0.68), new THREE.Vector2(0.14, 0.82), new THREE.Vector2(0.14, 1.02), new THREE.Vector2(0.0, 1.06)];
+  _rewardGeometry = {
+    body: new THREE.LatheGeometry(profile, 20),
+    cap: new THREE.CylinderGeometry(0.20, 0.16, 0.18, 16),
+    halo: new THREE.TorusGeometry(0.52, 0.045, 8, 32),
+  };
+  return _rewardGeometry;
+}
+
 /** A boss reward that visibly drops, then homes to the hero and is banked. */
 export class NectarDrop {
   constructor(ctx, pos, amount = 2, onCollect = () => {}, style = {}) {
@@ -564,15 +578,19 @@ export class NectarDrop {
     const purple = new THREE.MeshStandardMaterial({ color: this.style.color, emissive: this.style.emissive, emissiveIntensity: 2.4, roughness: 0.2, transparent: true, opacity: 0.88 });
     const gold = new THREE.MeshStandardMaterial({ color: this.style.metal, emissive: this.style.metalEmissive, emissiveIntensity: 0.45, metalness: 0.8, roughness: 0.3 });
     this.mats.push(purple, gold);
-    const profile = [new THREE.Vector2(0.0, 0.0), new THREE.Vector2(0.28, 0.04), new THREE.Vector2(0.34, 0.34), new THREE.Vector2(0.24, 0.68), new THREE.Vector2(0.14, 0.82), new THREE.Vector2(0.14, 1.02), new THREE.Vector2(0.0, 1.06)];
-    const bodyG = new THREE.LatheGeometry(profile, 20); this.geo.push(bodyG);
+    const shared = rewardGeometry();
+    const bodyG = shared.body;
     const body = new THREE.Mesh(bodyG, purple); body.castShadow = true; this.root.add(body);
-    const capG = new THREE.CylinderGeometry(0.20, 0.16, 0.18, 16); this.geo.push(capG);
+    const capG = shared.cap;
     const cap = new THREE.Mesh(capG, gold); cap.position.y = 1.08; this.root.add(cap);
-    const haloG = new THREE.TorusGeometry(0.52, 0.045, 8, 32); this.geo.push(haloG);
+    const haloG = shared.halo;
     const halo = new THREE.Mesh(haloG, gold); halo.rotation.x = Math.PI / 2; halo.position.y = 0.45; this.root.add(halo);
     this.halo = halo;
-    const light = new THREE.PointLight(this.style.color, 8, 7, 2); light.position.y = 0.65; this.root.add(light);
+    // On Low the emissive mesh is sufficient; another per-object point light
+    // would cost more than the reward's three tiny meshes.
+    if (ctx.quality?.tier !== 'low') {
+      const light = new THREE.PointLight(this.style.color, 8, 7, 2); light.position.y = 0.65; this.root.add(light);
+    }
     ctx.scene?.add?.(this.root);
     ctx.ui?.prompt?.(this.root.position, `${this.style.label} ×${amount}`, { key: this.style.key, height: 2.1, dur: 4 });
   }

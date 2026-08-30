@@ -65,6 +65,7 @@ export class RunState {
     this._bound = false;
     this._home = null;
     this._drops = [];
+    this._bossRewardQueue = [];
     this._rewardedBosses = new Set();
     this.selectedWeapon = null;
     this.selectedCharacter = 'zagreus';
@@ -440,30 +441,44 @@ export class RunState {
     const origin = i.pos || entity.position;
     const nectarPos = origin.clone?.() || { ...origin };
     if (nectarPos) nectarPos.x = (nectarPos.x || 0) - 0.8;
-    const drop = new NectarDrop(this.ctx, nectarPos, amount, gained => {
-      this.meta?.awardNectar?.(gained, { source: 'boss' });
-      this.nectar = this.meta?.nectar || 0;
-      this.ctx.ui?.setResources?.(this.obols, this.nectar, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
-      this.ctx.ui?.toast?.(`NECTAR +${gained} · BANKED AT THE CROSSROADS`, { color: '#d8b6ff', dur: 3.2 });
-      this.ctx.events.emit('boss.nectarCollected', { entity, amount: gained, total: this.nectar });
-    });
-    this._drops.push(drop);
     const bloodPos = origin.clone?.() || { ...origin };
     if (bloodPos) bloodPos.x = (bloodPos.x || 0) + 0.8;
-    const blood = new TitanBloodDrop(this.ctx, bloodPos, 1, gained => {
+    // Reward meshes, materials, prompts and lights used to be constructed in
+    // the exact frame that also emitted the boss-death explosion. Stagger the
+    // two drops so neither allocation competes with that critical frame.
+    this._bossRewardQueue.push(
+      { t: 0.26, kind: 'nectar', entity, pos: nectarPos, amount },
+      { t: 0.48, kind: 'blood', entity, pos: bloodPos, amount: 1 },
+    );
+    const bossName = entity.def?.label || i?.name || 'THE BOSS';
+    this.ctx.ui?.toast?.(`${bossName.toUpperCase()} DROPPED NECTAR + TITAN BLOOD`, { color: '#ff9a6b', dur: 2.8 });
+  }
+
+  _spawnBossReward(job) {
+    if (!job || this.state === 'home') return;
+    const { entity } = job;
+    if (job.kind === 'nectar') {
+      this._drops.push(new NectarDrop(this.ctx, job.pos, job.amount, gained => {
+        this.meta?.awardNectar?.(gained, { source: 'boss' });
+        this.nectar = this.meta?.nectar || 0;
+        this.ctx.ui?.setResources?.(this.obols, this.nectar, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
+        this.ctx.ui?.toast?.(`NECTAR +${gained} · BANKED AT THE CROSSROADS`, { color: '#d8b6ff', dur: 3.2 });
+        this.ctx.events.emit('boss.nectarCollected', { entity, amount: gained, total: this.nectar });
+      }));
+      return;
+    }
+    this._drops.push(new TitanBloodDrop(this.ctx, job.pos, job.amount, gained => {
       this.meta?.awardTitanBlood?.(gained, { source: 'boss' });
       this.ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
       this.ctx.ui?.toast?.(`TITAN BLOOD +${gained} · FORGE UPGRADES UNLOCKED`, { color: '#ff756b', dur: 3.2 });
       this.ctx.events.emit('boss.titanBloodCollected', { entity, amount: gained, total: this.meta?.titanBlood || 0 });
-    });
-    this._drops.push(blood);
-    const bossName = entity.def?.label || i?.name || 'THE BOSS';
-    this.ctx.ui?.toast?.(`${bossName.toUpperCase()} DROPPED NECTAR + TITAN BLOOD`, { color: '#ff9a6b', dur: 2.8 });
+    }));
   }
 
   _clearDrops() {
     for (const drop of this._drops) drop?.dispose?.();
     this._drops.length = 0;
+    this._bossRewardQueue.length = 0;
   }
 
   _onDeath() {
@@ -489,6 +504,14 @@ export class RunState {
     if (this.state === 'home') {
       this._home?.update?.(dt);
       return;
+    }
+    for (let i = this._bossRewardQueue.length - 1; i >= 0; i--) {
+      const job = this._bossRewardQueue[i];
+      job.t -= dt;
+      if (job.t <= 0) {
+        this._bossRewardQueue.splice(i, 1);
+        this._spawnBossReward(job);
+      }
     }
     for (let i = this._drops.length - 1; i >= 0; i--) {
       if (this._drops[i]?.update?.(dt)) this._drops.splice(i, 1);

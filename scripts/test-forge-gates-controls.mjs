@@ -21,6 +21,7 @@ import { ENCOUNTER_POOLS, BOSS_SEQUENCE, FINAL_BOSSES, FINAL_BOSS_DEPTH, bossFor
 import { lockModalInput, releaseModalInput } from '../src/ui/modal-input.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from '../src/ui/boon-choice.js';
 import { CHARACTER_INFO, characterOwnsWeapon } from '../src/game/characters.js';
+import { VFX } from '../src/vfx/index.js';
 
 class Bus {
   constructor() { this.map = new Map(); }
@@ -173,6 +174,50 @@ for (const name of ['tartarus', 'asphodel', 'elysium']) {
   assert.ok(grade.exposure >= (name === 'elysium' ? 0.95 : 1.2), `${name} exposure regressed into a gloomy range`);
   assert.ok(grade.black <= 0.002, `${name} black point crushes texture detail`);
   assert.ok(grade.vignette.amount <= 0.25 && grade.vignette.floor <= 0.2, `${name} vignette obscures the play area`);
+}
+
+// Boss death keeps its authored three-metre visual footprint, but particle
+// density is capped and follows the quality tier instead of multiplying every
+// layer by deathScale. This guards the browser hitch reported on boss kills.
+{
+  const deathParticleCount = budget => {
+    const fx = new VFX();
+    const emitted = [];
+    fx._budget = budget;
+    fx.ctx = { time: { t: 0 } };
+    fx.biome = { key: '#ffffff' };
+    fx.rng = { range: () => 0 };
+    fx.particles = { emit: (kind, count) => emitted.push({ kind, count }) };
+    fx.rings = { spawn: noop }; fx.decals = { spawn: noop }; fx.beams = { spawn: noop };
+    fx.death(new THREE.Vector3(0, 1, 0), { scale: 3, boss: true });
+    for (const pending of fx._pending.splice(0)) pending.fn();
+    return emitted.reduce((sum, e) => sum + e.count, 0);
+  };
+  assert.ok(deathParticleCount(0.38) <= 30, 'Low-tier boss death exceeded its particle budget');
+  assert.ok(deathParticleCount(1) <= 72, 'boss deathScale still multiplies particle count without a cap');
+}
+
+// Boss rewards are created after the death frame and on separate fixed steps.
+{
+  const run = new RunState();
+  const scene = new THREE.Scene();
+  run.ctx = {
+    scene, quality: { tier: 'low' }, player: { position: new THREE.Vector3(99, 0, 99) },
+    ui: { prompt: noop, toast: noop, setResources: noop }, events: new Bus(),
+    vfx: { burst: noop, shockwave: noop },
+  };
+  run.meta = { nectar: 0, titanBlood: 0, darkness: 0, awardNectar: noop, awardTitanBlood: noop };
+  run.state = 'playing'; run.depth = 5;
+  const boss = { position: new THREE.Vector3(), def: { label: 'Test Boss' } };
+  run._onBossDefeated({ entity: boss, pos: boss.position.clone() });
+  assert.equal(run._drops.length, 0, 'reward geometry was allocated during the boss-death frame');
+  assert.equal(run._bossRewardQueue.length, 2);
+  run.update(0.27, run.ctx);
+  assert.equal(run._drops.length, 1, 'Nectar did not spawn on its deferred step');
+  run.update(0.23, run.ctx);
+  assert.equal(run._drops.length, 2, 'Titan Blood did not spawn on its later deferred step');
+  assert.ok(run._drops.every(drop => !drop.root.children.some(child => child.isPointLight)), 'Low-tier rewards created dynamic point lights');
+  run._clearDrops();
 }
 
 // The Nectar altar is solid home geometry: entering its footprint must rescue
