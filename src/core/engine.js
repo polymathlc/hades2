@@ -27,8 +27,17 @@ export class Engine {
     this.ctx.events.on('hit.stop', ({ms})=> this.hitstop(ms));
     this.perf = { fps:60, ms:0, _acc:0, _n:0 };
   }
-  add(system, name){ this.systems.push(system); if(name) this.ctx[name]=system; return system; }
-  async initAll(){ for(const s of this.systems){ if(s.init) await s.init(this.ctx); } }
+  add(system, name){ this.systems.push(system); if(name){ this.ctx[name]=system; system.__sysName = name; } return system; }
+  /**
+   * Init every system in dependency order.
+   *
+   * `hook(name, system, ctx)` is awaited AFTER each system's own init. Boot
+   * preloading needs exactly this: the whole texture library has to be baked
+   * the instant MaterialLibrary exists and BEFORE World, Player or EnemyManager
+   * ask it for a surface, or those systems take the library's synchronous
+   * main-thread bake path (see core/preload.js).
+   */
+  async initAll(hook){ for(const s of this.systems){ if(s.init) await s.init(this.ctx); if(hook) await hook(s.__sysName, s, this.ctx); } }
   hitstop(ms){
     // Hit-stop sets time.scale to 0, which is correct in play but wrong under the headless capture
     // harness: capture.step(seconds) advances the simulation by a fixed number of steps, so a

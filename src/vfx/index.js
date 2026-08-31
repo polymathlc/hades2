@@ -81,6 +81,14 @@ export class VFX {
     // share geometry but own their materials so countdown opacity can change
     // independently on several enemies.
     this._doomTemplate = this._buildDoomKnife();
+    // Parked in the graph, invisible. Doom's knife used to live entirely
+    // outside the scene until the first Doom landed, so its three materials
+    // compiled their programs inside that frame. Sitting here costs nothing to
+    // draw (visible=false) and lets core/preload.js's compile + warm passes
+    // find it like every other pooled effect. Clones still take their own
+    // materials, so per-target countdown opacity is unaffected.
+    this._doomTemplate.visible = false;
+    this.root.add(this._doomTemplate);
 
     this.particles = new Particles({ cap }).init(ctx, this.root, this.rng);
     this.rings = new Rings(tier === 'low' ? 8 : 16).addTo(this.root);

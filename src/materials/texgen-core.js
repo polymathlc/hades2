@@ -1781,3 +1781,55 @@ export function packField8(f, n) {
   }
   return data;
 }
+
+/**
+ * Pack four independent 0..1 fields into one RGBA8 buffer.
+ *
+ * The shared DETAIL layer used to be a greyscale field replicated across rgb,
+ * which meant three quarters of a texture the shader samples on EVERY
+ * world-projected pixel carried no information at all. It now carries a value
+ * grain in R, a tangent-space micro-normal in GB and a roughness modulation in
+ * A — four surface properties for the one fetch we were already paying for.
+ */
+export function packChannels8(r, g, b, a, n) {
+  const data = new Uint8Array(n * n * 4);
+  for (let i = 0; i < n * n; i++) {
+    const k = i * 4;
+    data[k] = clamp01(r ? r[i] : 0.5) * 255;
+    data[k + 1] = clamp01(g ? g[i] : 0.5) * 255;
+    data[k + 2] = clamp01(b ? b[i] : 0.5) * 255;
+    data[k + 3] = clamp01(a ? a[i] : 0.5) * 255;
+  }
+  return data;
+}
+
+/**
+ * Wrapped central-difference gradient of a height field, encoded 0.5-centred
+ * into two output fields (a tangent-space normal's xy). The scale is derived
+ * from the field's own RMS slope rather than its extremes, so one stray texel
+ * cannot flatten the whole map — and it stays byte-identical run to run because
+ * it is a pure function of the input field.
+ */
+export function gradientPair(h, n, targetRms = 0.30) {
+  const gx = new Float32Array(n * n), gy = new Float32Array(n * n);
+  let acc = 0;
+  for (let y = 0; y < n; y++) {
+    const ym = wrapi(y - 1, n) * n, yp = wrapi(y + 1, n) * n, y0 = y * n;
+    for (let x = 0; x < n; x++) {
+      const xm = wrapi(x - 1, n), xp = wrapi(x + 1, n);
+      const dx = h[y0 + xp] - h[y0 + xm];
+      const dy = h[yp + x] - h[ym + x];
+      gx[y0 + x] = dx; gy[y0 + x] = dy;
+      acc += dx * dx + dy * dy;
+    }
+  }
+  const rms = Math.sqrt(acc / (2 * n * n)) || 1e-6;
+  const k = targetRms / rms;
+  // encoded 0.5-centred; the shader reads (v - 0.5) * 2, so the decoded slope
+  // has RMS = targetRms exactly
+  for (let i = 0; i < gx.length; i++) {
+    gx[i] = clamp01(0.5 + gx[i] * k * 0.5);
+    gy[i] = clamp01(0.5 + gy[i] * k * 0.5);
+  }
+  return { gx, gy };
+}

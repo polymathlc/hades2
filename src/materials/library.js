@@ -32,7 +32,7 @@ import {
   hexToRgb, rampAt,
 } from './palette.js';
 import {
-  painterly, setPaint, setBiomeLook, updatePainterly, paintParams,
+  painterly, setPaint, setBiomeLook, setKeyRefAll, updatePainterly, paintParams,
   ENVIRONMENT_LOOK, CHARACTER_LOOK,
 } from './painterly.js';
 import {
@@ -330,7 +330,36 @@ export class MaterialLibrary {
     TG.strokes(s, n, { rng, flow: TG.flowField(n, { base: 2.0, swirl: 1.1, freq: 5, seed: 1203 }), count: Math.round(n * 2.7), len: [n * 0.02, n * 0.08], width: [0.8, 1.6], value: [-0.14, -0.04], bristle: 0.8, taper: 2.1 });
     const out = new Float32Array(n * n);
     for (let i = 0; i < out.length; i++) out[i] = clamp01(0.5 + (g[i] - 0.5) * 0.42 + s[i] * 1.05);
-    this._detailTex = TG.fieldTexture(out, n, { anisotropy: Math.min(4, this.anisotropy) });
+
+    // ── THE DETAIL LAYER NOW CARRIES SURFACE, NOT JUST TONE ──────────────────
+    // It used to be `fieldTexture(out)` — one scalar replicated across r,g,b.
+    // The shader multiplied the ALBEDO by it and nothing else, so at the play
+    // camera the micro-scale read as a flat value grain painted on a perfectly
+    // smooth plane: no relief, no lighting response, and one roughness for the
+    // whole surface. Measured on the round-5 baseline, 04_material and
+    // 11_relief_detail came back at rmsContrast 0.127/0.137 against a 0.20
+    // floor with the wall bays reading as flat panels.
+    //
+    // Three of the four channels were carrying a copy of the first, so this
+    // costs one texture fetch — the same fetch — and buys:
+    //   R  the value grain, exactly as before (the albedo look is unchanged)
+    //   GB a tangent-space MICRO-NORMAL, so the grain catches the key and the
+    //      surface has relief at the scale a brush leaves it
+    //   A  a ROUGHNESS modulation at a coarser, incommensurate scale — §1.4's
+    //      "roughness should vary as an ARTISTIC map", and the cheapest way
+    //      there is to make one material read as several.
+    const chip = TG.fbm(n, { freq: 34, octaves: 3, seed: 1204, ppc: 3 });
+    const relief = new Float32Array(n * n);
+    for (let i = 0; i < relief.length; i++) relief[i] = clamp01(out[i] * 0.60 + chip[i] * 0.40);
+    const { gx, gy } = TG.gradientPair(relief, n, 0.34);
+    // dry/polished patches at ~6 periods across the detail tile, i.e. a scale
+    // BETWEEN the grain and the macro layer, which is the octave neither of
+    // them was covering
+    const wet = TG.fbm(n, { freq: 6, octaves: 4, seed: 1205 });
+    const rgh = new Float32Array(n * n);
+    for (let i = 0; i < rgh.length; i++) rgh[i] = clamp01(0.5 + (wet[i] - 0.5) * 1.7 + (chip[i] - 0.5) * 0.35);
+    this._detailTex = TG.byteTexture(TG.packChannels8(out, gx, gy, rgh, n), n,
+      { anisotropy: Math.min(4, this.anisotropy) });
     this._detailTex.name = 'detail.grain';
     return this._detailTex;
   }
@@ -340,16 +369,44 @@ export class MaterialLibrary {
     const n = this._shared(256);
     const a = TG.warp2(TG.fbm(n, { freq: 2, octaves: 5, seed: 2201 }), n, { amp: 0.12, freq: 2, seed: 2202 });
     const b = TG.warp2(TG.fbm(n, { freq: 3, octaves: 5, seed: 2203 }), n, { amp: 0.10, freq: 2, seed: 2204 });
+    const c = TG.warp2(TG.fbm(n, { freq: 5, octaves: 5, seed: 2205 }), n, { amp: 0.09, freq: 3, seed: 2206 });
+    // ── THE MACRO LAYER WAS INERT, AND THAT IS ARITHMETIC, NOT TASTE ─────────
+    // The old encoding put every channel at ~0.455-0.498 with a standard
+    // deviation of 0.05. The shader then computed
+    //     m = (mc*0.5 + m2*0.34 + m3*0.16) * 2.0            -> 0.94 +- 0.032
+    //     m = mix(1, m * mix(1, tint*1.7, 0.5), strength)
+    // For the floor (strength 0.30, tint #4a2c38 -> linear 0.068/0.027/0.041)
+    // that evaluates to a multiply of 0.858/0.847/0.851 with a 1-sigma swing of
+    // 0.010 — i.e. the one term in the shader whose job is to break a large
+    // floor's repeat was a 15% GLOBAL DARKENING with a 1% ripple on it. The
+    // wall (strength 0.40, #6b4a58) measured the same way: 0.834 +- 0.015.
+    // That is the same class of defect as the ink-floor note in painterly.js:
+    // a knob that looked considered and did nothing.
+    //
+    // So the encoding is now explicitly a ZERO-MEAN DEVIATION and the mean
+    // multiply is a separate, named uniform (uMacroLevel) that painterly.js
+    // seeds with the exact legacy constant above — every surface keeps the
+    // average brightness it shipped with, and only the VARIANCE changes. The
+    // fields are contrast-expanded to a standard deviation near 0.26 so the
+    // drift is something a critic can see across a bay.
+    //   R  the broad value drift        (one macroScale period)
+    //   G  a hue / roughness selector, deliberately decorrelated from R
+    //   B  a second value field, sampled by the shader at two SHORTER scales
+    //      so the layer finally has energy at the 3-10m band where a floor's
+    //      repeat actually reads. R alone lives at 80m and could only ever
+    //      contribute a gradient across a 12m frame.
+    const dev = (f) => {
+      const o = TG.normalize01(new Float32Array(f), 0, 1);
+      for (let i = 0; i < o.length; i++) o[i] = clamp01(0.5 + (o[i] - 0.5) * 1.30);
+      return o;
+    };
+    const A = dev(a), B = dev(b), C = dev(c);
     const rgbF = new Float32Array(n * n * 3);
     for (let i = 0; i < n * n; i++) {
-      // biased slightly below 0.5 so the `* 2` in the shader creates large
-      // SHADED regions, not only bright ones — that is the value banding
-      const v = 0.455 + (a[i] - 0.5) * 0.50;
-      const t = 0.5 + (b[i] - 0.5) * 0.34;
       const j = i * 3;
-      rgbF[j] = (v * 1.04 + t * 0.05) * 255;
-      rgbF[j + 1] = v * 255;
-      rgbF[j + 2] = (v * 0.96 + (1 - t) * 0.06) * 255;
+      rgbF[j] = A[i] * 255;
+      rgbF[j + 1] = B[i] * 255;
+      rgbF[j + 2] = C[i] * 255;
     }
     this._macroTex = TG.rgbTexture(rgbF, n, { linear: true, anisotropy: Math.min(4, this.anisotropy) });
     this._macroTex.name = 'macro.variation';
@@ -465,8 +522,9 @@ export class MaterialLibrary {
     const own = {};
     // split THREE material params from our own options
     const MINE = ['triplanar', 'projection', 'triScale', 'triSharp', 'stochastic', 'circScale',
-      'detail', 'detailScale', 'detailStrength',
-      'macro', 'macroScale', 'macroStrength', 'macroTint', 'variation', 'variationTint',
+      'detail', 'detailScale', 'detailStrength', 'detailBump', 'detailRough',
+      'macro', 'macroScale', 'macroStrength', 'macroTint', 'macroLevel', 'macroRough',
+      'variation', 'variationTint',
       'variant', 'rimColor', 'rimPower', 'rimStrength', 'rimDir', 'rimGate', 'shadowTint',
       'shadowDepth', 'rampSoftness', 'rampStrength', 'rampSteps', 'rampLevels', 'keyRef',
       'contourColor', 'contourStrength', 'contourStart', 'repeat', 'size', 'painterly', 'tint', 'envMap',
@@ -611,6 +669,14 @@ export class MaterialLibrary {
     if (!payload) return this;
     this._rim = payload;
     if (payload.env) this._bindEnv(payload.env);
+    // The ramp and the rim are both anchored to the key reference, and the
+    // hand-mounted arms (entities/player-weapons.js) are painterly-patched
+    // WITHOUT entering this cache — so the per-material loop below never
+    // reached them and their ramp stayed anchored to the 2.2 preset while the
+    // rig ran at ~16. Publish it to the whole painterly registry, which is this
+    // cache plus those arms; every cached material gets the identical value it
+    // already gets from _applyRim, so nothing else moves.
+    setKeyRefAll(this._keyRef());
     if (payload.biome && BIOMES[payload.biome] && payload.biome !== this.biome) return this.setBiome(payload.biome);
     for (const m of this.cache.values()) this._applyRim(m);
     return this;
