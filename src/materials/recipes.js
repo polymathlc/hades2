@@ -424,19 +424,38 @@ function warp1Lo(n, fbmOpts, warpOpts, div = 2) {
 
 // ---------------------------------------------------------------------------
 // CHARACTER MODULATION RAMPS.
-// Deliberately high-key and near-neutral: rig.js paints the roster's identity
-// hue into VERTEX COLOUR and the albedo multiplies it, so a saturated ramp
-// here would double the hue and a dark one would sink the hero below the
-// floor — which §9.2 makes the one unforgivable error in this project.
-// Mean value sits around 0.85 so the texture reads as material, not as a
-// second shadow pass.
+// rig.js paints the roster's identity hue into VERTEX COLOUR and the albedo
+// multiplies it, so these stay MODULATORS: their job is value and material,
+// and the family hue stays with the rig.
+//
+// WHAT THEY WERE, AND WHY IT WAS THE WRONG READING OF "MODULATOR". Measured on
+// the shipped bake at n=128:
+//     characterrig.skin   mean sRGB (240.3, 229.2, 224.2) = linear (.875,.785,.747)
+//     characterrig.cloth  mean sRGB (202.9, 199.5, 207.1), chroma spread 7.6 counts
+// A mean of 240 is not a modulator, it is a white primer. Multiplying the
+// authored #e8bd93 skin (linear .807/.509/.331) by it leaves .706/.400/.247 —
+// 88% of the vertex value survives, so the texture removed no energy, added no
+// colour and did no work at all beyond a faint grain. The hero therefore
+// arrived at the tonemap 6.2 stops over AgX middle grey with nothing but vertex
+// colour carrying it, and at that level the transform converges skin, gold and
+// steel onto one cream (see materials/painterly.js CHARACTER_LOOK.hiKnee).
+//
+// The correction is NOT "make it dark" — §9.2 is still the one unforgivable
+// error. It is:
+//   1. bring the mean down to ~0.72 sRGB so the texture has somewhere to swing,
+//   2. WIDEN the swing so a fold or a crevice is a real value break, and
+//   3. on SKIN ONLY, let the ramp carry subdermal temperature. Flesh is the one
+//      surface where "hue lives in the vertex colour" is wrong: skin is not a
+//      tint of one colour, it is a warm mid over a red core, and a modulator
+//      that goes to a deep brick at its low end is what puts blood in it.
+//      The cloth and hair ramps stay near-neutral, as before.
 // ---------------------------------------------------------------------------
 const R_ = (t, c) => ({ t, c });
-const SKIN_WARM = [R_(0, '#a89086'), R_(0.30, '#d0b6a8'), R_(0.58, '#ecd6c8'), R_(0.80, '#f8ebe0'), R_(1, '#fffcf7')];
-const SKIN_COOL = [R_(0, '#9a8a8c'), R_(0.32, '#c0b0b2'), R_(0.62, '#ded2d3'), R_(0.85, '#f2ebeb'), R_(1, '#fdfafa')];
-const CLOTH_N   = [R_(0, '#6c626a'), R_(0.26, '#948890'), R_(0.55, '#b8acb2'), R_(0.80, '#dcd2d6'), R_(1, '#f8f4f5')];
-const CLOTH_C   = [R_(0, '#5d5e6c'), R_(0.28, '#84869a'), R_(0.58, '#adaebf'), R_(0.82, '#d6d8e3'), R_(1, '#f4f6fb')];
-const HAIR_R    = [R_(0, '#4d4249'), R_(0.30, '#786a71'), R_(0.62, '#a2939a'), R_(0.86, '#ccbec3'), R_(1, '#f2e9eb')];
+const SKIN_WARM = [R_(0, '#7d4234'), R_(0.28, '#b2705a'), R_(0.56, '#d29e83'), R_(0.80, '#e9c7ab'), R_(1, '#f9e6d4')];
+const SKIN_COOL = [R_(0, '#6d3d43'), R_(0.30, '#9c6b6c'), R_(0.60, '#c09a99'), R_(0.85, '#dcc0bd'), R_(1, '#f1dfda')];
+const CLOTH_N   = [R_(0, '#4b4048'), R_(0.26, '#786a72'), R_(0.55, '#a599a0'), R_(0.80, '#cfc4c9'), R_(1, '#f2edef')];
+const CLOTH_C   = [R_(0, '#41424f'), R_(0.28, '#6c6f81'), R_(0.58, '#9899aa'), R_(0.82, '#c5c7d4'), R_(1, '#edeff6')];
+const HAIR_R    = [R_(0, '#3d343b'), R_(0.30, '#665a61'), R_(0.62, '#918389'), R_(0.86, '#bdb0b5'), R_(1, '#e8dfe1')];
 const METAL_R   = [R_(0, '#41382f'), R_(0.24, '#75664f'), R_(0.52, '#a8957a'), R_(0.78, '#dbcdb2'), R_(1, '#fffaee')];
 
 const RECIPES = {
@@ -477,7 +496,7 @@ const RECIPES = {
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.010), 4.5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.005), 5.0);
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.72 + (deep[i] - 0.5) * 0.30 + fine[i] * 0.10 - cav[i] * 0.26);
+    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.62 + (deep[i] - 0.5) * 0.46 + (fine[i] - 0.5) * 0.16 - cav[i] * 0.40 + edge[i] * 0.14);
     // temperature: warm across the mass, cool where the form turns away
     const temp = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 2.2, octaves: 4, seed: seed + 11 }), r, { amp: 0.10, freq: 2, seed: seed + 12 }), n >> 2);
     const rgb = TG.applyRamp2(v, temp, n, SKIN_WARM, SKIN_COOL);
@@ -503,7 +522,7 @@ const RECIPES = {
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 7.0);
     const v = F(n);
     for (let i = 0; i < v.length; i++) {
-      v[i] = 0.66 + (slub[i] - 0.5) * 0.42 + (wv[i] - 0.5) * 0.30 - cav[i] * 0.40 + edge[i] * 0.24;
+      v[i] = 0.70 + (slub[i] - 0.5) * 0.58 + (wv[i] - 0.5) * 0.34 - cav[i] * 0.52 + edge[i] * 0.28;
     }
     const temp = TG.lowFreq(n, (r) => TG.fbm(r, { freq: 2.6, octaves: 4, seed: seed + 8 }), n >> 2);
     // HAND-PLACED HIGHLIGHT. highlight 1.2 is deliberately past the value used
@@ -537,7 +556,7 @@ const RECIPES = {
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 6.0);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 7.0);
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.58 + (comb[i] - 0.5) * 0.62 - cav[i] * 0.34 + edge[i] * 0.30);
+    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.54 + (comb[i] - 0.5) * 0.74 - cav[i] * 0.42 + edge[i] * 0.34);
     const rgb = TG.applyRamp(v, n, HAIR_R);
     const rough = TG.artisticRoughness(n, { base: 0.50, height: h, cavity: cav, edge, polish: 0.42, variation: 0.16, seed: seed + 5, min: 0.22, max: 0.80 });
     return { rgb, height: h, rough, metal: 0, normalScale: 0.70, paint: { variant: 'character' } };

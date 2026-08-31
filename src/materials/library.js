@@ -32,7 +32,7 @@ import {
   hexToRgb, rampAt,
 } from './palette.js';
 import {
-  painterly, setPaint, setBiomeLook, updatePainterly, paintParams,
+  painterly, setPaint, setBiomeLook, setKeyRefAll, updatePainterly, paintParams,
   ENVIRONMENT_LOOK, CHARACTER_LOOK,
 } from './painterly.js';
 import {
@@ -664,6 +664,14 @@ export class MaterialLibrary {
     if (!payload) return this;
     this._rim = payload;
     if (payload.env) this._bindEnv(payload.env);
+    // The ramp and the rim are both anchored to the key reference, and the
+    // hand-mounted arms (entities/player-weapons.js) are painterly-patched
+    // WITHOUT entering this cache — so the per-material loop below never
+    // reached them and their ramp stayed anchored to the 2.2 preset while the
+    // rig ran at ~16. Publish it to the whole painterly registry, which is this
+    // cache plus those arms; every cached material gets the identical value it
+    // already gets from _applyRim, so nothing else moves.
+    setKeyRefAll(this._keyRef());
     if (payload.biome && BIOMES[payload.biome] && payload.biome !== this.biome) return this.setBiome(payload.biome);
     for (const m of this.cache.values()) this._applyRim(m);
     return this;
