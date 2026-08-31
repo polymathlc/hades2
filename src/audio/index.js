@@ -27,7 +27,7 @@
 
 import { Music } from './music.js';
 import { RECIPES, resolve as resolveSfx, SFX_NAMES } from './sfx.js';
-import { ReverbBus, DelayBus, BIOME_SPACE } from './reverb.js';
+import { ReverbBus, DelayBus, BIOME_SPACE, SPACES } from './reverb.js';
 import { mulberry32, hashName, clamp, lerp, gain as mkGain, filter as mkFilter, panner as mkPanner, shaperCurve, noise } from './synth.js';
 
 // ── mix constants, tuned for the isometric camera ──────────────────────────
@@ -101,6 +101,7 @@ export class Audio {
     this.music = new MusicFacade(this);
     this.muted = false;
     this._live = false;         // an AudioContext exists and the graph is built
+    this._started = false;      // unlock() has resumed the context and started music
     this._capture = false;
     this.ac = null;
     this.vol = { ...DEFAULT_VOL };
@@ -135,17 +136,78 @@ export class Audio {
     this._bind(ctx);
   }
 
-  /** Build the graph. Called on the first user gesture (main.js wires this). */
-  unlock() {
-    if (this._capture || this._live) return;
+  /**
+   * PRELOAD — everything this system would otherwise synthesise on first play.
+   *
+   * Called from core/preload.js behind the loading screen. Reverb impulse
+   * responses (reverb.js renders one per ROOM, ~10-40ms each), the plucked
+   * string banks and the shared noise tables were all built lazily: the first
+   * time the run crossed into Asphodel the lavahall IR was rendered inside that
+   * frame, and the first boss roar rendered the cavern. That is precisely the
+   * wrong moment. We build the graph now (the context stays SUSPENDED — no
+   * sound is produced and no autoplay policy is violated) and render every
+   * buffer up front; unlock() then only has to resume and start the music.
+   *
+   * CONTRACT 1 still holds: under capture this returns immediately, having
+   * touched nothing.
+   */
+  async preload() {
+    if (this._capture) return { audio: false, reason: 'capture' };
+    const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+    if (!this._ensureContext()) return { audio: false, reason: 'no AudioContext' };
+    const ac = this.ac;
+    const out = { audio: true, irs: [], banks: 0, noise: 0 };
+    try {
+      // every biome's room, plus the four authored spaces, so a biome change or
+      // a boss arena never renders an IR on the audio thread's doorstep
+      const rooms = new Set([...Object.values(BIOME_SPACE), ...Object.keys(SPACES)]);
+      for (const room of rooms) { this._rev.ir(room); out.irs.push(room); }
+      // Karplus-Strong string banks: bouzouki, lyre and the plucked bass
+      this._music.prime(); out.banks = 3;
+      // the shared deterministic noise tables every sfx recipe draws from
+      for (const kind of ['white', 'pink', 'brown', 'metal']) { noise(ac, kind); out.noise++; }
+      // the room the run starts in, so the first crossfade has somewhere to go
+      this._rev.setSpace(BIOME_SPACE[this.ctx?.run?.biome || 'tartarus'] || 'cell', ac.currentTime, 0.001);
+    } catch (e) {
+      console.warn('[audio] preload incomplete:', e && e.message);
+      out.error = String(e && e.message);
+    }
+    out.ms = ((typeof performance !== 'undefined') ? performance.now() : 0) - t0;
+    return out;
+  }
+
+  /**
+   * Create the AudioContext and the mix graph exactly once. Constructing a
+   * context is allowed without a gesture — it simply starts suspended — so this
+   * is safe to call from the loading screen. Returns false when the platform
+   * has no Web Audio at all (CONTRACT 2).
+   */
+  _ensureContext() {
+    if (this._capture) return false;
+    if (this.ac && this._live) return true;
     try {
       const AC = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext);
-      if (!AC) return;                                  // CONTRACT 2
+      if (!AC) return false;
       const ac = new AC({ latencyHint: 'interactive' });
       this.ac = ac;
       this._buildGraph(ac);
       this._K.ac = ac; this._K.rnd = this._rnd;
       this._live = true;
+      return true;
+    } catch (e) {
+      console.warn('[audio] unavailable:', e && e.message);
+      this._live = false; this.ac = null;
+      return false;
+    }
+  }
+
+  /** Build the graph. Called on the first user gesture (main.js wires this). */
+  unlock() {
+    if (this._capture || this._started) return;
+    try {
+      if (!this._ensureContext()) return;               // CONTRACT 2
+      const ac = this.ac;
+      this._started = true;
       if (ac.state === 'suspended' && ac.resume) ac.resume();
       // main.js unbinds its unlock listener after one call. If the browser
       // refused that first resume (some autoplay policies only accept a

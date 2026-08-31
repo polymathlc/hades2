@@ -17,6 +17,8 @@ import {
   GRAPHICS_STORAGE_KEY, chooseGraphicsTier, graphicsChoiceSource,
   graphicsDprCap, isGraphicsTier,
 } from './core/quality.js';
+import { LoadingScreen } from './core/loading.js';
+import { preloadSurfaces, preloadAll } from './core/preload.js';
 
 const qs = new URLSearchParams(location.search);
 const CAPTURE = qs.has('capture');
@@ -50,6 +52,13 @@ function detectQuality(){
 }
 
 async function boot(){
+  // The descent gate goes up before anything else exists. Boot is genuinely
+  // long now — we bake all 46 texture recipes and compile every shader program
+  // up front so nothing is generated during play — and a long black screen with
+  // no explanation is a worse game than an honest loading screen. Skipped under
+  // the capture harness, which has no eyes and should not pay for two rAFs per
+  // phase. See core/preload.js for what the phases are and why.
+  const loading = CAPTURE ? null : new LoadingScreen().mount();
   const engine = new Engine({ seed: SEED, quality: detectQuality() });
   const ctx = engine.ctx;
   ctx.CAPTURE = CAPTURE;
@@ -74,7 +83,23 @@ async function boot(){
   const run      = engine.add(new RunState(), 'run');
 
   const tBoot = performance.now();
-  await engine.initAll();
+  // PHASE 1 runs INSIDE initAll, immediately after MaterialLibrary.init() and
+  // before World/Player/EnemyManager ask for their first surface. That ordering
+  // is the whole point: 14 of the 46 recipes were never in the library's boot
+  // set, so the player's own skin/cloth/hair and the entire Asphodel set used to
+  // take the library's synchronous main-thread bake — half a second of blocked
+  // thread each, the first one during boot and the rest mid-run.
+  let preMs = 0;
+  await engine.initAll(async (name) => {
+    if (name !== 'mats') return;
+    const t = performance.now();
+    if (loading) { loading.set(0.02, 'Synthesising surfaces', ''); await loading.flush(); }
+    const surf = await preloadSurfaces(ctx, (p, note) => loading && loading.set(0.02 + 0.60 * p, 'Synthesising surfaces', note));
+    preMs = performance.now() - t;
+    console.info(`[preload] surfaces ${surf.total} sets baked (${surf.baked} beyond the boot set) in ${preMs.toFixed(0)}ms`);
+  });
+  // PHASES 2-5: GPU upload, the enemy roster, every shader program, all audio.
+  const preStats = await preloadAll(ctx, loading, { warm: qs.get('warm') || 'auto' });
   ctx.input.attach(ctx.renderer.domElement);
 
   // Settings can be changed before a descent. At home a short reload is safe
@@ -95,13 +120,23 @@ async function boot(){
     }
   });
 
-  // One-line boot budget report. Texture synthesis is the expensive half of
-  // init and it is lazy, so this number is "everything the first chamber
-  // actually asked for", which is the number that matters.
+  // One-line boot budget report. Texture synthesis is no longer lazy: this is
+  // now the WHOLE recipe book plus every shader program, which is the honest
+  // price of never generating anything again during play. `sync bakes` must be
+  // 0 — any number above it is a surface that still blocked the main thread.
   const ms = ctx.mats && ctx.mats.stats ? ctx.mats.stats : null;
-  console.info(`[erebus] boot ${(performance.now() - tBoot).toFixed(0)}ms | materials `
+  const bootMs = performance.now() - tBoot;
+  console.info(`[erebus] boot ${bootMs.toFixed(0)}ms | materials `
     + `${ms ? ms.built : 0} sets in ${ms ? ms.ms.toFixed(0) : 0}ms `
-    + `(${ms ? (ms.texels / 1e6).toFixed(1) : 0} Mtexel) | tier ${ctx.quality.tier}`);
+    + `(${ms ? (ms.texels / 1e6).toFixed(1) : 0} Mtexel) | tier ${ctx.quality.tier}`
+    + ` | sync bakes ${ms ? ms.sync.length : 0}`
+    + ` | programs ${ctx.renderer.info.programs ? ctx.renderer.info.programs.length : 0}`
+    + ` | textures ${ctx.renderer.info.memory.textures}`);
+  // The honest cost report: what the longer boot bought.
+  window.EREBUS_PRELOAD = {
+    bootMs: +bootMs.toFixed(0), surfacesMs: +preMs.toFixed(0), ...preStats,
+    syncBakes: ms ? ms.sync.slice() : [],
+  };
 
   addEventListener('resize', ()=> engine.resize(innerWidth, innerHeight));
 
@@ -113,7 +148,7 @@ async function boot(){
     if(ctx.run) ctx.run.biome = name;
     return name;
   };
-  window.EREBUS = { engine, ctx, THREE, setBiome };
+  window.EREBUS = { engine, ctx, THREE, setBiome, preload: window.EREBUS_PRELOAD };
 
   if(CAPTURE){
     setupCapture(engine, ctx, setBiome);
@@ -123,6 +158,7 @@ async function boot(){
     engine.start();
   }
   document.body.classList.add('booted');
+  if (loading) loading.done();
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +318,8 @@ function setupCapture(engine, ctx, setBiome){
 
 boot().catch(e=>{
   console.error('BOOT FAILURE', e);
+  // the descent gate must never outlive a failed boot, or the error is hidden
+  document.getElementById('erebus-load')?.remove();
   const d=document.createElement('pre');
   d.style.cssText='position:fixed;inset:0;color:#f66;background:#100;padding:20px;font:12px monospace;z-index:99999;white-space:pre-wrap';
   d.textContent='BOOT FAILURE\n'+(e&&e.stack||e); document.body.appendChild(d);
