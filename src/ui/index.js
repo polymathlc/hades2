@@ -17,13 +17,13 @@
 // ---------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette, bindRarityPalette } from './ornament.js';
+import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette, bindRarityPalette, invalidateCssCache } from './ornament.js';
 import { HUD } from './hud.js';
 import { BoonOverlay } from './boons.js';
 import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
 import { WorldLabels } from './worldlabels.js';
-import { BoonState, BOONS, DUOS, LEGENDARIES, GOD_INFO } from '../game/boons.js';
+import { BoonState, BOONS, DUOS, LEGENDARIES, GOD_INFO, CURSES } from '../game/boons.js';
 import { CHARACTER_INFO } from '../game/characters.js';
 
 const REF_W = 1600, REF_H = 900;
@@ -62,7 +62,7 @@ export class UI {
     this.ctx = ctx;
     // The rarity palette is authored in style.css; bind it before the first
     // frame so canvas ornament and any DOM chrome agree from the very start.
-    bindRarityPalette();
+    bindRarityPalette(CURSES);
     this.menus.settings.quality = ctx.quality?.source === 'auto' ? 'auto' : (ctx.quality?.tier || 'med');
     this._rng = ctx.rng && ctx.rng.fork ? ctx.rng.fork('ui') : ctx.rng;
 
@@ -234,6 +234,9 @@ export class UI {
     this.scale = Math.min(w / REF_W, h / REF_H);
     // never let the UI shrink below legibility or grow into a billboard
     this.scale = Math.max(0.62, Math.min(1.5, this.scale));
+    // style.css steps the card geometry (and may flip prefers-reduced-motion)
+    // at small viewports, so the bound tokens are re-read, not cached at boot.
+    invalidateCssCache();
     this.cache.clear(); this.hud.cache.clear(); this.menus.cache.clear();
     if (this.tex) this.tex.needsUpdate = true;
     this.dirty = true;
@@ -256,11 +259,17 @@ export class UI {
    */
   showPomChoice(o = {}) {
     const bs = this.boonState;
+    // The run system deals its own hand from its own deterministic stream when
+    // it has one; a bare call still works and rolls here.
     const rng = this.ctx?.rng?.fork ? this.ctx.rng.fork('pom') : this.ctx?.rng;
-    const offers = bs?.pomOffers?.(rng, o.count || 3) || [];
+    const offers = (o.offers && o.offers.length ? o.offers : bs?.pomOffers?.(rng, o.count || 3)) || [];
     if (!offers.length) return Promise.resolve(null);
-    return this.boonUI.open(offers, { ...o, kind: 'pom' });
+    return this.boonUI.open(offers, { ...o, offers: undefined, kind: 'pom' });
   }
+  /** Poms of Power still banked this descent. */
+  pomsLeft() { return this.boonState?.poms || 0; }
+  /** Hand the player a Pom of Power (boss reward, shop, Chaos gate). */
+  grantPoms(n = 1) { const v = this.boonState?.grantPoms?.(n) || 0; this.dirty = true; return v; }
   toast(text, o = {}) {
     this.toasts.push({ text: String(text), color: o.color || PAL.gold, icon: o.icon || null, t0: this.t, dur: o.dur || 2.4 });
     if (this.toasts.length > 4) this.toasts.shift();
@@ -324,8 +333,12 @@ export class UI {
       if (p.health !== this._lastHp) { this._lastHp = p.health; this.hud.setHealth(p.health, p.maxHealth); }
       if (p.mana !== this._lastMp) { this._lastMp = p.mana; this.hud.setMana(p.mana, p.maxMana); }
       if (p.dash) {
-        const d = p.dash.ready ? this.hud.dashMax : Math.max(0, this.hud.dashMax - 1);
-        if (d !== this.hud.dash) this.hud.setDash(d);
+        // The meter shows the real budget, so "gain 1 additional Dash" is a
+        // visible second pip rather than a claim in a card's body text.
+        const max = Math.max(1, p.dash.max || this.hud.dashMax || 1);
+        const d = Math.max(0, Math.min(max, p.dash.charges != null
+          ? p.dash.charges : (p.dash.ready ? max : max - 1)));
+        if (d !== this.hud.dash || max !== this.hud.dashMax) this.hud.setDash(d, max);
       }
     }
     if (this.nectarUI.active || this.boonUI.active || this.menus.modal) this.dirty = true;
@@ -550,10 +563,12 @@ export class UI {
     // Legendary they have not (so the prerequisite callout is exercised), and a
     // Pom of Power. These three cards are the ones the ordinary shot cannot show.
     if (god === 'payoff') {
+      // Sea Storm names its own prerequisites, so the earned-Duo reference has
+      // to actually hold them: a Zeus Attack and a Poseidon Dash.
       const zeusAttack = BOONS.find(b => b.id === 'zeus.attack');
-      const poseidonCast = BOONS.find(b => b.id === 'poseidon.cast');
+      const poseidonDash = BOONS.find(b => b.id === 'poseidon.dash');
       bs.grant(bs.offer(zeusAttack, 'epic'));
-      bs.grant(bs.offer(poseidonCast, 'rare'));
+      bs.grant(bs.offer(poseidonDash, 'rare'));
       const duo = DUOS.find(d => d.gods.includes('zeus') && d.gods.includes('poseidon'));
       const legendary = LEGENDARIES.find(l => l.god === 'ares');
       const cards = [];

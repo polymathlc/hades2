@@ -15,11 +15,29 @@
 import {
   PAL, RARITY, frame, panelBody, plaqueRect, roundRect, goldGradient, meander,
   beadRule, palmette, tracked, trackedWidth, wrap, rgba, mix, shade, lift,
-  displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
+  displayFont, bodyFont, ease, clamp01, lerp, LayerCache, uiMotion,
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
 import { upsertHudBoon, hudBoonSlotLabel, hudBoonGroups } from './hud-boons.js';
+
+/**
+ * The ground the loadout tray stands on. Fades out to the right and down so it
+ * never reads as a window, only as a darkening of the floor behind the text.
+ */
+function trayScrim(g, x, y, w, h, S) {
+  g.save();
+  roundRect(g, x - 14 * S, y - 17 * S, w + 42 * S, h + 27 * S, 9 * S);
+  const sg = g.createLinearGradient(x - 14 * S, 0, x + w + 28 * S, 0);
+  sg.addColorStop(0, 'rgba(6,4,13,0.70)');
+  sg.addColorStop(0.66, 'rgba(6,4,13,0.52)');
+  sg.addColorStop(1, 'rgba(6,4,13,0.02)');
+  g.fillStyle = sg; g.fill();
+  const eg = g.createLinearGradient(x - 14 * S, 0, x + w * 0.5, 0);
+  eg.addColorStop(0, 'rgba(109,68,22,0.40)'); eg.addColorStop(1, 'rgba(0,0,0,0)');
+  g.strokeStyle = eg; g.lineWidth = Math.max(1, 1 * S); g.stroke();
+  g.restore();
+}
 
 /** The binding for each ability category, so the tray doubles as a legend. */
 const HUD_SLOT_KEY = { attack: 'LMB', special: 'RMB', cast: 'Q', dash: 'SPACE', call: 'R' };
@@ -161,6 +179,9 @@ export class HUD {
   draw(g, W, H, S, t) {
     const a = this.alpha.v;
     if (a <= 0.01) return;
+    // Reduced motion parks the travelling speculars: the readouts are all
+    // still here, they simply stop sliding.
+    t *= uiMotion();
     g.save();
     g.globalAlpha *= a;
     this._cluster(g, W, H, S, t);
@@ -249,8 +270,17 @@ export class HUD {
     const loading = this.reloadRemaining > 0;
     const railState = loading ? `RELOADING ${this.reloadRemaining.toFixed(1)}S` : `AMMO ${ammoCur}/${ammoMax}`;
     const weaponLine = `${this.character.name} · ${this.weapon.name}${isRail ? ` · ${railState}` : ''}`.toUpperCase();
-    tracked(g, weaponLine, Math.max(8 * S, cx - r * 0.9), cy + r * 1.62, {
-      size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.85),
+    // BELOW the Magick bar, not through it. The caption used to be laid across
+    // the bar's own row; the bar's ink plate then made the collision opaque.
+    const capY = cy + r * 2.10;
+    const capX = Math.max(8 * S, cx - r * 0.9);
+    const capW = trackedWidth(g, weaponLine, { size: 8.4 * S, track: 0.20, weight: 600 });
+    g.save();
+    plaqueRect(g, capX - 5 * S, capY - 9 * S, capW + 12 * S, 13.5 * S, 2.5 * S);
+    g.fillStyle = 'rgba(6,4,13,0.55)'; g.fill();
+    g.restore();
+    tracked(g, weaponLine, capX, capY, {
+      size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parch, 0.88),
       shadow: '#05030b', shadowDy: 1,
     });
   }
@@ -493,6 +523,7 @@ export class HUD {
       // Before the first boon the tray would be five empty sockets and nothing
       // else, which is noise. Show a single quiet prompt instead.
       const x0 = 30 * S, y0 = 108 * S;
+      trayScrim(g, x0, y0, 176 * S, 32 * S, S);
       tracked(g, 'LOADOUT', x0, y0, {
         size: 8.6 * S, track: 0.36, weight: 700, align: 'left', color: rgba(PAL.goldMid, 0.62),
       });
@@ -504,13 +535,19 @@ export class HUD {
 
     const x = 30 * S;
     const y0 = 104 * S;
-    const trayW = 176 * S;
+    const trayW = 196 * S;
     // The tray must never reach down into the combat cluster. Measure the room
     // it actually has and compress the rows to fit rather than overlapping.
     const room = Math.max(180 * S, (H - 250 * S) - y0);
     const wanted = 16 * S + abilities.length * 40 * S + (extras.length ? 14 * S + extras.length * 30 * S : 0);
     const k = Math.min(1, room / wanted);
     const rowH = 40 * S * k, extraH = 30 * S * k;
+
+    // A SCRIM UNDER THE WHOLE COLUMN. Empty sockets are dashed bronze on a 2%
+    // fill: over the lit floor of Tartarus they simply vanished, and with them
+    // the bindings — which is the one thing the tray is for.
+    const totalH = 16 * S + abilities.length * rowH + (extras.length ? 14 * S + extras.length * extraH : 0);
+    trayScrim(g, x, y0, trayW, totalH, S);
 
     let y = y0;
     tracked(g, 'LOADOUT', x, y, {
@@ -605,6 +642,10 @@ export class HUD {
       // name is measured against what is actually left rather than the plaque
       const room = w - (tx - x) - (compact ? 12 : 40) * S;
       let size = (compact ? 7.6 : 8.4) * S;
+      // SHRINK BEFORE YOU CHOP. "LIGHTNING STRI…" tells the player nothing the
+      // full name at 88% would not have told them better.
+      const full = trackedWidth(g, name, { size, track: 0.06, weight: 600 });
+      if (full > room) size *= Math.max(0.80, room / full);
       let shown = name;
       while (shown.length > 4 && trackedWidth(g, shown, { size, track: 0.06, weight: 600 }) > room) shown = shown.slice(0, -1);
       if (shown !== name) shown = shown.trimEnd() + '…';

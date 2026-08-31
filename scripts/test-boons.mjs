@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import * as THREE from 'three';
 import {
   BOONS, DUOS, LEGENDARIES, BoonState, GOD_INFO, GOD_KEYS, SLOTS,
@@ -7,6 +9,7 @@ import {
 } from '../src/game/boons.js';
 import { upsertHudBoon, hudBoonGroups } from '../src/ui/hud-boons.js';
 import { CombatSystem } from '../src/entities/combat.js';
+import { RunState } from '../src/game/run.js';
 import { VFX } from '../src/vfx/index.js';
 import { ProjectileSystem } from '../src/entities/projectiles.js';
 import { buildClipData } from '../src/entities/anim.js';
@@ -617,7 +620,6 @@ const state = () => new BoonState({ events, rng: { f: () => 0 } });
   assert.equal(offer.locked, false);
   const rec = bs.grant(offer);
   assert.equal(rec.rarity, 'legendary');
-  assert.ok(bs.mods.castForks > 0 || bs.mods.chainBonus > 0, 'the Legendary changed nothing at runtime');
 
   // A Legendary must never appear in an ordinary draw before it is earned.
   const clean = state();
@@ -626,6 +628,309 @@ const state = () => new BoonState({ events, rng: { f: () => 0 } });
     const offers = clean.roll(rng, { count: 3, god: 'zeus', allowDuo: false });
     assert.ok(offers.every(o => !o.legendary), 'an unearned Legendary entered the ordinary pool');
   }
+}
+
+// ── 8b. NO WRITE-ONLY MODIFIERS ───────────────────────────────────────────
+// The bug this exists to kill: a card that prints "Gain 1 additional Dash",
+// writes `mods.dashCharges`, and is read by nothing — a promise the engine
+// cannot keep. The consumer set is DERIVED, by scanning every module outside
+// the boon data for property access on a modifier object, so it keeps working
+// as fields are added and cannot be satisfied by a hand-maintained allowlist.
+const MOD_CONSUMERS = (() => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  // Everything that is not the boon data itself is a consumer. run.js is the
+  // run system reading the loadout, not part of the modifier engine.
+  const roots = ['src/entities', 'src/ui', 'src/world', 'src/render', 'src/vfx',
+    'src/core', 'src/audio', 'src/materials', 'src/main.js', 'src/game/run.js'];
+  const walk = (path, out = []) => {
+    const st = statSync(path);
+    if (st.isDirectory()) { for (const f of readdirSync(path)) walk(path + '/' + f, out); }
+    else if (path.endsWith('.js')) out.push(path);
+    return out;
+  };
+  let text = '';
+  for (const r of roots) for (const f of walk(root + r)) text += readFileSync(f, 'utf8') + '\n';
+  // BoonState._syncPlayer() publishes a few modifiers straight onto the hero,
+  // so its body counts as a consumer too — and nothing else in src/game does.
+  const engine = readFileSync(root + 'src/game/boons.js', 'utf8');
+  const from = engine.indexOf('_syncPlayer() {');
+  text += engine.slice(from, engine.indexOf('clear() {', from));
+  // mods.x / playerMods?.x / sourceMods?.x / ctx.boons?.mods?.x
+  const re = /\b\w*[Mm]ods\s*\??\.\s*([A-Za-z_$][\w$]*)/g;
+  const out = new Set();
+  let m;
+  while ((m = re.exec(text))) out.add(m[1]);
+  return out;
+})();
+
+{
+  // sanity: the scanner must actually find the well-known modifiers, or an
+  // empty consumer set would make every assertion below vacuously true.
+  for (const known of ['attackMul', 'rider', 'status', 'critChance', 'wallSlamDmg']) {
+    assert.ok(MOD_CONSUMERS.has(known), `the modifier scan missed ${known} — the derivation is broken`);
+  }
+  const declared = Object.keys(emptyMods());
+  const orphans = declared.filter(k => !MOD_CONSUMERS.has(k));
+  assert.deepEqual(orphans, [],
+    `emptyMods() declares fields nothing outside the boon data reads: ${orphans.join(', ')}`);
+
+  // Both what changed AND what appeared: a boon writing `m.vsWeakAmpp` invents
+  // a field, and an invented field is as dead as an unread one.
+  const changedKeys = (boon, rarity) => {
+    const before = emptyMods(), after = emptyMods();
+    try { boon.apply(after, valuesFor(boon, rarity), null); } catch (e) { return []; }
+    const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+    return [...keys].filter(k => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+  };
+
+  // Every one of the fifteen, not one of them.
+  assert.equal(LEGENDARIES.length, 15);
+  for (const leg of LEGENDARIES) {
+    const keys = changedKeys(leg, 'legendary');
+    assert.ok(keys.length, `${leg.id} changes no modifier at all`);
+    for (const k of keys) {
+      assert.ok(MOD_CONSUMERS.has(k),
+        `${leg.id} writes mods.${k}, which nothing outside src/game reads — the card prints an effect that never happens`);
+    }
+  }
+  // and the same contract for every other card in the game
+  for (const boon of [...BOONS, ...DUOS]) {
+    for (const k of changedKeys(boon, 'common')) {
+      assert.ok(MOD_CONSUMERS.has(k), `${boon.id} writes mods.${k}, which no consumer reads`);
+    }
+  }
+}
+
+// ── 8c. The Legendary payoffs, in combat, one by one ──────────────────────
+// Each of these fields used to be written and never read. They are asserted
+// through the damage authority rather than by inspecting `mods`, because the
+// only thing that matters is whether the promise on the card resolves.
+{
+  const bump = (h) => { h.enemy.health = 5000; h.enemy.dead = false; h.enemy.alive = true; h.enemy.iframes = 0; };
+
+  // vsWeakAmp — "Weak foes take 40% more damage from every source"
+  {
+    const h = harness();
+    const plain = h.combat.applyDamage({ target: h.enemy, amount: 100, source: h.player });
+    grant(h.ctx, 'legendary.broken-resolve', 'legendary');
+    h.combat.applyStatus(h.enemy, 'weak', 1, h.player);
+    bump(h);
+    const amped = h.combat.applyDamage({ target: h.enemy, amount: 100, source: h.player });
+    assert.ok(amped > plain * 1.3, 'Broken Resolve did not amplify damage against a Weak foe');
+  }
+
+  // status potency — mods.status[kind] must reach applyStatus, not just the rider
+  {
+    const h = harness();
+    h.combat.applyStatus(h.enemy, 'shock', 2, h.player);
+    assert.equal(h.combat._stack(h.enemy, 'shock'), 2);
+    const h2 = harness();
+    grant(h2.ctx, 'legendary.splitting-bolt', 'legendary');   // status.shock *= 1.35
+    h2.combat.applyStatus(h2.enemy, 'shock', 2, h2.player);
+    assert.ok(h2.combat._stack(h2.enemy, 'shock') > 2, 'a curse-potency boon never reached applyStatus');
+  }
+
+  // chainBonus — every Blitz discharge carries extra damage
+  {
+    const h = harness();
+    h.combat.applyStatus(h.enemy, 'shock', 1, h.player);
+    let before = h.enemy.health;
+    h.combat._statusTick(0.7);
+    const plainTick = before - h.enemy.health;
+    const h2 = harness();
+    grant(h2.ctx, 'legendary.splitting-bolt', 'legendary');
+    h2.combat.applyStatus(h2.enemy, 'shock', 1, h2.player);
+    before = h2.enemy.health;
+    h2.combat._statusTick(0.7);
+    assert.ok(before - h2.enemy.health > plainTick + 10, 'Splitting Bolt added nothing to a Blitz discharge');
+  }
+
+  // scorchCap — Scorch stacks past the authored ceiling
+  {
+    const h = harness();
+    for (let i = 0; i < 12; i++) h.combat.applyStatus(h.enemy, 'burn', 1, h.player);
+    assert.equal(h.combat._stack(h.enemy, 'burn'), 8, 'burn no longer caps where the data says it does');
+    const h2 = harness();
+    grant(h2.ctx, 'legendary.soot-sprite', 'legendary');
+    for (let i = 0; i < 20; i++) h2.combat.applyStatus(h2.enemy, 'burn', 1, h2.player);
+    assert.ok(h2.combat._stack(h2.enemy, 'burn') > 8, 'Soot Sprite did not raise the Scorch ceiling');
+  }
+
+  // doomEscalate — each Wither resolves harder than the last, five times
+  {
+    const h = harness();
+    grant(h.ctx, 'legendary.vicious-cycle', 'legendary');
+    const resolve = () => {
+      h.enemy.health = 5000; h.enemy.dead = false; h.enemy.alive = true;
+      h.combat.applyStatus(h.enemy, 'doom', 1, h.player);
+      const before = h.enemy.health;
+      h.combat._statusTick(1.4);
+      return before - h.enemy.health;
+    };
+    const first = resolve(), second = resolve(), third = resolve();
+    assert.ok(second > first && third > second, 'Vicious Cycle did not escalate');
+  }
+
+  // slamAmp — the wall, not the hit, is what gets stronger
+  {
+    const slam = (id) => {
+      const h = harness();
+      if (id) grant(h.ctx, id, 'legendary');
+      else grant(h.ctx, 'poseidon.passive');
+      h.enemy.position.set(18, 0, 0); h.enemy.health = 5000;
+      const before = h.enemy.health;
+      h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player, knockback: 5, dir: new THREE.Vector3(1, 0, 0) });
+      return before - h.enemy.health;
+    };
+    assert.ok(slam('legendary.hydraulic-might') > slam(null), 'Hydraulic Might did not amplify the slam');
+  }
+
+  // hitchShare — everything wearing the curse bleeds together
+  {
+    const h = harness();
+    const second = actor('enemy', -3, 0, 900);
+    h.combat.entities.add(second); h.combat._dirty = true;
+    grant(h.ctx, 'legendary.nexus-sting', 'legendary');
+    h.combat.applyStatus(h.enemy, 'weak', 1, h.player);
+    h.combat.applyStatus(second, 'weak', 1, h.player);
+    const before = second.health;
+    h.combat.applyDamage({ target: h.enemy, amount: 200, source: h.player });
+    assert.ok(second.health < before, 'Nexus Sting never shared damage to a second Hitched foe');
+  }
+
+  // blastCinder — a forged Blast leaves something burning
+  {
+    const h = harness();
+    grant(h.ctx, 'legendary.volcanic-ash', 'legendary');
+    const second = actor('enemy', 3.4, 0, 900);
+    h.combat.entities.add(second); h.combat._dirty = true;
+    h.combat.projectileHit({
+      damage: 20, type: 'fire', source: h.player, knockback: 0, poiseDamage: 0,
+      hits: 0, forks: 0, skewer: 0, castTicks: 0, blastRadius: 3.0, cr: 1, cg: 0.5, cb: 0.2,
+    }, h.enemy, 1, 0);
+    assert.ok(h.combat._stack(second, 'burn') > 0, 'Volcanic Ash left no cinders in the blast');
+  }
+
+  // markPermanent — the mark's timer simply stops running
+  {
+    const h = harness();
+    h.combat.runtimes = new Map();
+    h.combat._cap = { on: false, t: 0, i: 0 };
+    h.combat.hitboxes.update = () => {};
+    h.combat.projectiles.update = () => {};
+    grant(h.ctx, 'legendary.hunters-instinct', 'legendary');
+    h.combat._critMark.set(h.enemy, { chance: 0.5, t: 4.0 });
+    for (let i = 0; i < 12; i++) h.combat.update(0.6, h.ctx);
+    assert.ok(h.combat._critMark.has(h.enemy), 'Hunter’s Instinct let a Critical mark expire');
+  }
+}
+
+// ── 8d. A reroll deals from the SAME gate ─────────────────────────────────
+// The live bug: run.js handed the overlay `{ upgradeChance }` alone, so the
+// reroll replayed a hand with no god, no weapon and no character — 93% of
+// rerolled cards came from a god the player was not standing in front of.
+{
+  const rng = (() => {
+    let seed = 991;
+    const f = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed % 100000) / 100000; };
+    return { f, pick: list => list[Math.floor(f() * list.length) % list.length] };
+  })();
+  for (const god of ['zeus', 'demeter', 'hera', 'hephaestus']) {
+    const bs = state();
+    bs.grantRerolls(4);
+    const options = { count: 3, god, weapon: 'blade', character: 'zagreus', allowDuo: true, upgradeChance: 0.58 };
+    bs.beginOffer();
+    let hand = bs.roll(rng, options);
+    for (let i = 0; i < 4 && hand.length; i++) {
+      for (const o of hand) {
+        assert.equal(o.god, god, `a rerolled card came from ${o.god} at a ${god} gate`);
+        assert.ok(!o.boon.weapon || o.boon.weapon === 'blade', `a rerolled card was for the ${o.boon.weapon}, not the held arm`);
+      }
+      const next = bs.reroll(rng, options, hand);
+      if (!next) break;
+      hand = next;
+    }
+  }
+  // and the forge gate keeps its shape across a reroll
+  const forge = state();
+  forge.grantRerolls(1);
+  const options = { count: 3, god: 'hephaestus', weapon: 'spear', character: 'zagreus', allowDuo: true, upgradeChance: 0.58 };
+  const first = forge.roll(rng, options);
+  assert.deepEqual(first.map(o => o.boon.forgeAction), ['attack', 'special', 'cast'],
+    'the forge gate is not an attack/special/cast triplet');
+  const again = forge.reroll(rng, options, first);
+  assert.deepEqual(again.map(o => o.boon.forgeAction), ['attack', 'special', 'cast'],
+    'a reroll lost the forge gate’s shape');
+  for (const o of again) assert.equal(o.boon.weapon, 'spear', 'a rerolled forge card was for another arm');
+}
+
+// ── 8e. The run system hands the overlay the options it rolled with ───────
+// The overlay stores whatever it is given and replays it on reroll, so the
+// two call sites must not drift apart. This is a source-level assertion
+// precisely because that drift is invisible at runtime until a player rerolls.
+{
+  const src = readFileSync(fileURLToPath(new URL('../src/game/run.js', import.meta.url)), 'utf8');
+  const rolled = src.match(/state\?\.roll\?\.\(rng,\s*([A-Za-z_$][\w$]*)\)/);
+  const shown = src.match(/showBoonChoice\?\.\(offers,\s*([A-Za-z_$][\w$]*)\)/);
+  assert.ok(rolled && shown, 'run.js no longer rolls and shows through named options');
+  assert.equal(shown[1], rolled[1], 'run.js shows the offer with different options than it rolled');
+  const decl = src.slice(src.indexOf(`const ${rolled[1]} = {`));
+  const body = decl.slice(0, decl.indexOf('};') + 1);
+  for (const key of ['god', 'weapon', 'character', 'count']) {
+    assert.match(body, new RegExp(`\\b${key}\\s*[:,}]`), `the gate's roll options no longer carry ${key}`);
+  }
+}
+
+// ── 8f. The gate, end to end: a boss mints a Pom, the next gate spends it ─
+// Poms used to be a complete API with no caller: `bs.poms` was assigned 0 in
+// two places and incremented in none, and `showPomChoice` had no gameplay call
+// site at all. This drives the real RunState methods against a stub context.
+{
+  const seen = [];
+  const run = new RunState();
+  const bs = new BoonState({ events });
+  run.ctx = {
+    boons: bs, events, combat: { weaponId: 'blade' },
+    ui: {
+      toast: noop,
+      // the real overlay grants on choose(); the stub stands in for that
+      showBoonChoice: (offers, opts) => { seen.push({ kind: 'boon', offers, opts }); bs.grant(offers[0]); return Promise.resolve(offers[0]); },
+      showPomChoice: (o) => { seen.push({ kind: 'pom', offers: o.offers }); bs.applyPom(o.offers[0].id, 1); return Promise.resolve(o.offers[0]); },
+    },
+  };
+  run.depth = 6;
+  run.selectedCharacter = 'zagreus';
+  run.state = 'choosing';
+  run._rng = { f: () => 0.42, pick: l => l[0], fork() { return this; } };
+  run._queueTransition = () => {};                    // no chamber to build here
+
+  await run._claimBoon({ god: 'zeus', index: 0, kind: 'boon' });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].kind, 'boon', 'the first gate should be an ordinary audience');
+  // the options the overlay is handed are the ones the hand was rolled with
+  assert.equal(seen[0].opts.god, 'zeus');
+  assert.equal(seen[0].opts.weapon, 'blade');
+  assert.equal(seen[0].opts.character, 'zagreus');
+  assert.equal(seen[0].opts.allowDuo, true, 'duos are switched off at the only live gate');
+
+  // a boss mints both currencies
+  run._rewardedBosses = new Set();
+  run.meta = null; run.obols = 0; run._bossRewardQueue = [];
+  run._onBossDefeated({ entity: { def: { label: 'HYDRA' }, position: { x: 0, y: 0, z: 0, clone: () => ({ x: 0, y: 0, z: 0 }) } } });
+  assert.equal(bs.poms, 1, 'a regional boss minted no Pom of Power');
+  assert.equal(bs.rerolls, 1, 'a regional boss minted no Fated Persuasion');
+
+  // ...and the next gate spends the Pom instead of rolling a god's hand
+  await run._claimBoon({ god: 'zeus', index: 1, kind: 'boon' });
+  assert.equal(seen.length, 2);
+  assert.equal(seen[1].kind, 'pom', 'a banked Pom was never offered at a gate');
+  assert.ok(seen[1].offers.length >= 1 && seen[1].offers[0].pom, 'the Pom gate offered ordinary boons');
+  assert.equal(bs.poms, 0, 'the Pom was not spent');
+  assert.ok(bs.list().some(r => (r.level || 1) > 1), 'the Pom raised nothing');
+
+  // with the bank empty the gate is an ordinary audience again
+  await run._claimBoon({ god: 'zeus', index: 2, kind: 'boon' });
+  assert.equal(seen[2].kind, 'boon');
 }
 
 // ── 9. Poms of Power: the potency axis, orthogonal to rarity ──────────────
@@ -726,6 +1031,30 @@ const state = () => new BoonState({ events, rng: { f: () => 0 } });
   // three gods share the `weak` primitive but must not share its name
   const names = ['hera', 'apollo', 'aphrodite'].map(g => CURSES[GOD_INFO[g].curse].name);
   assert.equal(new Set(names).size, 3, 'gods sharing a primitive collapsed into one curse name');
+
+  // ...and the difference must survive the trip into combat. A curse that is
+  // only a rename shows the same colour and does the same thing.
+  const afflict = (id, slot) => {
+    const h = harness();
+    grant(h.ctx, id, 'epic');
+    const rider = h.ctx.boons.mods.rider[slot];
+    assert.ok(rider && rider.status === 'weak', `${id} is not a weak-bearing ${slot} boon`);
+    h.combat.applyStatus(h.enemy, 'weak', 2, h.player, 0, slot);
+    return h;
+  };
+  const hera = afflict('h2.hera.attack', 'attack');
+  const apollo = afflict('h2.apollo.attack', 'attack');
+  assert.equal(hera.combat.curseOn(hera.enemy, 'weak'), 'hitch', 'Hera’s affliction lost its name');
+  assert.equal(apollo.combat.curseOn(apollo.enemy, 'weak'), 'blind', 'Apollo’s affliction lost its name');
+  const colour = (h) => h.combat._status.get(h.enemy).find(r => r.kind === 'weak').color;
+  assert.equal(colour(hera), CURSES.hitch.color, 'a Hitch was painted in the engine’s colour');
+  assert.equal(colour(apollo), CURSES.blind.color, 'a Blind was painted in the engine’s colour');
+  assert.notEqual(colour(hera), colour(apollo));
+  // Hera BINDS: the step drags. Apollo DAZZLES: the blow is never seen coming.
+  assert.ok(hera.combat.slowOf(hera.enemy) < 1, 'Hitch did not drag its foe');
+  assert.equal(apollo.combat.slowOf(apollo.enemy), 1, 'Blind slowed a foe it never promised to slow');
+  const hit = (h) => { h.enemy.health = 5000; h.enemy.iframes = 0; return h.combat.applyDamage({ target: h.enemy, amount: 100, source: h.player }); };
+  assert.ok(hit(apollo) > hit(hera), 'Blind and Hitch are still the same mechanic under two names');
 }
 
 // ── 12. the loadout report the Codex renders ──────────────────────────────

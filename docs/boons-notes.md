@@ -19,7 +19,7 @@ one and a half of them; now we have all four.
 | A **grade ladder** you can be promoted along | Common/Rare/Epic/Heroic existed and scaled | Same ladder, plus two *fixed* grades — Duo and Legendary — that never roll and never promote |
 | **Slots**: one boon per ability, and the offer knows which are free | Slots were exclusive, but offers ignored which were empty | `slotState()` / `freeSlots()` is the single source of truth; the draw is biased 72% toward categories you have not filled |
 | **Prerequisites**: Duos and Legendaries are earned | Duo needed only "you met both gods" | Both now check the actual boons held, and report *what is missing* so the card can show it |
-| **Two axes of power**: rarity is quality, Poms are potency | Levels existed but nothing granted them | Poms are a first-class API and a first-class card; rerolls are a real run currency |
+| **Two axes of power**: rarity is quality, Poms are potency | Levels existed but nothing granted them | Poms and rerolls are dropped by every regional boss and spent at the next audience — `run.js` calls both |
 
 ---
 
@@ -73,10 +73,20 @@ offers: their action-slot boons form the prerequisite pool (passives are
 excluded — a passive is a stat, not a commitment). A duo may still ship an
 explicit `requires` map when a designer wants a tighter promise.
 
+**The pool is a SHORT list, not the whole family.** "Hold any one of Zeus'
+thirteen action boons" is barely a gate. The eight authored duos name their
+prerequisites outright (`requires: { zeus: [...3 ids], poseidon: [...] }`), and
+the ~77 generated pairs take a deterministic five-id slice of each god's action
+family, keyed by the duo's own id — so every duo asks for a different short
+list, the list is identical in every run and on every machine, and it still
+cannot rot when content is added. Simulated over 400 runs × 16 gates, 34% of
+runs are offered at least one Duo and 16% at least one Legendary.
+
 Legendaries use the same machinery with one god and `need: 2` — two distinct
 qualifying boons from that patron. Fifteen are authored, one per major god, and
 each does something the ordinary pool cannot (Splitting Bolt adds forks *and*
-Blitz power; Nexus Sting makes Hitch share damage; Winter Harvest shatters).
+a flat rider on every Blitz discharge; Nexus Sting makes Hitch share damage
+between afflicted foes; Winter Harvest shatters).
 
 `prerequisiteStatus(boon, heldIds)` returns a structured report:
 
@@ -98,15 +108,34 @@ level and recomputes its values at the same rarity; a Common boon fed five Poms
 out-damages a fresh Epic, exactly as in Hades. `pomOffers(rng, 3)` returns
 offer-shaped objects with `kind: 'pom'`, so the same three-card screen renders
 them, and `BoonOverlay.choose()` routes a Pom through `applyPom` rather than
-`grant` so the grade is never silently rerolled. `ui.showPomChoice()` opens it.
+`grant` so the grade is never silently rerolled.
+
+**They are reachable.** A Pom is a *currency* (`grantPoms` / `spendPom`), and
+`run.js` both mints and spends it: every regional boss drops one Pom and one
+Fated Persuasion token, and `_claimBoon()` checks the bank before it rolls a
+god's hand — if a Pom is held, that gate's audience becomes the Pom screen
+(`ui.showPomChoice({ offers })`, dealt from the run's own deterministic
+stream). One modal per gate: a Pom is a reward, not a second interruption. The
+Pom hand hides the reroll plaque, because Fated Persuasion has nothing to deal
+from — the cards are the player's own boons.
 
 **Rerolls** are Fated Persuasion. `BoonState.rerolls` is a run resource seeded
 from a new Mirror talent (`fatedPersuasion`, max 4) inside `seedRun()`, which
-`clear()` calls — so a new descent picks up the meta progression with no change
-to the run system. `reroll()` spends a token and deals again while remembering
-every id shown for the life of the offer, so **a reroll physically cannot return
-the cards you just refused**. That is the property the feature lives or dies on
-and it is asserted directly.
+`clear()` calls, and topped up by every boss. `reroll()` spends a token and
+deals again while remembering every id shown for the life of the offer, so **a
+reroll physically cannot return the cards you just refused**.
+
+**A reroll deals from the same gate.** `BoonOverlay.open(options, o)` stores `o`
+verbatim as `_rollOpts` and replays it, so whatever the run system passes to
+`showBoonChoice` *is* the reroll. It used to be handed `{ upgradeChance: 0.58 }`
+alone — no god, no weapon, no character — which meant a reroll at a Zeus gate
+dealt Hera and Apollo cards, offered boons for arms the player was not holding,
+and lost the Hephaestus forge-gate triplet entirely. `run.js` now builds ONE
+`rollOpts` object and hands the same reference to `roll()` and to
+`showBoonChoice()`; `test:boons` asserts both the runtime property (every card
+in four consecutive rerolled hands belongs to the gate's god and the held arm,
+and the forge gate keeps its attack/special/cast shape) and the source-level
+one, because that drift is invisible until a player presses R.
 
 ## 6. Status curses
 
@@ -127,11 +156,16 @@ primitives:
 | Blind | weak | Apollo |
 | Wither | doom | Ares, Hades |
 
-`engine` is the only field combat ever sees, so no combat change was needed:
-riders still carry `status: 'weak'` while the card promises **Hitch** and the
-tray shows a pink Hitch chip. Three gods share the `weak` primitive and none of
-them share a name — the test asserts that, because collapsing them would undo
-the whole point. Every status-bearing boon's advertised curse must resolve to
+A curse is no longer only a name. `rebuild()` stamps the owning boon's curse
+onto the slot rider (`curse`, `curseColor`), `applyStatus()` reads it through
+the rider that owns the hit, and the affliction record carries it — so an Apollo
+Blind throws **gold** wisps and a Hera Hitch **pink** ones, instead of all three
+`weak` curses throwing the engine's teal. The mechanics diverge too, from one
+small table in `combat.js` (`WEAK_CURSE`): Hera *binds* (the foe's step drags,
+through `slowOf`), Apollo *dazzles* (the foe never sees the blow coming — it
+takes more damage), and Aphrodite/Athena/Artemis' plain Weak is the unmodified
+sap. Three gods share the primitive, none share a name, and none share a
+behaviour — all three are asserted. Every status-bearing boon's advertised curse must resolve to
 the status it actually applies; that is also asserted, across all 363 boons.
 
 Descriptions were rewritten through the generators in `hades2-boons.js`,
@@ -150,11 +184,53 @@ Each god's signature curse reinforces it.
 
 ---
 
-## 8. The presentation
+## 8. The modifier contract: no write-only fields
+
+`emptyMods()` is the whole vocabulary between the boon data and the engine. A
+field written by a card and read by nobody is the worst bug this system can
+have, because it is invisible: the card prints "Gain 1 additional Dash", the
+run grants it, the tray shows it, and nothing happens. Ten such fields shipped
+in the first pass. All ten now have a consumer:
+
+| field | who reads it | what the card promised |
+|---|---|---|
+| `chainBonus` | `combat._statusTick` | a flat rider on every Blitz discharge |
+| `slamAmp` | `combat._tryWallSlam` | wall slams hit harder |
+| `roomDeflect` | `combat` on `room.entered` | each chamber begins with a Deflect |
+| `vsWeakAmp` | `combat.applyDamage` | cursed foes take more from every source |
+| `doomEscalate` | `combat._statusTick` (doom) | each Wither out-damages the last, ×5 |
+| `markPermanent` | `combat.update` | Critical marks never expire |
+| `dashCharges` | `player.update` / `_startDash` | one additional Dash (and a second HUD pip) |
+| `hitchShare` | `combat.applyDamage` | Hitched foes bleed together |
+| `scorchCap` | `combat.applyStatus` | Scorch stacks past its ceiling |
+| `blastCinder` | `combat.projectileHit` | a forged Blast leaves burning cinders |
+
+`mods.status[kind]` — every "your signature curse bites harder" boon, roughly
+half of each god's list — was also inert: `applyStatus` read `statusDuration`
+and never `status`. It was folded into the rider's stack count inside
+`rebuild()`, which reached exactly one of the many ways a status is applied and
+silently missed blasts, forks, calls and pulses. The fold is gone;
+`applyStatus()` is now the single authority and scales every path once.
+
+**The test that would have caught all of it.** `test:boons` derives the
+consumer set by scanning every module outside the boon data for property access
+on a modifier object (`mods.x`, `playerMods?.x`, `ctx.boons?.mods?.x`, plus
+`BoonState._syncPlayer`'s own body), then asserts that (a) no field in
+`emptyMods()` is unread, and (b) every key each of the 363 boons, 85 duos and
+15 Legendaries writes — including keys it *invents* — is in that set. The set is
+derived rather than listed so it keeps working as fields are added, and it is
+what makes "the card prints an effect that never happens" a build failure.
+
+## 9. The presentation
 
 ### The offer screen (`src/ui/boons.js`)
-- **Rarity ribbon** across the head of every card. Grade stated first, in the
-  grade's colour, with the level appended when a Pom has moved it.
+- **Rarity ribbon** across the head of every card. Grade stated first, with the
+  level appended when a Pom has moved it. The tier owns the *plate* (a deep ink
+  of its own hue), the rule under the word and the stroke; the word itself is
+  the tier's light value on that ink. The first version painted tier-coloured
+  text on a wash of the same hue and measured **1.4:1** on a Duo — the least
+  legible text on the card, on the line the card exists to state. It now
+  measures 7-12:1 on every grade.
 - **God portrait** from the existing `god-portraits-v1` atlas (unchanged
   sampling, no new binary assets), in a rarity ring, with the emblem preserved
   as a small seal so the fast-read identity survives.
@@ -173,12 +249,27 @@ Each god's signature curse reinforces it.
   red flash, not silence.
 - Fixed tiers (Duo, Legendary) take their edge light from the tier rather than
   the god, burn brighter, and label themselves `A DUO BOON` / `A LEGENDARY BOON`.
+- **A Duo shows both patrons**: the medallion is split down its centre with one
+  god's portrait in each half, the name line reads `ZEUS + POSEIDON`, and both
+  emblems are sealed beneath. The slot pill went back to naming the real slot —
+  "DUO" was already the ribbon, the epithet and the edge light, and a fourth
+  repetition cost the player the one fact the pill is there to carry.
+- **A sealed card cannot be taken.** A gated card is worth showing (the gate is
+  a goal), so it is dimmed, veiled, strapped `SEALED`, refuses hover lift, and
+  `choose()` denies it with the same red flash a refused reroll gets.
+- An `EPIC → EPIC` arrow is not a transition: a re-offer at a settled grade
+  prints `EPIC · LV 2 → LV 3`, or `EPIC · AT ITS PEAK`.
 
 ### The HUD tray (`src/ui/hud.js`, `src/ui/hud-boons.js`)
 Was a column of unexplained god sigils. Now a **loadout**:
 - The five ability categories are always present, in play order, **including
   empty ones** — "your Cast slot is still free" is the information a Hades
-  player uses to choose at the next gate.
+  player uses to choose at the next gate. (Before the *first* boon of a descent
+  the tray is five empty sockets and nothing else, which is noise, so it shows
+  one quiet `LOADOUT · NO BOONS YET` line instead.)
+- The whole column stands on a **scrim** that fades out to the right. Without
+  it the empty sockets and their bindings — dashed bronze on a 2% fill — simply
+  vanished over the lit floor of Tartarus, taking the legend with them.
 - Each row: hex sigil in the god's colour, category tag, the input binding
   (`LMB / RMB / Q / SPACE / R`), boon name, grade pips, and `LV n` when levelled.
 - Rarity colours the row's border and a spine; pips repeat the grade so colour
@@ -203,8 +294,11 @@ Was a column of unexplained god sigils. Now a **loadout**:
 ### Combat readouts
 The magick bar's label used to vanish against its own lit fill; it now sits on
 a narrow ink plate and reads `64 /100` in the same grammar as the life bar. The
-Cast and Dash meters carry their bindings (`CAST · Q`, `DASH · SPACE`), matching
-the tray's legend so one vocabulary covers the whole HUD.
+weapon caption (`ZAGREUS · STYGIAN BLADE`) moved *below* that row — it had been
+laid across the bar since long before this pass, and the new opaque ink plate
+turned a faint overlap into a collision. The Cast and Dash meters carry their
+bindings (`CAST · Q`, `DASH · SPACE`), and the Dash meter reads the hero's real
+charge budget, so "gain 1 additional Dash" is a visible second pip.
 
 ### Capture scenarios
 `capture.state('payoff')` is a new reference shot: an earned Duo, an unearned
@@ -213,31 +307,44 @@ three cards the ordinary `boons` shot cannot show. `capture.state('loadout')`
 now seeds a build with a Duo, a Legendary and a Pom-levelled boon so the Codex
 shot exercises every grade it can render.
 
-### Typography and small windows
-`style.css` now carries the type scale, card geometry, rarity and curse palettes
-as custom properties, with a small-viewport block that steps the scale and card
-size down, plus a `prefers-reduced-motion` hook. The UI canvas already clamps
-its own scale to `[0.62, 1.5]`; the tray and the offer row both fit 1024×576.
+### Typography, tokens and small windows
+Every custom property in `style.css` is **read back by JS**; the ones that were
+not are gone. What is bound: `--ui-display` / `--ui-body` (`displayFont()`),
+`--rarity-*` (`bindRarityPalette()`), `--curse-*` (bound onto `CURSES`, so the
+sheet colours the wisps as well as the chip), `--card-w/h/gap`
+(`cardMetrics()`, which the offer row lays itself out from — including the
+small-viewport step, which is why the cache is invalidated on resize rather
+than read once at boot) and `--ui-motion` (`uiMotion()`, which the offer screen
+and HUD multiply every deal-in stagger, specular sweep and spin by, so
+`prefers-reduced-motion` parks the motion and keeps the information). The
+`--type-*` ladder and the frozen `TYPE` literal beside it were deleted: nothing
+read them, and a token nothing reads is a comment that lies. The UI canvas
+clamps its own scale to `[0.62, 1.5]`; the tray and the offer row both fit
+1024×576.
 
 ---
 
-## 9. Integration points the run system may want
+## 10. Where the run system calls in
 
-None are required — everything works through existing contracts. These are
-optional one-liners for `src/game/run.js` (not owned by this pass):
+Everything below is live in `src/game/run.js`, not a suggestion:
 
 ```js
-// hand out a Pom of Power as a chamber reward
-await ctx.ui.showPomChoice();
+// every gate: ONE options object, rolled with and rerolled from
+const rollOpts = { count: 3, god, weapon, character, allowDuo: true, upgradeChance: 0.58 };
+const offers = state.roll(rng, rollOpts);
+await ctx.ui.showBoonChoice(offers, rollOpts);
 
-// hand out Fated Persuasion (boss reward, shop, Chaos gate)
-ctx.ui.grantRerolls(1);
+// a banked Pom is spent at the next audience, before the god's hand is rolled
+if (state.poms > 0 && state.pomTargets().length) await this._claimPom(state, rng);
+
+// every regional boss mints both currencies
+ctx.boons.grantPoms(1); ctx.boons.grantRerolls(1);
 ```
 
-`ctx.boons.seedRun()` is already invoked by `clear()`, so Mirror-seeded rerolls
-arrive without a call site.
+`ctx.boons.seedRun()` is invoked by `clear()`, so Mirror-seeded rerolls still
+arrive with no call site at all.
 
-## 10. Tests
+## 11. Tests
 
 `npm run test:boons` is a real suite, not a smoke test. Beyond the pre-existing
 combat integration checks (Doom knives, Chill duration, wall slams, every duo's
@@ -274,7 +381,21 @@ advertised payoff reaching combat) it now asserts:
     a primitive do not share a curse name;
 12. **the loadout report** the Codex renders prints live values, level included;
 13. **HUD tray grouping** obeys the same slot contract and carries enough text
-    to render a tooltip without asking the engine.
+    to render a tooltip without asking the engine;
+14. **no write-only modifiers** — §8, the derived consumer scan, plus the ten
+    Legendary payoffs asserted one by one *through combat* (a Weak foe really
+    does take 40% more, Scorch really does pass its ceiling, the second Wither
+    really does out-damage the first, a Hitched foe really does bleed onto its
+    neighbour) rather than by inspecting `mods`;
+15. **a reroll deals from the same gate** — god, arm and forge shape held
+    across four consecutive rerolls, and `run.js` shown to pass the object it
+    rolled with;
+16. **curses differ in combat** — a Hitch and a Blind carry different colours,
+    and only one of them drags;
+17. **the gate, end to end** — the real `RunState._claimBoon` / `_onBossDefeated`
+    driven against a stub context: a boss mints a Pom and a reroll, the next
+    gate spends the Pom on a real level, and the gate after that is an ordinary
+    audience again.
 
 `npm run test:meta` and `npm run build` also pass, as do `test:features`,
 `test:weapons` and `test:textures`.

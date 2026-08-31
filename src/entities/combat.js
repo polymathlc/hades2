@@ -66,6 +66,16 @@ export const STATUS = {
   },
 };
 
+// Three gods speak one primitive under three names. A name that changes
+// nothing is a reskin, so each curse bends `weak` its own way: Hera BINDS (the
+// foe's step drags), Apollo DAZZLES (it never sees the blow coming), and the
+// plain Weak of Aphrodite/Athena/Artemis is the unmodified sap.
+export const WEAK_CURSE = {
+  hitch: { drag: 0.08, maxDrag: 0.24, vulnerable: 0 },
+  blind: { drag: 0, maxDrag: 0, vulnerable: 0.05, maxVulnerable: 0.15 },
+  weak: { drag: 0, maxDrag: 0, vulnerable: 0, maxVulnerable: 0 },
+};
+
 // ── the intensity curve, in one place ──────────────────────────────────────
 const INTENSITY = {
   damageWeight: 1 / 260,     // recent damage that saturates the term
@@ -117,7 +127,15 @@ export class CombatSystem {
 
     this._cap = { on: false, t: 0, i: 0 };
     ctx.events.on('capture.state', ({ name, args }) => this._captureState(name, ctx, args));
-    ctx.events.on('room.built', () => { this.hitboxes.clear(); this.projectiles.clear(); ctx.player?.resetCastShards?.(); this._status.clear(); this._expose.clear(); this._critMark.clear(); this._knock.length = 0; this._boonPulses.length = 0; });
+    ctx.events.on('room.built', () => { this.hitboxes.clear(); this.projectiles.clear(); ctx.player?.resetCastShards?.(); this._status.clear(); this._expose.clear(); this._critMark.clear(); this._knock.length = 0; this._boonPulses.length = 0; this._doomChain = 0; });
+    // Divine Protection: "each chamber begins with a Deflect". The chamber the
+    // hero is standing in is the one that just announced itself, so the window
+    // opens here rather than on the build, which fires before the hero moves.
+    ctx.events.on('room.entered', () => {
+      const seconds = ctx.boons?.mods?.roomDeflect || 0;
+      if (seconds > 0 && ctx.player && !ctx.player.dead) this.activateDeflect(ctx.player, seconds, '#b7e4ff');
+    });
+    this._doomChain = 0;              // Vicious Cycle's escalation, per chamber
     return this;
   }
 
@@ -380,6 +398,10 @@ export class CombatSystem {
         return 0;
       }
       if ((t._boonDeflectT || 0) > 0 && !info.ignoreDeflect) {
+        // Blinding Flash: what you deflect is what you Expose. mods.expose is
+        // the flat, always-on half of the pair (riders carry info.expose).
+        const deflectMods = t === ctx.player ? ctx.boons?.mods : null;
+        if (deflectMods?.expose > 0 && src && src !== t) this._expose.set(src, { bonus: deflectMods.expose, t: 5.0 });
         ctx.vfx?.burst?.(t.position.clone().setY(1.0), { count: 16, color: '#b7e4ff', speed: 9, spread: 1.0, kind: 'shard' });
         ctx.events.emit('damage.deflected', { target: t, source: src, pos: t.position });
         return 0;
@@ -409,6 +431,15 @@ export class CombatSystem {
       if (hangover) {
         amount *= 1 + hangover * (playerMods.hangoverAmp || 0);
         if (this._stack(t, 'weak')) amount *= 1 + hangover * (playerMods.hangoverVsWeak || 0);
+      }
+      // Weak / Hitch / Blind are one primitive under three names, so the
+      // "cursed foes take more from every source" payoff resolves here, once,
+      // for every hit the player lands rather than per weapon.
+      const weakStacks = this._stack(t, 'weak');
+      if (playerMods.vsWeakAmp > 0 && weakStacks) amount *= 1 + playerMods.vsWeakAmp;
+      if (weakStacks) {
+        const bend = WEAK_CURSE[this.curseOn(t, 'weak')] || WEAK_CURSE.weak;
+        if (bend.vulnerable) amount *= 1 + Math.min(bend.maxVulnerable, weakStacks * bend.vulnerable);
       }
     }
 
@@ -462,8 +493,8 @@ export class CombatSystem {
     }
 
     // ── status riders ───────────────────────────────────────────────────
-    if (info.statuses) for (const s of info.statuses) this.applyStatus(t, s.kind || s, s.stacks || 1, src, s.power || 0);
-    if (info.status) this.applyStatus(t, info.status, info.statusStacks || 1, src, info.statusPower || 0);
+    if (info.statuses) for (const s of info.statuses) this.applyStatus(t, s.kind || s, s.stacks || 1, src, s.power || 0, info.boonSlot);
+    if (info.status) this.applyStatus(t, info.status, info.statusStacks || 1, src, info.statusPower || 0, info.boonSlot);
     if (info.expose > 0 && src === ctx.player) this._expose.set(t, { bonus: info.expose, t: 5.0 });
     if (info.critMark > 0 && src === ctx.player) this._critMark.set(t, { chance: info.critMark, t: 4.0 });
 
@@ -493,6 +524,22 @@ export class CombatSystem {
       if (kb > 0) this._tryWallSlam(t, info, playerMods);
     }
 
+    // Nexus Sting: everything wearing the same curse bleeds together. Shared
+    // damage is a boonProc, so it can never re-enter this branch and cascade.
+    if (!info.boonProc && playerMods && playerMods.hitchShare > 0 && this._stack(t, 'weak') > 0) {
+      const share = amount * playerMods.hitchShare;
+      if (share >= 0.5) {
+        for (const other of this._targets()) {
+          if (!other || other === t || other === ctx.player || other.dead || other.alive === false) continue;
+          if (!this._stack(other, 'weak')) continue;
+          this.applyDamage({ target: other, amount: share, type: 'arcane', source: src,
+            pos: other.position, dir: null, poiseDamage: 999, boonProc: true, ignoreIFrames: true });
+          ctx.vfx?.beam?.(t.position.clone().setY(1.05), other.position.clone().setY(1.05),
+            { color: '#f06fae', width: 0.12, life: 0.20 });
+        }
+      }
+    }
+
     // ── death ───────────────────────────────────────────────────────────
     if (t.health <= 0) {
       t.dead = true; t.alive = false; t.health = 0;
@@ -517,7 +564,7 @@ export class CombatSystem {
   }
 
   // ────────────────────────────────────────────────────── status effects ───
-  applyStatus(target, kind, stacks = 1, source = null, power = 0) {
+  applyStatus(target, kind, stacks = 1, source = null, power = 0, slot = null) {
     const D = STATUS[kind];
     if (!D || !target || target.dead) return;
     let list = this._status.get(target);
@@ -526,12 +573,25 @@ export class CombatSystem {
     for (let i = 0; i < list.length; i++) if (list[i].kind === kind) { rec = list[i]; break; }
     const sourceMods = source === this.ctx.player ? this.ctx.boons?.mods : null;
     const duration = D.dur * (sourceMods?.statusDuration?.[kind] || 1);
-    if (!rec) { rec = { kind, stacks: 0, t: 0, dur: duration, tick: 0, source, power: 0 }; list.push(rec); }
-    rec.stacks = Math.min(D.maxStacks, rec.stacks + stacks);
+    // CURSE POTENCY. Every "your Blitz/Scorch/Freeze bites harder" boon writes
+    // mods.status[kind]; this is the one place that reads it, so a rider, a
+    // blast, a fork and a tick all scale by the same number.
+    const potency = sourceMods?.status?.[kind] || 1;
+    const applied = potency > 1 ? Math.max(1, Math.round(stacks * potency)) : stacks;
+    // Soot Sprite raises the ceiling rather than the rate. STATUS is shared
+    // authored data — mutating it would leak one run's boon into the next.
+    const cap = D.maxStacks + (kind === 'burn' ? (sourceMods?.scorchCap || 0) : 0);
+    // Which CURSE is being applied, not just which primitive. The rider that
+    // owns the hit knows; falling back to any rider with the same primitive
+    // keeps blasts and pulses on the same vocabulary as the strike.
+    const curse = this._curseFor(sourceMods, kind, slot);
+    if (!rec) { rec = { kind, stacks: 0, t: 0, dur: duration, tick: 0, source, power: 0, curse: null, color: D.color }; list.push(rec); }
+    if (curse) { rec.curse = curse.curse; rec.color = curse.curseColor || D.color; }
+    rec.stacks = Math.min(cap, rec.stacks + applied);
     if (D.refresh) { rec.t = 0; rec.dur = duration; }
     rec.source = source || rec.source;
     rec.power = Math.max(rec.power || 0, power || 0);
-    this.ctx.events.emit('status.applied', { target, kind, stacks: rec.stacks, color: D.color });
+    this.ctx.events.emit('status.applied', { target, kind, stacks: rec.stacks, color: rec.color || D.color, curse: rec.curse || kind });
     if (kind === 'doom') this.ctx.vfx?.doomMark?.(target, rec);
     // chill shatter: the payoff for a full stack bar
     if (kind === 'chill' && D.shatterAt && rec.stacks >= D.shatterAt) {
@@ -547,10 +607,32 @@ export class CombatSystem {
     for (let i = 0; i < l.length; i++) if (l[i].kind === kind) return l[i].stacks;
     return 0;
   }
+  /** The curse name currently worn over an engine status, or the status id. */
+  curseOn(e, kind) {
+    const l = this._status.get(e); if (!l) return null;
+    for (let i = 0; i < l.length; i++) if (l[i].kind === kind) return l[i].curse || kind;
+    return null;
+  }
+  /** The rider that owns this affliction, so its curse can colour and bend it. */
+  _curseFor(mods, kind, slot) {
+    const riders = mods?.rider;
+    if (!riders) return null;
+    const own = slot ? riders[slot] : null;
+    if (own && own.status === kind && own.curse) return own;
+    for (const k in riders) {
+      const r = riders[k];
+      if (r && r.status === kind && r.curse) return r;
+    }
+    return null;
+  }
   /** Movement multiplier from chill — read by whoever moves the entity. */
   slowOf(e) {
-    const c = this._stack(e, 'chill'); if (!c) return 1;
-    return 1 - Math.min(STATUS.chill.maxSlow, c * STATUS.chill.slowPerStack);
+    const c = this._stack(e, 'chill');
+    const w = this._stack(e, 'weak');
+    const bend = w ? (WEAK_CURSE[this.curseOn(e, 'weak')] || WEAK_CURSE.weak) : null;
+    const drag = bend && bend.drag ? Math.min(bend.maxDrag, w * bend.drag) : 0;
+    if (!c && !drag) return 1;
+    return 1 - Math.min(0.7, Math.min(STATUS.chill.maxSlow, c * STATUS.chill.slowPerStack) + drag);
   }
 
   _statusTick(dt) {
@@ -566,14 +648,19 @@ export class CombatSystem {
             const dps = r.kind === 'burn' && r.power > 0
               ? r.power * r.stacks
               : (D.dps || 0) + (D.dpsPerStack || 0) * (r.stacks - 1);
-            if (dps > 0) {
+            // Splitting Bolt: every discharge of the player's Blitz carries a
+            // flat rider on top of the per-stack curve.
+            const tickMods = r.source === this.ctx.player ? this.ctx.boons?.mods : null;
+            const discharge = r.kind === 'shock' ? (tickMods?.chainBonus || 0) : 0;
+            const tickDamage = dps * D.tick + discharge;
+            if (tickDamage > 0) {
               this.applyDamage({
-                target: e, amount: dps * D.tick, type: D.type, source: r.source,
+                target: e, amount: tickDamage, type: D.type, source: r.source,
                 pos: e.position, dir: null, poiseDamage: D.poisePerTick || 0, ignoreIFrames: true,
               });
             }
             this.ctx.vfx?.burst?.(_v.set(e.position.x, e.position.y + 0.9, e.position.z),
-              { count: 3, color: D.color, speed: 2.4, spread: 1.1, kind: D.fx, glow: false });
+              { count: 3, color: r.color || D.color, speed: 2.4, spread: 1.1, kind: D.fx, glow: false });
           }
         }
         if (r.t >= r.dur) {
@@ -581,7 +668,15 @@ export class CombatSystem {
             const sourceMods = r.source === this.ctx.player ? this.ctx.boons?.mods : null;
             const weakBonus = sourceMods && this._stack(e, 'weak') ? (sourceMods.doomVsWeak || 0) : 0;
             const authored = r.power > 0 ? r.power : D.burst + D.burstPerStack * (r.stacks - 1);
-            const dmg = authored + (sourceMods?.doomDmg || 0) + weakBonus;
+            // Vicious Cycle: each Wither that lands in a chamber hits harder
+            // than the one before it, five times over, then holds there.
+            const escalate = sourceMods?.doomEscalate || 0;
+            let chain = 0;
+            if (escalate > 0) {
+              chain = Math.min(5, this._doomChain || 0);
+              this._doomChain = Math.min(5, (this._doomChain || 0) + 1);
+            }
+            const dmg = authored + (sourceMods?.doomDmg || 0) + weakBonus + escalate * chain;
             // The hanging knife has spent the final quarter of its timer
             // falling. Resolve the hit on the exact frame its point reaches
             // the target, then leave it embedded for a few frames of impact.
@@ -674,6 +769,10 @@ export class CombatSystem {
     }
     if (p.blastRadius > 0) {
       const r2 = p.blastRadius * p.blastRadius;
+      // Volcanic Ash: a forged Blast leaves cinders. `power` is burn damage per
+      // second per stack, so dividing the promised total by the burn's own
+      // duration is what makes the card's number the damage actually dealt.
+      const cinder = p.source === this.ctx.player ? (this.ctx.boons?.mods?.blastCinder || 0) : 0;
       for (const target of this._targets()) {
         if (!target || target === e || target === p.source || target === this.ctx.player || target.dead || target.alive === false) continue;
         const dx = target.position.x - e.position.x, dz = target.position.z - e.position.z;
@@ -685,7 +784,12 @@ export class CombatSystem {
           status: p.status, statusStacks: p.statusStacks,
           statusPower: p.statusPower, expose: p.expose, boonGod: p.boonGod, boonSlot: p.boonSlot,
         });
+        if (cinder > 0 && !target.dead) {
+          this.applyStatus(target, 'burn', 1, p.source, cinder / STATUS.burn.dur);
+        }
       }
+      // the foe the blast went off on burns too
+      if (cinder > 0 && !e.dead) this.applyStatus(e, 'burn', 1, p.source, cinder / STATUS.burn.dur);
       const blastColor = new THREE.Color(p.cr, p.cg, p.cb).getStyle();
       this.ctx.vfx?.shockwave?.(_v2.set(e.position.x, 0.06, e.position.z), { radius: p.blastRadius, color: blastColor, life: 0.38 });
     }
@@ -705,8 +809,11 @@ export class CombatSystem {
     const r = world.radiusAt ? world.radiusAt(a) : (world.bounds?.r || 18);
     const outward = (info.dir.x * x + (info.dir.z ?? info.dir.y ?? 0) * z) / d;
     if (d < r - (target.radius || 0.5) - 3.0 || outward < 0.18) return;
-    if (mods.wallSlamDmg > 0) {
-      this.applyDamage({ target, amount: mods.wallSlamDmg, type: 'physical', source: info.source,
+    // Hydraulic Might amplifies the slam itself rather than the hit that
+    // caused it, so the payoff only lands when the wall does.
+    const slam = mods.wallSlamDmg * (1 + (mods.slamAmp || 0));
+    if (slam > 0) {
+      this.applyDamage({ target, amount: slam, type: 'physical', source: info.source,
         pos: target.position, dir: null, poiseDamage: 999, boonProc: true, ignoreIFrames: true });
     }
     if (mods.seaStormDmg > 0 && !target.dead) {
@@ -717,7 +824,7 @@ export class CombatSystem {
     }
     if (mods.slamSpeed > 0 && info.source) info.source._boonSlamT = 3.0;
     this.ctx.vfx?.shockwave?.(target.position.clone().setY(0.06), { radius: 2.0, color: '#5fd0ff', life: 0.32 });
-    this.ctx.events.emit('boon.wallSlam', { target, source: info.source, damage: mods.wallSlamDmg + mods.seaStormDmg });
+    this.ctx.events.emit('boon.wallSlam', { target, source: info.source, damage: slam + mods.seaStormDmg });
   }
 
   _updateBoonPulses(dt) {
@@ -779,9 +886,11 @@ export class CombatSystem {
       rec.t -= dt;
       if (rec.t <= 0 || !target || target.dead) this._expose.delete(target);
     }
+    // Hunter's Instinct holds the mark open: the timer simply stops running.
+    const marksHold = (ctx.boons?.mods?.markPermanent || 0) > 0;
     for (const [target, rec] of this._critMark) {
-      rec.t -= dt;
-      if (rec.t <= 0 || !target || target.dead) this._critMark.delete(target);
+      if (!marksHold) rec.t -= dt;
+      if ((!marksHold && rec.t <= 0) || !target || target.dead) this._critMark.delete(target);
     }
 
     // knockback spring — impulse decays, position follows. Entities that

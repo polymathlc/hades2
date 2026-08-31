@@ -80,7 +80,16 @@ export function bodyFont() {
 // never disagree about what "Heroic" looks like. Falls back to the literals
 // above when the sheet has not applied yet (headless tests, first frame).
 let _rarityBound = false;
-export function bindRarityPalette() {
+export function bindRarityPalette(curses = null) {
+  // The curse palette is authored beside the rarity palette and bound the same
+  // way; combat reads the same objects through the rider, so a colour named in
+  // the sheet is the colour the wisps come out.
+  if (curses) {
+    for (const key of Object.keys(curses)) {
+      const c = cssVar(`--curse-${key}`, '');
+      if (/^#[0-9a-f]{3,8}$/i.test(c)) curses[key].color = c;
+    }
+  }
   if (_rarityBound) return RARITY;
   _rarityBound = true;
   for (const key of Object.keys(RARITY)) {
@@ -95,10 +104,39 @@ export function bindRarityPalette() {
   return RARITY;
 }
 
-/** The type scale, in reference pixels. One ladder for every surface. */
-export const TYPE = Object.freeze({
-  micro: 8.5, caption: 10.5, label: 12, body: 14.4, lead: 17, title: 24, display: 30,
-});
+// ── the tokens the canvas actually reads back ─────────────────────────────
+// Only bind what is used. A custom property nothing reads is not a design
+// system, it is a comment that lies — which is what the --type-* ladder and
+// the frozen TYPE literal beside it were, so both were deleted rather than
+// left as decoration. What remains here is bound and consumed.
+let _cardBound = null;
+/**
+ * Card geometry, in reference pixels, from style.css — including the
+ * small-viewport block, which is why this is re-read whenever the UI resizes
+ * rather than captured once at boot.
+ */
+export function cardMetrics() {
+  if (_cardBound) return _cardBound;
+  const px = (name, fallback) => {
+    const v = parseFloat(cssVar(name, ''));
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  };
+  _cardBound = { w: px('--card-w', 292), h: px('--card-h', 452), gap: px('--card-gap', 30) };
+  return _cardBound;
+}
+let _motion = null;
+/**
+ * 1 normally, 0 for a viewer who asked for reduced motion. Multiplies every
+ * travelling specular, deal-in stagger and spin the interface animates.
+ */
+export function uiMotion() {
+  if (_motion !== null) return _motion;
+  const v = parseFloat(cssVar('--ui-motion', ''));
+  _motion = Number.isFinite(v) ? clamp01(v) : 1;
+  return _motion;
+}
+/** Called by the UI on resize: the media queries above may have flipped. */
+export function invalidateCssCache() { _cardBound = null; _motion = null; }
 
 /** Draw text with real letter-spacing (canvas has none we can rely on). */
 export function tracked(g, text, x, y, o = {}) {

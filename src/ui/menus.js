@@ -406,17 +406,29 @@ export class Menus {
           g.fillStyle = rgba(R.text, on ? .95 : .62);
           g.fillRect(x, ry + 2 * S, 2.4 * S, rowH - 8 * S);
           godEmblem(g, x + 17 * S, ry + (rowH - 4 * S) / 2, 8.5 * S, rec.god, { glowA: on ? .34 : .12, glowR: 1.5 });
+          // The curse chip owns the right edge, so the two text lines are
+          // measured against what is actually left. They used to be drawn at a
+          // fixed size and then painted over: "LEGENDARY" read as "LEGEND".
+          const cn0 = rec.curse ? rec.curse.name.toUpperCase() : null;
+          const cw0 = cn0 ? trackedWidth(g, cn0, { size: 6.8 * S, track: .16, weight: 700 }) + 12 * S : 0;
+          const textRoom = leftW - 31 * S - (cn0 ? cw0 + 14 * S : 10 * S);
           const nm = String(rec.name || 'Boon').toUpperCase();
+          let nmSize = 9.6 * S;
+          const nmW = trackedWidth(g, nm, { size: nmSize, track: .09, weight: 700 });
+          if (nmW > textRoom) nmSize *= Math.max(0.72, textRoom / nmW);
           tracked(g, nm, x + 31 * S, ry + 12 * S, {
-            size: 9.6 * S, track: .09, weight: 700, align: 'left', color: on ? '#fff0c6' : rgba(PAL.parch, .78),
+            size: nmSize, track: .09, weight: 700, align: 'left', color: on ? '#fff0c6' : rgba(PAL.parch, .78),
           });
           const grade = `${String(rec.tier || rec.rarity).toUpperCase()}${(rec.level || 1) > 1 ? ` · LV ${rec.level}` : ''}`;
+          let gSize = 7 * S;
+          const gW = trackedWidth(g, grade, { size: gSize, track: .14, weight: 700 });
+          if (gW > textRoom) gSize *= Math.max(0.72, textRoom / gW);
           tracked(g, grade, x + 31 * S, ry + 22 * S, {
-            size: 7 * S, track: .14, weight: 700, align: 'left', color: R.text, font: bodyFont(),
+            size: gSize, track: .14, weight: 700, align: 'left', color: R.text, font: bodyFont(),
           });
           if (rec.curse) {
-            const cn = rec.curse.name.toUpperCase();
-            const cw = trackedWidth(g, cn, { size: 6.8 * S, track: .16, weight: 700 }) + 12 * S;
+            const cn = cn0;
+            const cw = cw0;
             plaqueRect(g, x + leftW - cw - 6 * S, ry + 7 * S, cw, 13 * S, 3 * S);
             g.fillStyle = rgba(shade(rec.curse.color, .68), .95); g.fill();
             g.strokeStyle = rgba(rec.curse.color, .8); g.lineWidth = .8 * S; g.stroke();
@@ -451,14 +463,20 @@ export class Menus {
     // grade ribbon, same language as the offer card
     const ribW = rightW - 44 * S, ribH = 20 * S, ribX = rightX + 22 * S, ribY = py + 12 * S;
     plaqueRect(g, ribX, ribY, ribW, ribH, 5 * S);
+    // Same grammar as the offer card's ribbon, and for the same reason: the
+    // tier owns the ink and the rule, the grade is read off it.
     const rg2 = g.createLinearGradient(ribX, ribY, ribX + ribW, ribY);
-    rg2.addColorStop(0, rgba(shade(R.ring[0], .42), .95));
-    rg2.addColorStop(.5, rgba(R.ring[1], .3));
-    rg2.addColorStop(1, rgba(shade(R.ring[2] || R.ring[0], .42), .95));
+    rg2.addColorStop(0, rgba(shade(R.ring[0], .90), .97));
+    rg2.addColorStop(.5, rgba(shade(R.ring[1], .88), .97));
+    rg2.addColorStop(1, rgba(shade(R.ring[2] || R.ring[0], .90), .97));
     g.fillStyle = rg2; g.fill();
-    g.strokeStyle = rgba(R.text, .8); g.lineWidth = 1 * S; g.stroke();
+    g.strokeStyle = rgba(R.text, .85); g.lineWidth = 1.1 * S; g.stroke();
+    const ruleW = ribW - 20 * S;
+    const rrg = g.createLinearGradient(ribX + 10 * S, 0, ribX + 10 * S + ruleW, 0);
+    rrg.addColorStop(0, 'rgba(0,0,0,0)'); rrg.addColorStop(.5, rgba(R.ring[1], .85)); rrg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rrg; g.fillRect(ribX + 10 * S, ribY + ribH - 4 * S, ruleW, Math.max(1, 1.4 * S));
     tracked(g, `${String(rec.tier || rec.rarity).toUpperCase()}${(rec.level || 1) > 1 ? `  ·  LEVEL ${rec.level}` : ''}  ·  ${String(rec.slot).toUpperCase()}`,
-      rightX + rightW / 2, ribY + ribH * .68, { size: 9.2 * S, track: .24, weight: 700, align: 'center', color: R.text });
+      rightX + rightW / 2, ribY + ribH * .62, { size: 9.2 * S, track: .24, weight: 700, align: 'center', color: R.text, shadow: '#05020a', shadowDy: 1 });
 
     const medY = ribY + ribH + 44 * S;
     godEmblem(g, rightX + rightW / 2, medY, 28 * S, rec.god, { glowA: .5, glowR: 2.0 });

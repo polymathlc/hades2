@@ -469,17 +469,43 @@ export class RunState {
   async _claimBoon(d) {
     const state = this.ctx.boons;
     const rng = this._rng?.fork ? this._rng.fork(`boon:${this.depth}:${d?.index || 0}`) : this._rng;
+    // A banked Pom of Power is spent at the next audience: the god steps aside
+    // and the screen offers to deepen what you already hold. One modal per
+    // gate, so the Pom is a real reward and not a second interruption.
+    if (state?.poms > 0 && state.pomTargets?.().length) {
+      const spent = await this._claimPom(state, rng);
+      if (spent) { this.boons = state?.list?.().slice() || []; this._queueTransition(d); return; }
+    }
     const pool = this.godPool();
     const god = d?.god && pool.includes(d.god) ? d.god : (rng?.pick ? rng.pick(pool) : pool[(this.depth + (d?.index || 0)) % pool.length]);
-    const offers = state?.roll?.(rng, {
+    // ONE options object for the draw AND for the reroll. The overlay replays
+    // exactly what it is given, so handing showBoonChoice a bare
+    // { upgradeChance } used to let a reroll deal cards from another god, for
+    // another weapon, and lose the Hephaestus forge-gate shape entirely.
+    const rollOpts = {
       count: 3, god, weapon: this.ctx.combat?.weaponId, character: this.selectedCharacter,
-      allowDuo: false, upgradeChance: 0.58,
-    }) || [];
-    const choice = this.ctx.ui?.showBoonChoice?.(offers, { upgradeChance: 0.58 });
+      allowDuo: true, upgradeChance: 0.58,
+    };
+    const offers = state?.roll?.(rng, rollOpts) || [];
+    const choice = this.ctx.ui?.showBoonChoice?.(offers, rollOpts);
     if (choice && typeof choice.then === 'function') await choice;
     else if (offers[0]) state?.grant?.(offers[0]);
     this.boons = state?.list?.().slice() || [];
     this._queueTransition(d);
+  }
+
+  /** Spend one banked Pom of Power. Resolves true when a level was taken. */
+  async _claimPom(state, rng) {
+    const offers = state.pomOffers?.(rng, 3) || [];
+    if (!offers.length) return false;
+    const choice = this.ctx.ui?.showPomChoice?.({ offers, count: 3 });
+    let picked = offers[0];
+    if (choice && typeof choice.then === 'function') picked = await choice;
+    else state.applyPom?.(offers[0].id, 1);
+    if (!picked) return false;
+    state.spendPom?.(1);
+    this.ctx.ui?.toast?.('POM OF POWER SPENT', { color: '#f2c14e', dur: 2.2 });
+    return true;
   }
 
   _applyReward(kind) {
@@ -534,8 +560,13 @@ export class RunState {
       { t: 0.48, kind: 'blood', entity, pos: bloodPos, amount: 1 },
     );
     profiler.spanStart('boss.transition');
+    // A regional boss is also where the run's two currencies come from: a Pom
+    // of Power (spent at the next audience) and one Fated Persuasion token.
+    const poms = this.ctx.boons?.grantPoms?.(1) || 0;
+    const rerolls = this.ctx.boons?.grantRerolls?.(1) || 0;
     const bossName = entity.def?.label || i?.name || 'THE BOSS';
     this.ctx.ui?.toast?.(`${bossName.toUpperCase()} DROPPED NECTAR + TITAN BLOOD`, { color: '#ff9a6b', dur: 2.8 });
+    if (poms || rerolls) this.ctx.ui?.toast?.(`POM OF POWER +1  ·  FATED PERSUASION +1`, { color: '#f2c14e', dur: 3.0 });
   }
 
   _spawnBossReward(job) {

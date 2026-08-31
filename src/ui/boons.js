@@ -11,7 +11,7 @@
 import {
   PAL, RARITY, frame, panelBody, plaqueRect, roundRect, goldGradient, meander,
   beadRule, laurel, laurelBranch, palmette, tracked, trackedWidth, wrap, rgba, mix, shade, lift,
-  displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
+  displayFont, bodyFont, ease, clamp01, lerp, LayerCache, cardMetrics, uiMotion,
 } from './ornament.js';
 import {
   GOD_INFO, SLOTS, RARITY_LABEL, BoonState,
@@ -375,7 +375,9 @@ function slotGlyph(g, kind, cx, cy, r, color) {
 }
 
 // ═══════════════════════════════════════════════════════ THE OVERLAY ══════
-const CARD_W = 292, CARD_H = 452, CARD_GAP = 30;
+// Card geometry is authored in style.css (--card-w/h/gap) and read back here,
+// the same discipline the type stack and the rarity palette already use — so
+// the small-viewport step in the sheet actually reaches the offer row.
 /** Words the effect text lifts out of the body colour. */
 // Built once: drawMixed runs per line, per card, every frame, and a regex
 // literal rebuilt in that loop is pure garbage for the collector. `split` with
@@ -415,6 +417,10 @@ export class BoonOverlay {
     // Remember how this hand was dealt so a reroll can deal another one from
     // the same gate, with the same god, honouring the same constraints.
     this._rollOpts = { count: 3, ...(o || {}) };
+    // A Pom hand is dealt from what the player already holds, so Fated
+    // Persuasion has nothing to deal from: the plaque is hidden rather than
+    // offered and then refused.
+    this._pom = (o && o.kind === 'pom') || false;
     this.ui.boonState?.beginOffer?.();
     const list = (options && options.length ? options : this._fallback(o)).slice(0, 3);
     this._setOptions(list);
@@ -461,7 +467,7 @@ export class BoonOverlay {
    * physically cannot return the cards that were just refused.
    */
   reroll() {
-    if (!this.active || this.chosen >= 0) return false;
+    if (!this.active || this.chosen >= 0 || this._pom) return false;
     const bs = this.ui.boonState;
     if (!bs || !bs.canReroll?.()) {
       this.rerollDenied = this.ui.now();
@@ -482,6 +488,14 @@ export class BoonOverlay {
   choose(i) {
     if (!this.active || this.chosen >= 0) return;
     if (i < 0 || i >= this.options.length) return;
+    // A gated card can reach the screen (a Duo one boon short is a goal worth
+    // showing). It must not be takeable: the gate is the whole point.
+    if (this.options[i].locked) {
+      this.rerollDenied = this.ui.now();
+      this.ui.ctx?.audio?.sfx?.('ui.deny', { gain: 0.4 });
+      this.ui.dirty = true;
+      return;
+    }
     this.chosen = i;
     this.chosenT = this.ui.now();
     const picked = this.raw[i];
@@ -519,7 +533,8 @@ export class BoonOverlay {
   }
 
   layout(W, H, S) {
-    const cw = CARD_W * S, ch = CARD_H * S, gap = CARD_GAP * S;
+    const M = cardMetrics();
+    const cw = M.w * S, ch = M.h * S, gap = M.gap * S;
     const n = this.options.length || 3;
     const total = n * cw + (n - 1) * gap;
     const x0 = (W - total) / 2;
@@ -569,7 +584,11 @@ export class BoonOverlay {
 
   draw(g, W, H, S, t) {
     if (!this.active) return;
-    const age = t - this.t0;
+    // A viewer who asked for reduced motion gets the whole card, immediately,
+    // with the speculars parked instead of travelling.
+    const motion = uiMotion();
+    const age = motion > 0 ? t - this.t0 : 99;
+    t = motion > 0 ? t : 0;
 
     // ── scrim: darken outward, keep the centre readable ──
     const sc = clamp01(age / 0.30);
@@ -625,7 +644,7 @@ export class BoonOverlay {
       const p = clamp01((age - d) / 0.46);
       if (p <= 0) continue;
       const e = ease.overshoot(p, 1.35);
-      const hovered = (this.hover === i && this.chosen < 0);
+      const hovered = (this.hover === i && this.chosen < 0 && !o.locked);
       const picked = this.chosen === i;
       const rejected = this.chosen >= 0 && !picked;
 
@@ -643,6 +662,7 @@ export class BoonOverlay {
       } else if (hovered) {
         lift0 -= 9 * S;
       }
+      if (o.locked) alpha *= 0.62;
       g.globalAlpha = alpha;
       g.translate(r.x + r.w / 2, r.y + r.h / 2 + lift0);
       g.scale(scale, scale);
@@ -656,11 +676,24 @@ export class BoonOverlay {
     // between the cards, so it gets its own plaque below the row rather than
     // hiding inside the hint line.
     const fa = ease.out(clamp01((age - 0.55) / 0.4));
-    const left = this.rerollsLeft();
+    const left = this._pom ? 0 : this.rerollsLeft();
     const rrw = 236 * S, rh = 34 * S;
     const rx = W / 2 - rrw / 2, ry = L.y + L.ch + 22 * S;
-    this.rerollRect = this.chosen >= 0 ? null : { x: rx, y: ry, w: rrw, h: rh };
+    this.rerollRect = (this.chosen >= 0 || this._pom) ? null : { x: rx, y: ry, w: rrw, h: rh };
     g.save(); g.globalAlpha = fa;
+    if (this._pom) {
+      tracked(g, 'A POM OF POWER  ·  DEEPEN WHAT YOU ALREADY HOLD', W / 2, ry + rh * 0.62, {
+        size: 10.5 * S, track: 0.22, weight: 700, align: 'center',
+        color: rgba(PAL.goldHi, 0.92), shadow: '#05030b', shadowDy: 1.2 * S,
+      });
+      g.restore();
+      g.save(); g.globalAlpha = fa * 0.8;
+      tracked(g, '1 · 2 · 3  OR CLICK   ·   ARROWS + ENTER   ·   GAMEPAD A', W / 2, ry + rh + 22 * S, {
+        size: 10 * S, track: 0.24, weight: 600, align: 'center', color: rgba('#e8d8b6', 0.82), shadow: '#06030c', shadowDy: 1.4 * S,
+      });
+      g.restore();
+      return;
+    }
     const hot = this.rerollHover && left > 0 && this.chosen < 0;
     const denied = clamp01(1 - (t - this.rerollDenied) / 0.5);
     plaqueRect(g, rx, ry, rrw, rh, 5 * S);
@@ -674,7 +707,7 @@ export class BoonOverlay {
     g.save(); g.translate(gx, gy);
     g.strokeStyle = rgba(left > 0 ? PAL.goldHi : PAL.bronze, left > 0 ? 0.95 : 0.5);
     g.lineWidth = 1.8 * S; g.lineCap = 'round';
-    const spin = left > 0 ? t * 1.6 : 0;
+    const spin = left > 0 ? t * 1.6 : 0;   // t is parked at 0 under reduced motion
     g.beginPath(); g.arc(0, 0, gr, spin, spin + 4.4); g.stroke();
     g.beginPath();
     g.moveTo(Math.cos(spin + 4.4) * gr, Math.sin(spin + 4.4) * gr);
@@ -739,22 +772,35 @@ export class BoonOverlay {
     // the card carries the tier colour, so a Heroic is identifiable from the
     // far side of the screen and colour is never the only signal — the word is
     // right there on it.
-    const ribH = 22 * S, ribY = y + 25 * S, ribW = w - 94 * S;
+    // THE GRADE IS THE FIRST THING THE CARD SAYS, so it must also be the most
+    // legible. It used to be painted in the tier's own hue on a wash of that
+    // same hue, which measured 1.4:1 on a Duo — the least readable text on the
+    // card. The tier now owns the PLATE (a deep ink of its own hue), the RULE
+    // under it and the stroke; the word itself is the tier's light value on
+    // that ink, which measures 7-12:1 on every grade.
+    const ribH = 24 * S, ribY = y + 25 * S, ribW = w - 94 * S;
     const ribX = cx - ribW / 2;
     g.save();
     plaqueRect(g, ribX, ribY, ribW, ribH, 5 * S);
     const rg2 = g.createLinearGradient(ribX, ribY, ribX + ribW, ribY + ribH);
-    rg2.addColorStop(0, rgba(shade(R.ring[0], 0.42), 0.95));
-    rg2.addColorStop(0.5, rgba(R.ring[1], fixed ? 0.42 : 0.28));
-    rg2.addColorStop(1, rgba(shade(R.ring[2] || R.ring[0], 0.42), 0.95));
+    rg2.addColorStop(0, rgba(shade(R.ring[0], 0.90), 0.97));
+    rg2.addColorStop(0.5, rgba(shade(R.ring[1], 0.88), 0.97));
+    rg2.addColorStop(1, rgba(shade(R.ring[2] || R.ring[0], 0.90), 0.97));
     g.fillStyle = rg2; g.fill();
-    g.strokeStyle = rgba(R.text, 0.78); g.lineWidth = 1 * S; g.stroke();
+    g.strokeStyle = rgba(R.text, fixed ? 0.95 : 0.82); g.lineWidth = (fixed ? 1.4 : 1.1) * S; g.stroke();
     g.restore();
+    // the tier's colour, at full strength, as a rule under the word
+    const ruleW = ribW - 22 * S;
+    const rrg = g.createLinearGradient(cx - ruleW / 2, 0, cx + ruleW / 2, 0);
+    rrg.addColorStop(0, 'rgba(0,0,0,0)');
+    rrg.addColorStop(0.5, rgba(R.ring[1], fixed ? 0.95 : 0.8));
+    rrg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rrg; g.fillRect(cx - ruleW / 2, ribY + ribH - 5 * S, ruleW, Math.max(1, 1.6 * S));
     const grade = (RARITY_LABEL[o.rarity] || 'Common').toUpperCase();
     const lvl = (o.level || 1) > 1 ? `  ·  LV ${o.level}` : '';
-    tracked(g, grade + lvl, cx, ribY + ribH * 0.70, {
-      size: 10.5 * S, track: 0.28, weight: 700, align: 'center',
-      color: fixed ? '#fffaf0' : R.text, shadow: '#06030c', shadowDy: 1.3 * S,
+    tracked(g, grade + lvl, cx, ribY + ribH * 0.63, {
+      size: 11.5 * S, track: 0.26, weight: 700, align: 'center',
+      color: fixed ? lift(R.text, 0.30) : R.text, shadow: '#05020a', shadowDy: 1.3 * S,
     });
 
     // The card number is an affordance, not just a footer instruction.
@@ -782,10 +828,34 @@ export class BoonOverlay {
     mg.addColorStop(0, mix('#2e1a4a', col, 0.30)); mg.addColorStop(0.7, '#180f28'); mg.addColorStop(1, '#0b0715');
     g.fillStyle = mg; g.fill();
     g.restore();
-    const hasPortrait = drawGodPortrait(g, cx, my, mr * 0.94, o.god);
+    // A Duo is a pact between two gods, so the medallion is split down the
+    // middle and each half is that god's own portrait. One face on a card
+    // titled ZEUS + POSEIDON is a card that hides half of what it is.
+    const duoGods = (o.duo && o.gods && o.gods.length > 1) ? o.gods.slice(0, 2) : null;
+    if (duoGods) {
+      for (let k = 0; k < 2; k++) {
+        g.save();
+        g.beginPath();
+        g.moveTo(cx, my - mr); g.lineTo(cx, my + mr);
+        // k=0 is the LEFT half (clockwise from the bottom), so the first god
+        // named on the line below is the face on the left.
+        g.arc(cx, my, mr, Math.PI * 0.5, Math.PI * 1.5, k === 1);
+        g.closePath(); g.clip();
+        if (!drawGodPortrait(g, cx, my, mr * 0.94, duoGods[k])) {
+          godEmblem(g, cx + (k ? 1 : -1) * mr * 0.46, my, mr * 0.44, duoGods[k],
+            { color: GOD_INFO[duoGods[k]]?.color || col, glowA: 0.55, glowR: 2.0 });
+        }
+        g.restore();
+      }
+      g.save();
+      g.strokeStyle = rgba(PAL.goldHi, 0.8); g.lineWidth = 1.4 * S;
+      g.beginPath(); g.moveTo(cx, my - mr * 0.98); g.lineTo(cx, my + mr * 0.98); g.stroke();
+      g.restore();
+    }
+    const hasPortrait = duoGods || drawGodPortrait(g, cx, my, mr * 0.94, o.god);
     if (!hasPortrait) {
       godEmblem(g, cx, my, mr * 0.64, o.god, { color: col, glowA: st.hovered ? 0.72 : 0.60, glowR: 2.4 });
-    } else {
+    } else if (!duoGods) {
       // Preserve the fast-read emblem as a small seal without covering the
       // generated portrait that gives the divine audience its identity.
       const er = 14 * S, ex = cx + mr * 0.70, ey = my + mr * 0.66;
@@ -796,22 +866,30 @@ export class BoonOverlay {
     }
     rarityRing(g, cx, my, mr, o.rarity, { w: 4.6 * S, phase: t * 0.5 + (st.index || 0) });
 
-    // duo badge — both patrons, flanking the medallion
-    if (o.duo && o.gods && o.gods.length > 1) {
-      const br = 15 * S;
+    // duo seals — one emblem per patron, under its own half of the medallion
+    if (duoGods) {
+      const br = 14 * S;
       for (let k = 0; k < 2; k++) {
-        const bx = cx + (k ? 1 : -1) * (mr + 16 * S), by = my + mr * 0.72;
+        const bx = cx + (k ? 1 : -1) * (mr + 15 * S), by = my + mr * 0.70;
         g.save(); g.beginPath(); g.arc(bx, by, br, 0, 6.2832);
         g.fillStyle = '#0c0715'; g.fill();
         g.strokeStyle = rgba(R.text, 0.85); g.lineWidth = 1.4 * S; g.stroke(); g.restore();
-        godEmblem(g, bx, by, br * 0.58, o.gods[k], { glowA: 0.34, glowR: 1.6 });
+        godEmblem(g, bx, by, br * 0.58, duoGods[k], { color: GOD_INFO[duoGods[k]]?.color || col, glowA: 0.42, glowR: 1.6 });
       }
     }
 
     // ── god name + what that god is FOR ──
     let cursorY = my + mr + 22 * S;
-    tracked(g, (GOD_INFO[o.god]?.name || o.god || '').toUpperCase(), cx, cursorY, {
-      size: 13 * S, track: 0.32, weight: 700, align: 'center', color: lift(col, 0.34),
+    const godLine = duoGods
+      ? duoGods.map(k => (GOD_INFO[k]?.name || k).toUpperCase()).join('  +  ')
+      : (GOD_INFO[o.god]?.name || o.god || '').toUpperCase();
+    let godSize = 13 * S;
+    const godMax = w - 34 * S;
+    const godW = trackedWidth(g, godLine, { size: godSize, track: 0.32, weight: 700 });
+    if (godW > godMax) godSize *= godMax / godW;
+    tracked(g, godLine, cx, cursorY, {
+      size: godSize, track: 0.32, weight: 700, align: 'center',
+      color: duoGods ? lift(R.text, 0.30) : lift(col, 0.34),
       shadow: '#07040d', shadowDy: 1.6 * S,
     });
     cursorY += 14 * S;
@@ -821,8 +899,10 @@ export class BoonOverlay {
           : o.duo ? 'A DUO BOON'
             : o.legendary ? 'A LEGENDARY BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
     if (epithet) tracked(g, epithet, cx, cursorY, {
-      size: 8.6 * S, track: 0.30, weight: 600, align: 'center',
-      color: fixed ? rgba(R.text, 0.9) : rgba(PAL.parchDim, 0.72),
+      size: 8.8 * S, track: 0.30, weight: 600, align: 'center',
+      // this line used to sit at 1.1:1 against the card's own wash
+      color: fixed ? lift(R.text, 0.34) : rgba(PAL.parch, 0.92),
+      shadow: '#06030c', shadowDy: 1.2 * S,
     });
     cursorY += 13 * S;
 
@@ -863,7 +943,10 @@ export class BoonOverlay {
     // ── slot pill (with its glyph) and, beside it, the curse chip ──
     // A payoff card names its own kind on the pill: "BOON" is technically true
     // of a Duo but tells the player nothing they need at the moment of choice.
-    const slotName = (o.duo ? 'Duo Boon' : SLOTS[o.slot]?.name || o.slot || 'Boon').toUpperCase();
+    // The pill names the SLOT. "DUO" is already the ribbon, the epithet and the
+    // edge light; a fourth repetition costs the player the one fact the pill is
+    // there to carry — what this card occupies.
+    const slotName = (SLOTS[o.slot]?.name || o.slot || 'Boon').toUpperCase();
     const curse = o.curse;
     const slotTextW = trackedWidth(g, slotName, { size: 10 * S, track: 0.28, weight: 600 });
     const pillW = slotTextW + 40 * S, pillH = 20 * S;
@@ -874,12 +957,13 @@ export class BoonOverlay {
 
     g.save();
     plaqueRect(g, px0, py, pillW, pillH, 5 * S);
-    g.fillStyle = rgba(shade(col, 0.58), 0.92); g.fill();
+    g.fillStyle = rgba(shade(col, 0.84), 0.94); g.fill();
     g.strokeStyle = rgba(PAL.goldMid, 0.8); g.lineWidth = 1.1 * S; g.stroke();
     g.restore();
-    slotGlyph(g, o.duo ? 'duo' : o.slot, px0 + 14 * S, py + pillH / 2, 6.6 * S, rgba(lift(col, 0.5), 0.95));
+    slotGlyph(g, o.slot, px0 + 14 * S, py + pillH / 2, 6.6 * S, rgba(lift(col, 0.5), 0.95));
     tracked(g, slotName, px0 + 25 * S, py + pillH * 0.70, {
-      size: 10 * S, track: 0.28, weight: 600, align: 'left', color: lift(col, 0.50),
+      size: 10 * S, track: 0.28, weight: 600, align: 'left', color: lift(col, 0.55),
+      shadow: '#05030a', shadowDy: 1.1 * S,
     });
     px0 += pillW + 8 * S;
 
@@ -889,7 +973,7 @@ export class BoonOverlay {
       // the sentence. Its colour comes from the curse, not from the god.
       g.save();
       plaqueRect(g, px0, py, chipW, pillH, 5 * S);
-      g.fillStyle = rgba(shade(curse.color, 0.68), 0.94); g.fill();
+      g.fillStyle = rgba(shade(curse.color, 0.86), 0.95); g.fill();
       g.strokeStyle = rgba(curse.color, 0.85); g.lineWidth = 1.1 * S; g.stroke();
       g.restore();
       g.save(); g.globalCompositeOperation = 'lighter';
@@ -922,7 +1006,12 @@ export class BoonOverlay {
       });
       const from = (RARITY_LABEL[cmp.fromRarity] || cmp.fromRarity || 'Common').toUpperCase();
       const to = (RARITY_LABEL[cmp.toRarity] || cmp.toRarity || 'Common').toUpperCase();
-      tracked(g, `${from}   →   ${to}`, cx, by + 27 * S, {
+      // An arrow that points from a grade to itself is not a transition. A
+      // re-offer at a settled grade is a LEVEL, so say that instead.
+      const transition = from !== to ? `${from}   →   ${to}`
+        : (o.level || 1) > 1 ? `${to}   ·   LV ${(o.level || 1) - 1}   →   LV ${o.level}`
+          : `${to}   ·   AT ITS PEAK`;
+      tracked(g, transition, cx, by + 27 * S, {
         size: 9.4 * S, track: 0.22, weight: 700, align: 'center', color: R.text, shadow: '#05030a', shadowDy: 1,
       });
       cursorY = by + bh;
@@ -995,15 +1084,50 @@ export class BoonOverlay {
       g.restore();
     }
 
+    // ── a sealed card reads as sealed ──
+    // It is on screen because the gate is worth seeing, not because it can be
+    // taken: a cold veil and a SEALED strap say so before the callout is read.
+    if (o.locked) {
+      g.save();
+      roundRect(g, x + 4 * S, y + 4 * S, w - 8 * S, h - 8 * S, 7 * S); g.clip();
+      g.fillStyle = rgba('#0a0716', 0.42); g.fillRect(x, y, w, h);
+      g.restore();
+      const sw = 92 * S, sh = 17 * S, sy2 = my - sh * 0.5;
+      g.save();
+      plaqueRect(g, cx - sw / 2, sy2, sw, sh, 4 * S);
+      g.fillStyle = rgba('#0b0715', 0.95); g.fill();
+      g.strokeStyle = rgba(PAL.bronze, 0.9); g.lineWidth = 1 * S; g.stroke();
+      g.restore();
+      tracked(g, 'SEALED', cx, sy2 + sh * 0.72, {
+        size: 9 * S, track: 0.34, weight: 700, align: 'center',
+        color: rgba(PAL.parch, 0.88), shadow: '#05030a', shadowDy: 1,
+      });
+    }
+
     // ── travelling light sweep across the whole card face ──
+    // EXCEPT the grade ribbon. The sweep is additive, the ribbon is deliberately
+    // the darkest ink on the card, and a travelling +7% white over that ink was
+    // costing the grade a third of its contrast every time it passed — measured
+    // as the difference between a 2.9:1 Epic and a 5.0:1 Heroic in the same
+    // frame, purely because the sweep happened to be over one and not the other.
+    // An even-odd clip subtracts the ribbon from the swept region.
     g.save();
-    roundRect(g, x + 3 * S, y + 3 * S, w - 6 * S, h - 6 * S, 7 * S); g.clip();
+    // (both ornament helpers begin their own path, so the hole is appended by
+    // hand — a second subpath, not a second path.)
+    roundRect(g, x + 3 * S, y + 3 * S, w - 6 * S, h - 6 * S, 7 * S);
+    {
+      const hx = ribX - 1 * S, hy = ribY - 1 * S, hw = ribW + 2 * S, hh = ribH + 2 * S, hc = 5 * S;
+      g.moveTo(hx + hc, hy); g.lineTo(hx + hw - hc, hy); g.lineTo(hx + hw, hy + hc);
+      g.lineTo(hx + hw, hy + hh - hc); g.lineTo(hx + hw - hc, hy + hh); g.lineTo(hx + hc, hy + hh);
+      g.lineTo(hx, hy + hh - hc); g.lineTo(hx, hy + hc); g.closePath();
+    }
+    g.clip('evenodd');
     g.globalCompositeOperation = 'lighter';
     const sp = ((t * 0.30 + (st.index || 0) * 0.24) % 1.6) - 0.3;
     const sx = x - w * 0.4 + sp * w * 1.8;
     const sg2 = g.createLinearGradient(sx - w * 0.28, y, sx + w * 0.28, y + h);
     sg2.addColorStop(0, 'rgba(0,0,0,0)');
-    sg2.addColorStop(0.5, rgba('#ffeec4', st.hovered ? 0.11 : (fixed ? 0.085 : 0.065)));
+    sg2.addColorStop(0.5, rgba('#ffeec4', st.hovered ? 0.085 : (fixed ? 0.062 : 0.05)));
     sg2.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = sg2; g.fillRect(x, y, w, h);
     g.restore();
@@ -1078,6 +1202,7 @@ function normalise(x, boonState) {
       : boonOfferComparison(x, boonState),
     curse: x.curse || (boon ? curseForBoon(boon) : null),
     prereq,
+    locked: !!x.locked || !!(prereq && prereq.gated && !prereq.met),
     rarity: RARITY[rarity] ? rarity : 'common',
     tier: x.tier || (RARITY[rarity] ? rarity : 'common'),
     slot: x.slot || (boon && boon.slot) || 'passive',

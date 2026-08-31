@@ -75,11 +75,11 @@ export const CURSES = Object.freeze({
   slow: { id: 'slow', name: 'Slow', engine: 'chill', color: '#8fd8ff', verb: 'Drags',
     blurb: 'Weighs foes down so they close and swing sluggishly.' },
   hitch: { id: 'hitch', name: 'Hitch', engine: 'weak', color: '#ff9bd6', verb: 'Binds',
-    blurb: 'Binds a foe so its own blows come back blunted.' },
+    blurb: 'Binds a foe: its blows come back blunted and its step drags.' },
   weak: { id: 'weak', name: 'Weak', engine: 'weak', color: '#8ef0d0', verb: 'Saps',
     blurb: 'Foes deal markedly less damage while afflicted.' },
   blind: { id: 'blind', name: 'Blind', engine: 'weak', color: '#ffe9a8', verb: 'Dazzles',
-    blurb: 'Light robs foes of their aim and their nerve.' },
+    blurb: 'Robs foes of their aim, and they never see your blow coming.' },
   wither: { id: 'wither', name: 'Wither', engine: 'doom', color: '#a05fe0', verb: 'Dooms',
     blurb: 'A knife hangs over the foe and falls for a delayed burst.' },
   hangover: { id: 'hangover', name: 'Hangover', engine: 'burn', color: '#b884ff', verb: 'Sickens',
@@ -496,28 +496,63 @@ for (const boon of CANON_BOONS) if (!BOONS.some(existing => existing.id === boon
 // A duo requires a boon from BOTH gods already granted. They are rare, always
 // offered at Epic or above, and read as the run's payoff.
 export const DUOS = [
+  // The eight authored duos name their own prerequisites: a duo is a promise
+  // about a specific pair of gifts, and the derived gate below is the fallback
+  // for the ~77 generated pairs, not the ideal.
   { id: 'duo.zeus.poseidon', gods: ['zeus', 'poseidon'], name: 'Sea Storm', slot: 'passive',
+    requires: {
+      zeus: ['zeus.attack', 'zeus.special', 'h2.zeus.attack'],
+      poseidon: ['poseidon.attack', 'poseidon.dash', 'h2.poseidon.dash'],
+    },
     base: { dmg: 40 }, text: v => `Foes knocked back are struck by lightning for ${v.dmg} damage.`,
     apply: (m, v) => { m.seaStormDmg += v.dmg; } },
   { id: 'duo.zeus.artemis', gods: ['zeus', 'artemis'], name: 'Fully Loaded', slot: 'passive',
+    requires: {
+      zeus: ['zeus.cast', 'zeus.special', 'h2.zeus.cast'],
+      artemis: ['artemis.attack', 'artemis.cast', 'artemis.special'],
+    },
     base: { crit: 10 }, text: v => `Lightning strikes can Critically hit for +${v.crit}%.`,
     apply: (m, v) => { m.lightningCrit += v.crit / 100; } },
   { id: 'duo.ares.aphrodite', gods: ['ares', 'aphrodite'], name: 'Curse of Longing', slot: 'passive',
+    requires: {
+      ares: ['ares.attack', 'ares.special', 'ares.cast'],
+      aphrodite: ['aphrodite.attack', 'aphrodite.special', 'aphrodite.cast'],
+    },
     base: { dmg: 55 }, text: v => `Doom on Weakened foes deals ${v.dmg} extra damage.`,
     apply: (m, v) => { m.doomVsWeak += v.dmg; } },
   { id: 'duo.ares.artemis', gods: ['ares', 'artemis'], name: 'Hunting Blades', slot: 'passive',
+    requires: {
+      ares: ['ares.attack', 'ares.dash', 'h2.ares.attack'],
+      artemis: ['artemis.attack', 'artemis.special', 'artemis.dash'],
+    },
     base: { dmg: 34 }, text: v => `Critical hits open a Blade Rift for ${v.dmg} damage.`,
     apply: (m, v) => { m.critRiftDmg += v.dmg; } },
   { id: 'duo.dionysus.aphrodite', gods: ['dionysus', 'aphrodite'], name: 'Low Tolerance', slot: 'passive',
+    requires: {
+      dionysus: ['dionysus.attack', 'dionysus.special', 'dionysus.cast'],
+      aphrodite: ['aphrodite.attack', 'aphrodite.special', 'aphrodite.dash'],
+    },
     base: { dmg: 6 }, text: v => `Weakened foes take +${v.dmg}% damage per Hangover stack.`,
     apply: (m, v) => { m.hangoverVsWeak += v.dmg / 100; } },
   { id: 'duo.hecate.selene', gods: ['hecate', 'selene'], name: 'Moonstruck', slot: 'passive',
+    requires: {
+      hecate: ['hecate.cast', 'hecate.attack', 'hecate.special'],
+      selene: ['selene.cast', 'selene.call', 'selene.special'],
+    },
     base: { dmg: 28 }, text: v => `Frozen foes shatter under moonlight for ${v.dmg} arcane damage.`,
     apply: (m, v) => { m.moonlightShatter += v.dmg; } },
   { id: 'duo.athena.hermes', gods: ['athena', 'hermes'], name: 'Sure Footing', slot: 'passive',
+    requires: {
+      athena: ['athena.dash', 'athena.special', 'athena.attack'],
+      hermes: ['hermes.dash', 'hermes.attack', 'hermes.dash.alternate'],
+    },
     base: { dodge: 12 }, text: v => `While deflecting, gain +${v.dodge}% dodge and move freely.`,
     apply: (m, v) => { m.deflectDodge += v.dodge / 100; } },
   { id: 'duo.poseidon.hermes', gods: ['poseidon', 'hermes'], name: 'Rip Current', slot: 'passive',
+    requires: {
+      poseidon: ['poseidon.dash', 'poseidon.attack', 'poseidon.special'],
+      hermes: ['hermes.dash', 'hermes.cast', 'hermes.dash.alternate'],
+    },
     base: { spd: 18 }, text: v => `Knockback carries you: move ${v.spd}% faster after a slam.`,
     apply: (m, v) => { m.slamSpeed += v.spd / 100; m.knockback += 1.5; } },
 ];
@@ -547,10 +582,30 @@ function prereqPool(god) {
   }
   return list;
 }
+/**
+ * A duo's derived gate. "Hold any one of this god's thirteen action boons" is
+ * barely a gate at all; Hades names three or four specific gifts. `gatePool`
+ * takes a deterministic contiguous slice of the god's action family, keyed by
+ * the duo's own id, so every duo asks for a DIFFERENT short list, the list is
+ * identical in every run and on every machine, and it still cannot rot when
+ * content is added.
+ */
+const DUO_GATE_WIDTH = 5;
+function gatePool(key, god, width) {
+  const pool = prereqPool(god);
+  if (pool.length <= width) return pool.slice();
+  let h = 2166136261;
+  const s = `${key}:${god}`;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  const start = h % pool.length;
+  const out = [];
+  for (let i = 0; i < width; i++) out.push(pool[(start + i) % pool.length]);
+  return out;
+}
 for (const duo of DUOS) {
   if (!duo.requires) {
     duo.requires = {};
-    for (const god of duo.gods) duo.requires[god] = prereqPool(god);
+    for (const god of duo.gods) duo.requires[god] = gatePool(duo.id, god, DUO_GATE_WIDTH);
   }
   duo.tier = 'duo';
 }
@@ -584,7 +639,7 @@ export const LEGENDARIES = [
     v => `Each Wither that resolves deals ${v.dmg} more damage than the last, up to five times.`,
     (m, v) => { m.doomDmg += v.dmg; m.doomEscalate += v.dmg; m.status.doom *= 1.3; }, { curse: 'wither' }),
   L('hunters-instinct', 'artemis', 'Hunter’s Instinct', 2, { crit: 15, mul: 1.0 },
-    v => `Gain ${v.crit}% Critical chance and +${v.mul}x Critical damage; marks never expire.`,
+    v => `Gain ${v.crit}% Critical chance and +${v.mul}x Critical damage; your Critical marks never expire.`,
     (m, v) => { m.critChance += v.crit / 100; m.critMul += v.mul; m.markPermanent = 1; }),
   L('black-out', 'dionysus', 'Black Out', 2, { dmg: 6 },
     v => `Hangover stacks amplify all damage by a further ${v.dmg}% each and never fall off early.`,
@@ -596,13 +651,13 @@ export const LEGENDARIES = [
     v => `Frozen foes shatter when struck, dealing ${v.dmg} area damage.`,
     (m, v) => { m.shatterDmg += v.dmg; m.moonlightShatter += v.dmg * 0.4; m.status.chill *= 1.3; }, { curse: 'freeze' }),
   L('perfect-image', 'apollo', 'Perfect Image', 2, { pct: 25 },
-    v => `Blinded foes cannot land a blow and take ${v.pct}% more damage.`,
+    v => `Blind lingers 50% longer, and Blinded foes take ${v.pct}% more damage.`,
     (m, v) => { m.vsWeakAmp += v.pct / 100; m.statusDuration.weak *= 1.5; }, { curse: 'blind' }),
   L('nexus-sting', 'hera', 'Nexus Sting', 2, { pct: 35 },
     v => `Hitched foes share ${v.pct}% of all damage you deal to any of them.`,
     (m, v) => { m.hitchShare += v.pct / 100; m.status.weak *= 1.3; }, { curse: 'hitch' }),
   L('soot-sprite', 'hestia', 'Soot Sprite', 2, { stacks: 3 },
-    v => `Scorch reaches ${v.stacks} more stacks and its damage no longer plateaus.`,
+    v => `Scorch stacks ${v.stacks} higher than its cap, and every stack burns.`,
     (m, v) => { m.scorchCap += v.stacks; m.status.burn *= 1.45; }, { curse: 'scorch' }),
   L('volcanic-ash', 'hephaestus', 'Volcanic Ash', 2, { dmg: 55 },
     v => `Every forged Blast leaves cinders that deal ${v.dmg} damage over time.`,
@@ -801,14 +856,22 @@ export class BoonState {
     for (const rec of this.granted) {
       try { rec.boon.apply(m, rec.values, this.ctx); } catch (e) { /* a bad boon must never kill the run */ }
     }
-    // Status potency folds into rider stacks so combat needs no extra query.
-    for (const k in m.rider) {
-      const r = m.rider[k];
-      if (r && r.status && m.status[r.status] > 1) r.stacks = Math.max(1, Math.round(r.stacks * m.status[r.status]));
-    }
+    // Curse potency is NOT folded in here. It used to be multiplied into the
+    // rider's stack count, which meant it reached exactly one of the many ways
+    // a status is applied (the rider) and silently missed blasts, forks, calls
+    // and pulses. combat.applyStatus() reads mods.status[kind] directly now, so
+    // every path scales once and by the same number.
     for (const rec of this.granted) {
       const r = m.rider[rec.slot];
-      if (r && (!r.god || r.god === rec.god)) r.tier = Math.max(r.tier || 1, rarityRank(rec.rarity) + 1);
+      if (!r || (r.god && r.god !== rec.god)) continue;
+      r.tier = Math.max(r.tier || 1, rarityRank(rec.rarity) + 1);
+      // The rider carries the CURSE the card promised, not just the engine
+      // primitive underneath it. Combat reads this to colour the affliction
+      // and to bend it: a Hera Hitch and an Apollo Blind are both `weak`, and
+      // without this they would be the same pink-teal wisp doing the same
+      // thing under two different names.
+      const curse = curseForBoon(rec.boon);
+      if (curse && r.status && curse.engine === r.status) { r.curse = curse.id; r.curseColor = curse.color; }
     }
     this.mods = m;
     return m;
@@ -951,6 +1014,20 @@ export class BoonState {
         fromValues: rec.values,
       };
     });
+  }
+
+  // ── Poms as a currency ───────────────────────────────────────────────────
+  /** Bank Poms of Power (boss drop, shop, Chaos gate). */
+  grantPoms(n = 1) {
+    this.poms = Math.max(0, this.poms + (n | 0));
+    this.ctx?.events?.emit?.('boon.poms', { total: this.poms });
+    return this.poms;
+  }
+  /** Spend one; the caller has already applied the level. */
+  spendPom(n = 1) {
+    this.poms = Math.max(0, this.poms - Math.max(1, n | 0));
+    this.ctx?.events?.emit?.('boon.poms', { total: this.poms });
+    return this.poms;
   }
 
   // ── rerolls ──────────────────────────────────────────────────────────────
