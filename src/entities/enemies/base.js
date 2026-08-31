@@ -400,6 +400,12 @@ export class Enemy {
     ctx.scene.add(this.root);
     this.flashMat = mgr.flashMat;
     if (this.def.brain) this.brain = new Brain(this.def.brain, this);
+    // ONE-TIME rig dressing (a boss's crown and greatsword, merged geometry
+    // that costs real milliseconds). spawn() wipes `mem`, so a family that
+    // built its attachments in onSpawn rebuilt — and re-parented — them on
+    // every single spawn. Anything permanent belongs here instead: init() runs
+    // once per pooled instance, for the life of the page.
+    if (this.def.onBuild) this.def.onBuild(this, ctx);
     return this;
   }
 

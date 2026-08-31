@@ -11,7 +11,7 @@ import {
   lift, displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
 } from './ornament.js';
 import { godEmblem } from './boons.js';
-import { GOD_INFO } from '../game/boons.js';
+import { GOD_INFO, SLOTS } from '../game/boons.js';
 import { CONTROL_ROWS } from '../core/controls.js';
 
 const QUALITY = ['auto', 'low', 'med', 'high', 'ultra'];
@@ -310,51 +310,194 @@ export class Menus {
     g.restore();
   }
 
-  // ═══════════════════════════════════════════════════════ SETTINGS ═══════
+  // ═══════════════════════════════════════════════════════ THE CODEX ══════
+  // The loadout screen. A Hades player opens this to answer three questions:
+  // what is in each of my five ability slots, exactly what does each boon do
+  // at the grade and level I actually have it, and what am I close to
+  // unlocking. It answers all three, in that order.
   _boonArchive(g, W, H, S, t, x, y, w, h) {
-    const records = [...(this.ui.ctx?.boons?.list?.() || [])].sort((a, b) => {
-      const order = { attack: 0, special: 1, cast: 2, dash: 3, call: 4, passive: 5, forge: 6 };
-      return (order[a.slot] ?? 9) - (order[b.slot] ?? 9) || String(a.boon?.name || '').localeCompare(String(b.boon?.name || ''));
-    });
+    const state = this.ui.ctx?.boons || this.ui.boonState;
+    const entries = state?.loadout?.() || [];
+    const records = entries.length
+      ? entries
+      : [...(state?.list?.() || [])].map(r => state?.describe?.(r)).filter(Boolean);
+
     if (!records.length) {
       tracked(g, 'NO BOONS CLAIMED THIS DESCENT', W / 2, y + h * .42, { size: 15 * S, track: .25, weight: 700, align: 'center', color: rgba(PAL.parchDim, .65) });
       tracked(g, 'PASS THROUGH A GOD GATE TO BEGIN YOUR BUILD', W / 2, y + h * .42 + 28 * S, { size: 9 * S, track: .18, weight: 600, align: 'center', color: rgba(PAL.goldHi, .7), font: bodyFont() });
       this._menu(g, W, H, S, t, y + h - 4 * S, 1, 0);
       return;
     }
-    this.boonSel = Math.max(0, Math.min(records.length - 1, this.boonSel));
-    const leftW = w * .48, gap = 22 * S, rightX = x + leftW + gap, rightW = w - leftW - gap;
-    const visible = 10, start = Math.max(0, Math.min(records.length - visible, this.boonSel - 4));
-    const rowH = Math.min(40 * S, (h - 58 * S) / visible);
-    tracked(g, `CURRENT BUILD · ${records.length} BOON${records.length === 1 ? '' : 'S'}`, x, y + 12 * S, { size: 10 * S, track: .22, weight: 700, align: 'left', color: rgba(PAL.goldHi, .86) });
-    for (let j = 0; j < Math.min(visible, records.length - start); j++) {
-      const i = start + j, rec = records[i], boon = rec.boon || rec, info = GOD_INFO[rec.god] || GOD_INFO.zeus;
-      const ry = y + 27 * S + j * rowH, on = i === this.boonSel;
-      plaqueRect(g, x, ry, leftW, rowH - 4 * S, 5 * S);
-      g.fillStyle = on ? rgba(info.color, .20) : rgba('#090611', .64); g.fill();
-      g.strokeStyle = on ? rgba(info.color, .95) : rgba(PAL.bronze, .34); g.lineWidth = (on ? 1.5 : .8) * S; g.stroke();
-      godEmblem(g, x + 19 * S, ry + (rowH - 4 * S) / 2, 10 * S, rec.god, { glowA: on ? .35 : .14, glowR: 1.6 });
-      tracked(g, String(boon.name || 'Boon').toUpperCase(), x + 38 * S, ry + 15 * S, { size: 10.4 * S, track: .11, weight: 700, align: 'left', color: on ? '#fff0c6' : rgba(PAL.parch, .76) });
-      tracked(g, `${String(rec.slot || 'passive').toUpperCase()} · ${String(rec.rarity || 'common').toUpperCase()} · LV ${rec.level || 1}`, x + 38 * S, ry + 29 * S, { size: 7.2 * S, track: .13, weight: 600, align: 'left', color: RARITY[rec.rarity]?.text || info.color, font: bodyFont() });
-      this.hit.push({ x, y: ry, w: leftW, h: rowH - 4 * S, act: 'boon-select', boonIndex: i });
-    }
-    if (start > 0) tracked(g, '▲ MORE', x + leftW - 6 * S, y + 15 * S, { size: 7.5 * S, track: .15, weight: 700, align: 'right', color: rgba(PAL.parchDim, .65) });
-    if (start + visible < records.length) tracked(g, '▼ MORE', x + leftW - 6 * S, y + h - 22 * S, { size: 7.5 * S, track: .15, weight: 700, align: 'right', color: rgba(PAL.parchDim, .65) });
 
-    const rec = records[this.boonSel], boon = rec.boon || rec, info = GOD_INFO[rec.god] || GOD_INFO.zeus;
-    plaqueRect(g, rightX, y + 27 * S, rightW, h - 56 * S, 8 * S);
-    g.fillStyle = rgba('#10091b', .88); g.fill(); g.strokeStyle = rgba(info.color, .72); g.lineWidth = 1.4 * S; g.stroke();
-    godEmblem(g, rightX + rightW / 2, y + 91 * S, 31 * S, rec.god, { glowA: .48, glowR: 2.0 });
-    tracked(g, info.name.toUpperCase(), rightX + rightW / 2, y + 142 * S, { size: 11 * S, track: .25, weight: 700, align: 'center', color: info.color });
-    tracked(g, String(boon.name || 'BOON').toUpperCase(), rightX + rightW / 2, y + 177 * S, { size: 18 * S, track: .14, weight: 700, align: 'center', color: '#ffe9a8' });
-    tracked(g, `${String(rec.rarity || 'common').toUpperCase()} · ${String(rec.slot || 'passive').toUpperCase()} · LEVEL ${rec.level || 1}`, rightX + rightW / 2, y + 203 * S, { size: 9 * S, track: .20, weight: 700, align: 'center', color: RARITY[rec.rarity]?.text || info.color });
-    let desc = '';
-    try { desc = boon.text?.(rec.values || {}) || ''; } catch (e) { desc = ''; }
-    const lines = wrap(g, desc, rightW - 54 * S, { size: 11 * S, weight: 500, font: bodyFont() });
-    g.font = `500 ${11 * S}px ${bodyFont()}`; g.fillStyle = rgba(PAL.parch, .84); g.textAlign = 'center';
-    for (let i = 0; i < Math.min(8, lines.length); i++) g.fillText(lines[i], rightX + rightW / 2, y + 244 * S + i * 18 * S);
-    const gods = boon.gods?.map(k => GOD_INFO[k]?.name || k).join(' + ');
-    tracked(g, gods ? `DUO · ${gods}`.toUpperCase() : info.title.toUpperCase(), rightX + rightW / 2, y + h - 47 * S, { size: 8.5 * S, track: .18, weight: 600, align: 'center', color: rgba(info.color, .82) });
+    this.boonSel = Math.max(0, Math.min(records.length - 1, this.boonSel));
+    const leftW = w * .47, gap = 22 * S, rightX = x + leftW + gap, rightW = w - leftW - gap;
+
+    // ── header: the build in one line ──
+    const gods = new Set(records.map(r => r.god));
+    const duos = records.filter(r => r.duo).length;
+    const legs = records.filter(r => r.legendary).length;
+    const rerolls = state?.rerolls || 0;
+    tracked(g, `CURRENT BUILD · ${records.length} BOON${records.length === 1 ? '' : 'S'} · ${gods.size} GOD${gods.size === 1 ? '' : 'S'}`,
+      x, y + 12 * S, { size: 10 * S, track: .22, weight: 700, align: 'left', color: rgba(PAL.goldHi, .86) });
+    const tally = [duos ? `${duos} DUO` : null, legs ? `${legs} LEGENDARY` : null, `${rerolls} REROLL${rerolls === 1 ? '' : 'S'}`]
+      .filter(Boolean).join('   ·   ');
+    tracked(g, tally, x + w, y + 12 * S, { size: 8.4 * S, track: .18, weight: 700, align: 'right', color: rgba(PAL.parchDim, .8) });
+
+    // ── the list, grouped by category ──
+    // Rows and group headings share one scroll window, so the selection never
+    // jumps a heading it cannot see.
+    const rows = [];
+    const ORDER = [
+      ['attack', 'Attack'], ['special', 'Special'], ['cast', 'Cast'], ['dash', 'Dash'], ['call', 'Call'],
+      ['gain', 'Magick Gain'], ['legendary', 'Legendary'], ['passive', 'Blessings'], ['forge', 'Weapon Forge'],
+    ];
+    const placed = new Set();
+    for (const [slot, label] of ORDER) {
+      const group = [];
+      for (let i = 0; i < records.length; i++) {
+        if (placed.has(i) || records[i].slot !== slot) continue;
+        placed.add(i); group.push({ rec: records[i], index: i });
+      }
+      if (!group.length) continue;
+      rows.push({ head: label.toUpperCase() });
+      rows.push(...group);
+    }
+    // Anything with an unexpected category still gets listed rather than lost.
+    const rest = [];
+    for (let i = 0; i < records.length; i++) if (!placed.has(i)) rest.push({ rec: records[i], index: i });
+    if (rest.length) { rows.push({ head: 'OTHER' }); rows.push(...rest); }
+
+    const rowH = 30 * S, headH = 18 * S;
+    const listTop = y + 26 * S, listBot = y + h - 26 * S;
+    const selRow = Math.max(0, rows.findIndex(r => r.index === this.boonSel));
+    // keep the selection inside the window
+    let acc = 0, start = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const hh = rows[i].head ? headH : rowH;
+      if (i < selRow) acc += hh;
+    }
+    const windowH = listBot - listTop;
+    let offset = Math.max(0, acc - windowH * 0.55);
+    let total = 0;
+    for (const r of rows) total += r.head ? headH : rowH;
+    offset = Math.min(offset, Math.max(0, total - windowH));
+
+    g.save();
+    g.beginPath(); g.rect(x - 2 * S, listTop, leftW + 4 * S, windowH); g.clip();
+    let ry = listTop - offset;
+    for (const row of rows) {
+      const hh = row.head ? headH : rowH;
+      if (ry + hh > listTop - 4 * S && ry < listBot + 4 * S) {
+        if (row.head) {
+          tracked(g, row.head, x + 2 * S, ry + 12 * S, {
+            size: 7.8 * S, track: .30, weight: 700, align: 'left', color: rgba(PAL.goldMid, .9),
+          });
+          const hg = g.createLinearGradient(x, 0, x + leftW, 0);
+          hg.addColorStop(0, rgba(PAL.bronze, .55)); hg.addColorStop(1, 'rgba(0,0,0,0)');
+          g.fillStyle = hg; g.fillRect(x + trackedWidth(g, row.head, { size: 7.8 * S, track: .30, weight: 700 }) + 10 * S, ry + 8 * S, leftW - trackedWidth(g, row.head, { size: 7.8 * S, track: .30, weight: 700 }) - 12 * S, Math.max(1, 1 * S));
+        } else {
+          const rec = row.rec, info = GOD_INFO[rec.god] || GOD_INFO.zeus;
+          const on = row.index === this.boonSel;
+          const R = RARITY[rec.tier] || RARITY[rec.rarity] || RARITY.common;
+          plaqueRect(g, x, ry, leftW, rowH - 4 * S, 4 * S);
+          g.fillStyle = on ? rgba(info.color, .22) : rgba('#090611', .58); g.fill();
+          g.strokeStyle = on ? rgba(R.text, .95) : rgba(PAL.bronze, .30); g.lineWidth = (on ? 1.5 : .8) * S; g.stroke();
+          // a rarity spine on the left edge: grade without reading
+          g.fillStyle = rgba(R.text, on ? .95 : .62);
+          g.fillRect(x, ry + 2 * S, 2.4 * S, rowH - 8 * S);
+          godEmblem(g, x + 17 * S, ry + (rowH - 4 * S) / 2, 8.5 * S, rec.god, { glowA: on ? .34 : .12, glowR: 1.5 });
+          const nm = String(rec.name || 'Boon').toUpperCase();
+          tracked(g, nm, x + 31 * S, ry + 12 * S, {
+            size: 9.6 * S, track: .09, weight: 700, align: 'left', color: on ? '#fff0c6' : rgba(PAL.parch, .78),
+          });
+          const grade = `${String(rec.tier || rec.rarity).toUpperCase()}${(rec.level || 1) > 1 ? ` · LV ${rec.level}` : ''}`;
+          tracked(g, grade, x + 31 * S, ry + 22 * S, {
+            size: 7 * S, track: .14, weight: 700, align: 'left', color: R.text, font: bodyFont(),
+          });
+          if (rec.curse) {
+            const cn = rec.curse.name.toUpperCase();
+            const cw = trackedWidth(g, cn, { size: 6.8 * S, track: .16, weight: 700 }) + 12 * S;
+            plaqueRect(g, x + leftW - cw - 6 * S, ry + 7 * S, cw, 13 * S, 3 * S);
+            g.fillStyle = rgba(shade(rec.curse.color, .68), .95); g.fill();
+            g.strokeStyle = rgba(rec.curse.color, .8); g.lineWidth = .8 * S; g.stroke();
+            tracked(g, cn, x + leftW - cw / 2 - 6 * S, ry + 16 * S, {
+              size: 6.8 * S, track: .16, weight: 700, align: 'center', color: lift(rec.curse.color, .45),
+            });
+          }
+          this.hit.push({ x, y: ry, w: leftW, h: rowH - 4 * S, act: 'boon-select', boonIndex: row.index });
+        }
+      }
+      ry += hh;
+    }
+    g.restore();
+    if (offset > 1) tracked(g, '▲', x + leftW - 6 * S, listTop + 10 * S, { size: 8 * S, track: 0, weight: 700, align: 'right', color: rgba(PAL.parchDim, .7) });
+    if (offset < total - windowH - 1) tracked(g, '▼', x + leftW - 6 * S, listBot - 3 * S, { size: 8 * S, track: 0, weight: 700, align: 'right', color: rgba(PAL.parchDim, .7) });
+
+    // ── the detail plate ──
+    const rec = records[this.boonSel];
+    const info = GOD_INFO[rec.god] || GOD_INFO.zeus;
+    const R = RARITY[rec.tier] || RARITY[rec.rarity] || RARITY.common;
+    const py = y + 26 * S, ph = h - 52 * S;
+    plaqueRect(g, rightX, py, rightW, ph, 8 * S);
+    g.fillStyle = rgba('#10091b', .9); g.fill();
+    g.strokeStyle = rgba(R.text, .78); g.lineWidth = 1.5 * S; g.stroke();
+    g.save();
+    plaqueRect(g, rightX, py, rightW, ph, 8 * S); g.clip();
+    const wash = g.createRadialGradient(rightX + rightW / 2, py + 60 * S, 4, rightX + rightW / 2, py + 60 * S, rightW);
+    wash.addColorStop(0, rgba(info.color, .26)); wash.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = wash; g.fillRect(rightX, py, rightW, ph);
+    g.restore();
+
+    // grade ribbon, same language as the offer card
+    const ribW = rightW - 44 * S, ribH = 20 * S, ribX = rightX + 22 * S, ribY = py + 12 * S;
+    plaqueRect(g, ribX, ribY, ribW, ribH, 5 * S);
+    const rg2 = g.createLinearGradient(ribX, ribY, ribX + ribW, ribY);
+    rg2.addColorStop(0, rgba(shade(R.ring[0], .42), .95));
+    rg2.addColorStop(.5, rgba(R.ring[1], .3));
+    rg2.addColorStop(1, rgba(shade(R.ring[2] || R.ring[0], .42), .95));
+    g.fillStyle = rg2; g.fill();
+    g.strokeStyle = rgba(R.text, .8); g.lineWidth = 1 * S; g.stroke();
+    tracked(g, `${String(rec.tier || rec.rarity).toUpperCase()}${(rec.level || 1) > 1 ? `  ·  LEVEL ${rec.level}` : ''}  ·  ${String(rec.slot).toUpperCase()}`,
+      rightX + rightW / 2, ribY + ribH * .68, { size: 9.2 * S, track: .24, weight: 700, align: 'center', color: R.text });
+
+    const medY = ribY + ribH + 44 * S;
+    godEmblem(g, rightX + rightW / 2, medY, 28 * S, rec.god, { glowA: .5, glowR: 2.0 });
+    tracked(g, info.name.toUpperCase(), rightX + rightW / 2, medY + 48 * S, { size: 11 * S, track: .25, weight: 700, align: 'center', color: info.color });
+    tracked(g, String(rec.name || 'BOON').toUpperCase(), rightX + rightW / 2, medY + 76 * S, { size: 17 * S, track: .12, weight: 700, align: 'center', color: '#ffe9a8' });
+
+    let ty = medY + 100 * S;
+    if (rec.curse) {
+      const cn = rec.curse.name.toUpperCase();
+      const cw = trackedWidth(g, cn, { size: 8.4 * S, track: .2, weight: 700 }) + 30 * S;
+      const cx2 = rightX + rightW / 2 - cw / 2;
+      plaqueRect(g, cx2, ty - 11 * S, cw, 17 * S, 4 * S);
+      g.fillStyle = rgba(shade(rec.curse.color, .66), .95); g.fill();
+      g.strokeStyle = rgba(rec.curse.color, .85); g.lineWidth = 1 * S; g.stroke();
+      g.beginPath(); g.arc(cx2 + 11 * S, ty - 2.5 * S, 3.4 * S, 0, 6.2832);
+      g.fillStyle = rgba(rec.curse.color, .95); g.fill();
+      tracked(g, cn, cx2 + 19 * S, ty, { size: 8.4 * S, track: .2, weight: 700, align: 'left', color: lift(rec.curse.color, .45) });
+      ty += 20 * S;
+      const blurb = wrap(g, rec.curse.blurb || '', rightW - 60 * S, { size: 9 * S, weight: 400, font: bodyFont() });
+      g.font = `400 ${9 * S}px ${bodyFont()}`; g.fillStyle = rgba(rec.curse.color, .78); g.textAlign = 'center';
+      for (const ln of blurb.slice(0, 2)) { g.fillText(ln, rightX + rightW / 2, ty); ty += 12 * S; }
+      ty += 6 * S;
+    }
+
+    const lines = wrap(g, rec.text || '', rightW - 54 * S, { size: 11 * S, weight: 500, font: bodyFont() });
+    g.font = `500 ${11 * S}px ${bodyFont()}`; g.fillStyle = rgba(PAL.parch, .88); g.textAlign = 'center';
+    for (const ln of lines.slice(0, 6)) { g.fillText(ln, rightX + rightW / 2, ty); ty += 17 * S; }
+    g.textAlign = 'left';
+
+    // the god's promise — why this patron and not another
+    const identity = rec.duo
+      ? `A pact between ${rec.gods.map(k => GOD_INFO[k]?.name || k).join(' and ')}.`
+      : (info.identity || info.title || '');
+    const idLines = wrap(g, identity, rightW - 54 * S, { size: 9.4 * S, weight: 400, font: bodyFont() });
+    let iy = py + ph - 28 * S - (idLines.length - 1) * 12 * S;
+    g.font = `400 ${9.4 * S}px ${bodyFont()}`; g.fillStyle = rgba(info.color, .8); g.textAlign = 'center';
+    for (const ln of idLines.slice(0, 3)) { g.fillText(ln, rightX + rightW / 2, iy); iy += 12 * S; }
+    g.textAlign = 'left';
+
     tracked(g, '↑ ↓ SELECT · B / ESC BACK', W / 2, y + h - 8 * S, { size: 8 * S, track: .20, weight: 600, align: 'center', color: rgba(PAL.parchDim, .66), font: bodyFont() });
   }
 

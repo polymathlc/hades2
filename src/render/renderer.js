@@ -14,6 +14,8 @@
 // chain is unavailable (fallback path), which is why `toneMapping` is switched
 // dynamically instead of being fixed at construction.
 import * as THREE from 'three';
+import { nowMs } from '../core/scheduler.js';
+import { profiler } from '../core/profiler.js';
 
 /**
  * Quality tiers. Every downstream system reads `ctx.quality.render`.
@@ -75,10 +77,71 @@ export class RenderSystem {
   constructor(){
     this.size = { w: 1, h: 1, dpr: 1 };
     this._scale = 1;
+    // ── GPU UPLOAD WARM-UP ────────────────────────────────────────────────
+    // A texture synthesised in a worker still costs a synchronous
+    // texImage2D + mipmap generation the first time something DRAWS with it,
+    // and a biome change hands the driver ~30 fresh maps at once — all of them
+    // on the first frame of the new chamber, which is the frame that can least
+    // afford it. renderer.initTexture() does that upload on demand, so we do it
+    // a couple of milliseconds at a time on frames that had room to spare.
+    this._warmQueue = [];
+    this._warmed = new WeakSet();
+    this._warmBudgetMs = 2;
+    this.warmedCount = 0;
+  }
+
+  /**
+   * Queue every baked texture the material library holds that the GPU has not
+   * seen yet. Cheap and idempotent — already-uploaded maps are skipped.
+   */
+  queueTextureWarm(ctx){
+    const mats = (ctx || this.ctx) && ((ctx || this.ctx).mats);
+    if(!mats || !mats.setCache || !this.renderer) return this;
+    for(const set of mats.setCache.values()){
+      if(!set) continue;
+      for(const key of ['map', 'proceduralMap', 'normalMap', 'ormMap', 'emissiveMap']){
+        const t = set[key];
+        if(t && t.isTexture && !this._warmed.has(t)){
+          this._warmed.add(t);
+          this._warmQueue.push(t);
+        }
+      }
+    }
+    return this;
+  }
+
+  /** Upload queued textures with a hard millisecond budget. Returns ms spent. */
+  pumpTextureWarm(budgetMs = this._warmBudgetMs){
+    if(!this._warmQueue.length || !this.renderer || budgetMs <= 0) return 0;
+    const t0 = nowMs();
+    let spent = 0;
+    while(this._warmQueue.length){
+      const t = this._warmQueue.shift();
+      try { this.renderer.initTexture(t); this.warmedCount++; }
+      catch(e){ /* a disposed or unsupported texture is not worth a frame */ }
+      spent = nowMs() - t0;
+      if(spent >= budgetMs) break;
+    }
+    profiler.section('gpu.textureWarm', spent);
+    return spent;
+  }
+
+  /**
+   * Once per rendered frame (update() runs per fixed sub-step; this does not).
+   * Warm-up only runs when the previous frame was comfortably inside budget —
+   * it is never allowed to be the thing that drops a frame.
+   */
+  lateUpdate(alpha, ctx){
+    if(!this._warmQueue.length) return;
+    const renderDt = (ctx && ctx.time && ctx.time.renderDt) ? ctx.time.renderDt * 1000 : 16.7;
+    if(renderDt > 20) return;                     // already late — do nothing
+    if(ctx && ctx.world && ctx.world.building) return;   // the build owns the slack
+    this.pumpTextureWarm(Math.min(this._warmBudgetMs, Math.max(0.5, (16.7 - renderDt) * 0.4)));
   }
 
   async init(ctx){
     THREE.ColorManagement.enabled = true;
+    this.ctx = ctx;
 
     const canvas = document.createElement('canvas');
     canvas.id = 'erebus-canvas';
@@ -166,6 +229,11 @@ export class RenderSystem {
 
     // capture harness may want to force a deterministic pixel ratio
     if(ctx.quality.preserveDrawingBuffer) r.setPixelRatio(ctx.quality.dpr ?? 1);
+
+    // Every time a chamber lands, sweep the library for maps the GPU has not
+    // uploaded yet and trickle them in on spare frames.
+    ctx.events?.on?.('room.built', () => this.queueTextureWarm(ctx));
+    ctx.events?.on?.('biome.changed', () => this.queueTextureWarm(ctx));
   }
 
   /** Internal (pre-resolve) render resolution, including the SSAA factor. */

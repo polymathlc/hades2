@@ -24,6 +24,16 @@ function rider(m, slot, o) {
 
 const CORE_LABEL = { attack: 'Attack', special: 'Special', cast: 'Cast', dash: 'Dash', call: 'Call' };
 
+// Which curse each god's affliction is *called*. boons.js owns the canonical
+// CURSES table but imports this module, so the wording lives here as a plain
+// literal rather than closing an import cycle.
+const GOD_CURSE = {
+  zeus: 'blitz', hestia: 'scorch', hephaestus: 'scorch', dionysus: 'hangover',
+  demeter: 'freeze', hecate: 'freeze', selene: 'freeze', poseidon: 'slow',
+  hera: 'hitch', apollo: 'blind', ares: 'wither', hades: 'wither',
+  aphrodite: 'weak', athena: 'weak', artemis: 'weak',
+};
+
 function coreFamily(god, spec) {
   const slots = ['attack', 'special', 'cast', 'dash', 'call'];
   return slots.map((slot, i) => {
@@ -42,7 +52,9 @@ function coreFamily(god, spec) {
         if (slot === 'cast') m.castRadius += v.radius || spec.castRadius || 0;
         if (slot === 'dash') m.dashRadius += v.radius || spec.dashRadius || 0;
         spec.after?.(slot, m, v);
-      }, spec.status ? { status: spec.status, sourceGame: spec.sourceGame || 'Hades II' } : { sourceGame: spec.sourceGame || 'Hades II' });
+      }, spec.status
+        ? { status: spec.status, curse: spec.curse || GOD_CURSE[god], sourceGame: spec.sourceGame || 'Hades II' }
+        : { sourceGame: spec.sourceGame || 'Hades II' });
   });
 }
 
@@ -51,13 +63,13 @@ const NEW_CORE = [
     names: ['Frost Strike', 'Frost Flourish', 'Arctic Ring', 'Frigid Rush', 'Demeter’s Aid'],
     damage: [14, 24, 18, 13, 44], stacks: [2, 3, 3, 2, 5], radius: [0, 0, 2.2, 2.0, 0],
     status: 'chill', type: 'frost',
-    text: (slot, v) => `Your ${CORE_LABEL[slot]} deals ${v.dmg} frost damage and inflicts ${v.stacks} Freeze/Chill.`,
+    text: (slot, v) => `Your ${CORE_LABEL[slot]} deals ${v.dmg} frost damage and inflicts ${v.stacks} Freeze.`,
   }),
   ...coreFamily('apollo', {
     names: ['Nova Strike', 'Nova Flourish', 'Solar Ring', 'Blinding Rush', 'Apollo’s Aid'],
     damage: [16, 25, 22, 14, 42], stacks: [1, 2, 2, 2, 3], radius: [0, 0, 2.4, 2.1, 0],
     status: 'weak', type: 'arcane',
-    text: (slot, v) => `Your ${CORE_LABEL[slot]} radiates for ${v.dmg} damage and inflicts ${v.stacks} Daze.`,
+    text: (slot, v) => `Your ${CORE_LABEL[slot]} radiates for ${v.dmg} damage and inflicts ${v.stacks} Blind.`,
     after: (slot, m) => { if (slot === 'attack' || slot === 'special') m.dmgMul *= 1.03; },
   }),
   ...coreFamily('hera', {
@@ -88,12 +100,12 @@ const SUPPORT = [
   P('zeus', 'static-discharge', 'Static Discharge', { pct: 18 }, v => `Shock and Jolted effects gain ${v.pct}% power.`, (m, v) => { m.status.shock *= 1 + v.pct / 100; }),
   P('zeus', 'clouded-judgment', 'Clouded Judgment', { pct: 16 }, v => `Your Call charges ${v.pct}% faster.`, (m, v) => { m.callCharge *= 1 + v.pct / 100; }),
   P('zeus', 'billowing-strength', 'Billowing Strength', { pct: 10 }, v => `Calls and all damage gain ${v.pct}% power.`, (m, v) => { m.callMul *= 1 + v.pct / 100; m.dmgMul *= 1 + v.pct / 200; }),
-  P('zeus', 'splitting-bolt', 'Splitting Bolt', { dmg: 32 }, v => `Lightning Critical hits release an extra ${v.dmg}-damage burst.`, (m, v) => { m.lightningCrit += 0.08; m.retaliateDmg += v.dmg; }),
+  P('zeus', 'splitting-bolt', 'Storm Reprisal', { dmg: 32 }, v => `Lightning Critical hits release an extra ${v.dmg}-damage burst.`, (m, v) => { m.lightningCrit += 0.08; m.retaliateDmg += v.dmg; }),
   P('zeus', 'heavens-vengeance', 'Heaven’s Vengeance', { chance: 12, dmg: 34 }, v => `${v.chance}% chance to retaliate for ${v.dmg} lightning damage.`, (m, v) => { m.retaliate += v.chance / 100; m.retaliateDmg += v.dmg; }),
 
   // Poseidon — slam, Rupture, rewards translated to recovery/wealth value.
   P('poseidon', 'typhoons-fury', 'Typhoon’s Fury', { dmg: 24 }, v => `Wall slams deal ${v.dmg} additional damage.`, (m, v) => { m.wallSlamDmg += v.dmg; }),
-  P('poseidon', 'hydraulic-might', 'Hydraulic Might', { pct: 10 }, v => `Attack and Special deal ${v.pct}% more damage.`, (m, v) => { m.attackMul *= 1 + v.pct / 100; m.specialMul *= 1 + v.pct / 100; }),
+  P('poseidon', 'hydraulic-might', 'Tidal Force', { pct: 10 }, v => `Attack and Special deal ${v.pct}% more damage.`, (m, v) => { m.attackMul *= 1 + v.pct / 100; m.specialMul *= 1 + v.pct / 100; }),
   P('poseidon', 'oceans-bounty', 'Ocean’s Bounty', { heal: 7 }, v => `Room rewards restore ${v.heal} Life after every clear.`, (m, v) => { m.clearHeal += v.heal; }),
   P('poseidon', 'razor-shoals', 'Razor Shoals', { pct: 10 }, v => `Knockback effects deal ${v.pct}% more damage.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; m.knockback += 1; }),
   P('poseidon', 'breaking-wave', 'Breaking Wave', { dmg: 30 }, v => `Wall slams release a ${v.dmg}-damage wave.`, (m, v) => { m.wallSlamDmg += v.dmg; m.seaStormDmg += v.dmg * 0.35; }),
@@ -108,7 +120,7 @@ const SUPPORT = [
   P('athena', 'blinding-flash', 'Blinding Flash', { pct: 12 }, v => `Deflecting effects Expose foes for ${v.pct}% bonus damage.`, (m, v) => { m.expose += v.pct / 100; m.dmgMul *= 1 + v.pct / 200; }),
   P('athena', 'brilliant-riposte', 'Brilliant Riposte', { pct: 18 }, v => `Deflect retaliation gains ${v.pct}% damage.`, (m, v) => { m.retaliateDmg += v.pct; }),
   P('athena', 'deathless-stand', 'Deathless Stand', { hp: 18, iframe: .08 }, v => `Gain ${v.hp} maximum Life and ${v.iframe}s Dash invulnerability.`, (m, v) => { m.maxHealthAdd += v.hp; m.iframeAdd += v.iframe; }),
-  P('athena', 'divine-protection', 'Divine Protection', { dodge: 8, dr: 6 }, v => `A divine barrier grants ${v.dodge}% dodge and ${v.dr}% damage resistance.`, (m, v) => { m.dodge += v.dodge / 100; m.damageTaken *= 1 - v.dr / 100; }, { legendary: true }),
+  P('athena', 'divine-protection', 'Sacred Bulwark', { dodge: 8, dr: 6 }, v => `A divine barrier grants ${v.dodge}% dodge and ${v.dr}% damage resistance.`, (m, v) => { m.dodge += v.dodge / 100; m.damageTaken *= 1 - v.dr / 100; }, { signature: true }),
 
   // Aphrodite — Weak, close-range power, durability.
   P('aphrodite', 'dying-lament', 'Dying Lament', { pct: 9 }, v => `Weakened foes take ${v.pct}% more damage.`, (m, v) => { m.status.weak *= 1 + v.pct / 100; m.dmgMul *= 1 + v.pct / 200; }),
@@ -116,8 +128,8 @@ const SUPPORT = [
   P('aphrodite', 'different-league', 'Different League', { dr: 8 }, v => `Take ${v.dr}% less damage.`, (m, v) => { m.damageTaken *= 1 - v.dr / 100; }),
   P('aphrodite', 'empty-inside', 'Empty Inside', { pct: 28 }, v => `Weak lasts ${v.pct}% longer.`, (m, v) => { m.statusDuration.weak *= 1 + v.pct / 100; }),
   P('aphrodite', 'sweet-surrender', 'Sweet Surrender', { pct: 10 }, v => `All damage gains ${v.pct}% against Weak foes.`, (m, v) => { m.status.weak *= 1 + v.pct / 100; m.dmgMul *= 1 + v.pct / 200; }),
-  P('aphrodite', 'broken-resolve', 'Broken Resolve', { pct: 18 }, v => `Weak reduces enemy damage by an additional ${v.pct}%.`, (m, v) => { m.status.weak *= 1 + v.pct / 100; }),
-  P('aphrodite', 'unhealthy-fixation', 'Unhealthy Fixation', { dodge: 8, pct: 12 }, v => `Weak may Charm foes; gain ${v.dodge}% dodge and ${v.pct}% Weak power.`, (m, v) => { m.dodge += v.dodge / 100; m.status.weak *= 1 + v.pct / 100; }, { legendary: true }),
+  P('aphrodite', 'broken-resolve', 'Weakening Gaze', { pct: 18 }, v => `Weak reduces enemy damage by an additional ${v.pct}%.`, (m, v) => { m.status.weak *= 1 + v.pct / 100; }),
+  P('aphrodite', 'unhealthy-fixation', 'Unhealthy Fixation', { dodge: 8, pct: 12 }, v => `Weak may Charm foes; gain ${v.dodge}% dodge and ${v.pct}% Weak power.`, (m, v) => { m.dodge += v.dodge / 100; m.status.weak *= 1 + v.pct / 100; }, { signature: true }),
 
   // Ares — Doom, rifts, escalating violence.
   P('ares', 'dire-misfortune', 'Dire Misfortune', { dmg: 20 }, v => `Doom gains ${v.dmg} delayed damage.`, (m, v) => { m.doomDmg += v.dmg; }),
@@ -126,7 +138,7 @@ const SUPPORT = [
   P('ares', 'black-metal', 'Black Metal', { radius: 2 }, v => `Blade Rift and Cast areas grow by ${v.radius}m.`, (m, v) => { m.castRadius += v.radius; }),
   P('ares', 'engulfing-vortex', 'Engulfing Vortex', { ticks: 3 }, v => `Blade Rifts strike ${v.ticks} additional times.`, (m, v) => { m.castTicks += v.ticks; }),
   P('ares', 'blood-frenzy', 'Blood Frenzy', { pct: 12, crit: 4 }, v => `Deal ${v.pct}% more damage with +${v.crit}% Critical chance.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; m.critChance += v.crit / 100; }),
-  P('ares', 'vicious-cycle', 'Vicious Cycle', { dmg: 28, ticks: 2 }, v => `Rifts gain ${v.ticks} cuts and ${v.dmg} finishing damage.`, (m, v) => { m.castTicks += v.ticks; m.critRiftDmg += v.dmg; }, { legendary: true }),
+  P('ares', 'vicious-cycle', 'Rending Cycle', { dmg: 28, ticks: 2 }, v => `Rifts gain ${v.ticks} cuts and ${v.dmg} finishing damage.`, (m, v) => { m.castTicks += v.ticks; m.critRiftDmg += v.dmg; }, { signature: true }),
 
   // Artemis — Criticals, Marked, seeking arrows.
   P('artemis', 'exit-wounds', 'Exit Wounds', { pct: 12 }, v => `Cast and seeking effects deal ${v.pct}% more damage.`, (m, v) => { m.castMul *= 1 + v.pct / 100; }),
@@ -134,8 +146,8 @@ const SUPPORT = [
   P('artemis', 'hunters-mark', 'Hunter’s Mark', { crit: 8 }, v => `Marked targets grant ${v.crit}% additional Critical chance.`, (m, v) => { m.critChance += v.crit / 100; }),
   P('artemis', 'clean-kill', 'Clean Kill', { mul: .35 }, v => `Critical damage gains ${v.mul}x.`, (m, v) => { m.critMul += v.mul; }),
   P('artemis', 'hide-breaker', 'Hide Breaker', { pct: 12 }, v => `Critical and Special damage gain ${v.pct}%.`, (m, v) => { m.specialMul *= 1 + v.pct / 100; m.critMul += v.pct / 100; }),
-  P('artemis', 'hunters-instinct', 'Hunter’s Instinct', { crit: 4, charge: 10 }, v => `Gain ${v.crit}% Critical chance and ${v.charge}% Call charge.`, (m, v) => { m.critChance += v.crit / 100; m.callCharge *= 1 + v.charge / 100; }),
-  P('artemis', 'fully-loaded', 'Fully Loaded', { forks: 2, crit: 5 }, v => `Casts fork ${v.forks} times and gain ${v.crit}% Critical chance.`, (m, v) => { m.castForks += v.forks; m.critChance += v.crit / 100; }, { legendary: true }),
+  P('artemis', 'hunters-instinct', 'Keen Eye', { crit: 4, charge: 10 }, v => `Gain ${v.crit}% Critical chance and ${v.charge}% Call charge.`, (m, v) => { m.critChance += v.crit / 100; m.callCharge *= 1 + v.charge / 100; }),
+  P('artemis', 'fully-loaded', 'Fully Loaded', { forks: 2, crit: 5 }, v => `Casts fork ${v.forks} times and gain ${v.crit}% Critical chance.`, (m, v) => { m.castForks += v.forks; m.critChance += v.crit / 100; }, { signature: true }),
 
   // Dionysus — Hangover, fog, sustain.
   P('dionysus', 'strong-drink', 'Strong Drink', { heal: 9, pct: 8 }, v => `Clears restore ${v.heal} Life and all damage gains ${v.pct}%.`, (m, v) => { m.clearHeal += v.heal; m.dmgMul *= 1 + v.pct / 100; }),
@@ -144,7 +156,7 @@ const SUPPORT = [
   P('dionysus', 'numbing-sensation', 'Numbing Sensation', { pct: 18 }, v => `Hangover gains ${v.pct}% power and slows foes.`, (m, v) => { m.status.burn *= 1 + v.pct / 100; }),
   P('dionysus', 'bad-influence', 'Bad Influence', { pct: 12 }, v => `Deal ${v.pct}% more damage while Hangover is active.`, (m, v) => { m.hangoverAmp += v.pct / 100; }),
   P('dionysus', 'peer-pressure', 'Peer Pressure', { pct: 16 }, v => `Hangover spreads with ${v.pct}% increased potency.`, (m, v) => { m.status.burn *= 1 + v.pct / 100; m.statusDuration.burn *= 1.18; }),
-  P('dionysus', 'black-out', 'Black Out', { pct: 24 }, v => `Festive fog and Hangover gain ${v.pct}% power.`, (m, v) => { m.status.burn *= 1 + v.pct / 100; m.castMul *= 1 + v.pct / 100; }, { legendary: true }),
+  P('dionysus', 'black-out', 'Festive Haze', { pct: 24 }, v => `Festive fog and Hangover gain ${v.pct}% power.`, (m, v) => { m.status.burn *= 1 + v.pct / 100; m.castMul *= 1 + v.pct / 100; }, { signature: true }),
 
   // Hermes — speed, recovery, wealth translated to run tempo.
   P('hermes', 'swift-flourish', 'Swift Flourish', { pct: 14 }, v => `Specials are ${v.pct}% faster and stronger.`, (m, v) => { m.specialMul *= 1 + v.pct / 100; m.attackSpeed *= 1 + v.pct / 200; }),
@@ -153,28 +165,28 @@ const SUPPORT = [
   P('hermes', 'quick-recovery', 'Quick Recovery', { heal: 6 }, v => `Recover ${v.heal} Life after every chamber.`, (m, v) => { m.clearHeal += v.heal; }),
   P('hermes', 'second-wind', 'Second Wind', { dodge: 8, pct: 10 }, v => `Gain ${v.dodge}% dodge and ${v.pct}% speed.`, (m, v) => { m.dodge += v.dodge / 100; m.moveMul *= 1 + v.pct / 100; }),
   P('hermes', 'side-hustle', 'Side Hustle', { heal: 5, mana: 12 }, v => `Every clear restores ${v.heal} Life and grants ${v.mana} Magick capacity.`, (m, v) => { m.clearHeal += v.heal; m.maxManaAdd += v.mana; }),
-  P('hermes', 'bad-news', 'Bad News', { pct: 18 }, v => `Casts deal ${v.pct}% more damage and travel true.`, (m, v) => { m.castMul *= 1 + v.pct / 100; m.castSeek = 1; }, { legendary: true }),
-  P('hermes', 'greater-recall', 'Greater Recall', { pct: 20 }, v => `Cast and Call recover ${v.pct}% faster.`, (m, v) => { m.castSpeed *= 1 + v.pct / 100; m.callCharge *= 1 + v.pct / 100; }, { legendary: true }),
+  P('hermes', 'bad-news', 'Bad News', { pct: 18 }, v => `Casts deal ${v.pct}% more damage and travel true.`, (m, v) => { m.castMul *= 1 + v.pct / 100; m.castSeek = 1; }, { signature: true }),
+  P('hermes', 'greater-recall', 'Greater Recall', { pct: 20 }, v => `Cast and Call recover ${v.pct}% faster.`, (m, v) => { m.castSpeed *= 1 + v.pct / 100; m.callCharge *= 1 + v.pct / 100; }, { signature: true }),
 
-  // Demeter — Freeze/Chill, healing, growth.
+  // Demeter — Freeze, healing, growth.
   P('demeter', 'frozen-touch', 'Frozen Touch', { chance: 14, dmg: 28 }, v => `Taking damage has ${v.chance}% chance to freeze and retaliate for ${v.dmg}.`, (m, v) => { m.retaliate += v.chance / 100; m.retaliateDmg += v.dmg; }),
   P('demeter', 'rare-crop', 'Rare Crop', { pct: 12 }, v => `Your boons grow stronger between chambers: all damage +${v.pct}%.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; }),
   P('demeter', 'ravenous-will', 'Ravenous Will', { pct: 10, dr: 6 }, v => `Deal ${v.pct}% more damage and take ${v.dr}% less.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; m.damageTaken *= 1 - v.dr / 100; }),
   P('demeter', 'nourished-soul', 'Nourished Soul', { hp: 20, heal: 6 }, v => `Gain ${v.hp} maximum Life; clears restore ${v.heal}.`, (m, v) => { m.maxHealthAdd += v.hp; m.clearHeal += v.heal; }),
   P('demeter', 'snow-burst', 'Snow Burst', { radius: 2, dmg: 18 }, v => `Casts gain ${v.radius}m area and ${v.dmg} frost power.`, (m, v) => { m.castRadius += v.radius; m.castMul *= 1 + v.dmg / 100; }),
   P('demeter', 'arctic-blast', 'Arctic Blast', { dmg: 34 }, v => `Full Chill shatters for ${v.dmg} additional damage.`, (m, v) => { m.shatterDmg += v.dmg; }),
-  P('demeter', 'killing-freeze', 'Killing Freeze', { pct: 18 }, v => `Freeze/Chill gains ${v.pct}% power and duration.`, (m, v) => { m.status.chill *= 1 + v.pct / 100; m.statusDuration.chill *= 1 + v.pct / 100; }),
-  P('demeter', 'winter-harvest', 'Winter Harvest', { dmg: 55 }, v => `Frozen foes shatter for ${v.dmg} additional damage.`, (m, v) => { m.shatterDmg += v.dmg; }, { legendary: true }),
+  P('demeter', 'killing-freeze', 'Killing Freeze', { pct: 18 }, v => `Freeze gains ${v.pct}% power and duration.`, (m, v) => { m.status.chill *= 1 + v.pct / 100; m.statusDuration.chill *= 1 + v.pct / 100; }),
+  P('demeter', 'winter-harvest', 'Hoarfrost Reaping', { dmg: 55 }, v => `Frozen foes shatter for ${v.dmg} additional damage.`, (m, v) => { m.shatterDmg += v.dmg; }, { signature: true }),
 
-  // Apollo — Daze, larger zones, double hits.
+  // Apollo — Blind, larger zones, double hits.
   P('apollo', 'light-smite', 'Light Smite', { chance: 12, dmg: 28 }, v => `Taking damage has ${v.chance}% chance to radiate ${v.dmg} damage.`, (m, v) => { m.retaliate += v.chance / 100; m.retaliateDmg += v.dmg; }),
-  P('apollo', 'perfect-image', 'Perfect Image', { pct: 12 }, v => `Deal ${v.pct}% more damage while your form remains unbroken.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; }),
-  P('apollo', 'dazzling-display', 'Dazzling Display', { pct: 14 }, v => `Daze grows ${v.pct}% stronger.`, (m, v) => { m.status.weak *= 1 + v.pct / 100; }),
-  P('apollo', 'back-burner', 'Back Burner', { crit: 5, pct: 10 }, v => `Dazed foes grant ${v.crit}% Critical chance and ${v.pct}% damage.`, (m, v) => { m.critChance += v.crit / 100; m.dmgMul *= 1 + v.pct / 100; }),
+  P('apollo', 'perfect-image', 'Unbroken Form', { pct: 12 }, v => `Deal ${v.pct}% more damage while your form remains unbroken.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; }),
+  P('apollo', 'dazzling-display', 'Dazzling Display', { pct: 14 }, v => `Blind grows ${v.pct}% stronger.`, (m, v) => { m.status.weak *= 1 + v.pct / 100; }),
+  P('apollo', 'back-burner', 'Back Burner', { crit: 5, pct: 10 }, v => `Blinded foes grant ${v.crit}% Critical chance and ${v.pct}% damage.`, (m, v) => { m.critChance += v.crit / 100; m.dmgMul *= 1 + v.pct / 100; }),
   P('apollo', 'prominence-flare', 'Prominence Flare', { ticks: 3, radius: 2 }, v => `Casts pulse ${v.ticks} more times and grow ${v.radius}m.`, (m, v) => { m.castTicks += v.ticks; m.castRadius += v.radius; }),
   P('apollo', 'super-nova', 'Super Nova', { radius: 3 }, v => `Cast and Dash areas gain ${v.radius}m.`, (m, v) => { m.castRadius += v.radius; m.dashRadius += v.radius * .5; }),
   P('apollo', 'extra-dose', 'Extra Dose', { pct: 16 }, v => `Attacks have a double-hit chance represented by ${v.pct}% extra power.`, (m, v) => { m.attackMul *= 1 + v.pct / 100; m.attackSpeed *= 1.06; }),
-  P('apollo', 'exceptional-talent', 'Exceptional Talent', { pct: 18 }, v => `Attack and Special gain ${v.pct}% power.`, (m, v) => { m.attackMul *= 1 + v.pct / 100; m.specialMul *= 1 + v.pct / 100; }, { legendary: true }),
+  P('apollo', 'exceptional-talent', 'Exceptional Talent', { pct: 18 }, v => `Attack and Special gain ${v.pct}% power.`, (m, v) => { m.attackMul *= 1 + v.pct / 100; m.specialMul *= 1 + v.pct / 100; }, { signature: true }),
 
   // Hera — Hitch, rarity/family power, royal sustain.
   P('hera', 'extended-family', 'Extended Family', { pct: 12 }, v => `Olympian damage gains ${v.pct}%.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; }),
@@ -184,7 +196,7 @@ const SUPPORT = [
   P('hera', 'keen-intuition', 'Keen Intuition', { pct: 12 }, v => `Cast and Call gain ${v.pct}% power.`, (m, v) => { m.castMul *= 1 + v.pct / 100; m.callMul *= 1 + v.pct / 100; }),
   P('hera', 'family-trade', 'Family Trade', { pct: 8, dr: 5 }, v => `Deal ${v.pct}% more damage and take ${v.dr}% less.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; m.damageTaken *= 1 - v.dr / 100; }),
   P('hera', 'nasty-comeback', 'Nasty Comeback', { chance: 14, dmg: 30 }, v => `Taking damage may return ${v.dmg} royal damage (${v.chance}%).`, (m, v) => { m.retaliate += v.chance / 100; m.retaliateDmg += v.dmg; }),
-  P('hera', 'queenly-grace', 'Queenly Grace', { pct: 20 }, v => `All core actions gain ${v.pct}% power.`, (m, v) => { const x = 1 + v.pct / 100; m.attackMul *= x; m.specialMul *= x; m.castMul *= x; }, { legendary: true }),
+  P('hera', 'queenly-grace', 'Queenly Grace', { pct: 20 }, v => `All core actions gain ${v.pct}% power.`, (m, v) => { const x = 1 + v.pct / 100; m.attackMul *= x; m.specialMul *= x; m.castMul *= x; }, { signature: true }),
 
   // Hestia — Scorch, fireballs, projectile safety translated to resistance.
   P('hestia', 'controlled-burn', 'Controlled Burn', { pct: 18 }, v => `Scorch gains ${v.pct}% power.`, (m, v) => { m.status.burn *= 1 + v.pct / 100; }),
@@ -195,7 +207,7 @@ const SUPPORT = [
   P('hestia', 'natural-gas', 'Natural Gas', { radius: 2, ticks: 2 }, v => `Scorch Casts gain ${v.radius}m area and ${v.ticks} pulses.`, (m, v) => { m.castRadius += v.radius; m.castTicks += v.ticks; }),
   P('hestia', 'glowing-coal', 'Glowing Coal', { seek: 1, pct: 12 }, v => `Casts seek foes and deal ${v.pct}% more damage.`, (m, v) => { m.castSeek = v.seek; m.castMul *= 1 + v.pct / 100; }),
   P('hestia', 'fire-extinguisher', 'Fire Extinguisher', { dr: 8, dodge: 5 }, v => `Take ${v.dr}% less damage and gain ${v.dodge}% dodge.`, (m, v) => { m.damageTaken *= 1 - v.dr / 100; m.dodge += v.dodge / 100; }),
-  P('hestia', 'fine-kindling', 'Fine Kindling', { pct: 30 }, v => `Scorch becomes an inferno with ${v.pct}% more power.`, (m, v) => { m.status.burn *= 1 + v.pct / 100; }, { legendary: true }),
+  P('hestia', 'fine-kindling', 'Fine Kindling', { pct: 30 }, v => `Scorch becomes an inferno with ${v.pct}% more power.`, (m, v) => { m.status.burn *= 1 + v.pct / 100; }, { signature: true }),
 
   // Hephaestus — blast, armor, durable smithing alongside weapon forges.
   P('hephaestus', 'grand-caldera', 'Grand Caldera', { pct: 20, radius: 2 }, v => `Blast damage gains ${v.pct}% and areas gain ${v.radius}m.`, (m, v) => { m.dmgMul *= 1 + v.pct / 100; m.castRadius += v.radius; }),
@@ -206,7 +218,7 @@ const SUPPORT = [
   P('hephaestus', 'uncanny-fortitude', 'Uncanny Fortitude', { hp: 18, mana: 18 }, v => `Gain ${v.hp} Life and ${v.mana} Magick capacity.`, (m, v) => { m.maxHealthAdd += v.hp; m.maxManaAdd += v.mana; }),
   P('hephaestus', 'furnace-blast', 'Furnace Blast', { dmg: 28, ticks: 2 }, v => `Blasts gain ${v.dmg} power and ${v.ticks} aftershocks.`, (m, v) => { m.castTicks += v.ticks; m.critRiftDmg += v.dmg; }),
   P('hephaestus', 'martial-art', 'Martial Art', { pct: 16 }, v => `Weapon Attack and Special gain ${v.pct}% power.`, (m, v) => { m.attackMul *= 1 + v.pct / 100; m.specialMul *= 1 + v.pct / 100; }),
-  P('hephaestus', 'fine-tuning', 'Fine Tuning', { pct: 25 }, v => `All forged and blast effects gain ${v.pct}% power.`, (m, v) => { m.forgeMul *= 1 + v.pct / 100; m.dmgMul *= 1 + v.pct / 200; }, { legendary: true }),
+  P('hephaestus', 'fine-tuning', 'Fine Tuning', { pct: 25 }, v => `All forged and blast effects gain ${v.pct}% power.`, (m, v) => { m.forgeMul *= 1 + v.pct / 100; m.dmgMul *= 1 + v.pct / 200; }, { signature: true }),
 
   // Chaos — curse-cleared rewards represented as powerful unconditional gifts.
   P('chaos', 'strike', 'Chaos Strike', { pct: 22 }, v => `After the primordial trial, Attacks deal ${v.pct}% more damage.`, (m, v) => { m.attackMul *= 1 + v.pct / 100; }),
@@ -217,7 +229,7 @@ const SUPPORT = [
   P('chaos', 'favor', 'Chaos Favor', { crit: 6, pct: 8 }, v => `Gain ${v.crit}% Critical chance and ${v.pct}% damage.`, (m, v) => { m.critChance += v.crit / 100; m.dmgMul *= 1 + v.pct / 100; }),
   P('chaos', 'haste', 'Chaos Haste', { pct: 16 }, v => `Move and Attack ${v.pct}% faster.`, (m, v) => { m.moveMul *= 1 + v.pct / 100; m.attackSpeed *= 1 + v.pct / 100; }),
   P('chaos', 'will', 'Chaos Will', { pct: 26 }, v => `Regenerate Magick ${v.pct}% faster.`, (m, v) => { m.manaRegenMul *= 1 + v.pct / 100; }),
-  P('chaos', 'defiance', 'Chaos Defiance', { hp: 35, dr: 8 }, v => `Gain ${v.hp} Life and ${v.dr}% resistance.`, (m, v) => { m.maxHealthAdd += v.hp; m.damageTaken *= 1 - v.dr / 100; }, { legendary: true }),
+  P('chaos', 'defiance', 'Chaos Defiance', { hp: 35, dr: 8 }, v => `Gain ${v.hp} Life and ${v.dr}% resistance.`, (m, v) => { m.maxHealthAdd += v.hp; m.damageTaken *= 1 - v.dr / 100; }, { signature: true }),
 
   // Hades — direct underworld blessings from Hades II.
   P('hades', 'life-tax', 'Life Tax', { heal: 9 }, v => `Underworld tribute restores ${v.heal} Life after each clear.`, (m, v) => { m.clearHeal += v.heal; }),
@@ -235,8 +247,8 @@ const SUPPORT = [
   P('selene', 'wolf-howl', 'Wolf Howl', { radius: 3, dmg: 20 }, v => `Dash and Call areas gain ${v.radius}m and ${v.dmg}% damage.`, (m, v) => { m.dashRadius += v.radius; m.callMul *= 1 + v.dmg / 100; }),
   P('selene', 'moon-water', 'Moon Water', { heal: 12 }, v => `Moonlight restores ${v.heal} Life after every clear.`, (m, v) => { m.clearHeal += v.heal; }),
   P('selene', 'night-bloom', 'Night Bloom', { pct: 20, charge: 18 }, v => `Calls deal ${v.pct}% more damage and charge ${v.charge}% faster.`, (m, v) => { m.callMul *= 1 + v.pct / 100; m.callCharge *= 1 + v.charge / 100; }),
-  P('selene', 'total-eclipse', 'Total Eclipse', { pct: 32 }, v => `Call and Cast damage gain ${v.pct}%.`, (m, v) => { m.callMul *= 1 + v.pct / 100; m.castMul *= 1 + v.pct / 100; }, { legendary: true }),
-  P('selene', 'dark-side', 'Dark Side', { dodge: 12, dr: 8 }, v => `Become a living nightmare: ${v.dodge}% dodge, ${v.dr}% resistance.`, (m, v) => { m.dodge += v.dodge / 100; m.damageTaken *= 1 - v.dr / 100; }, { legendary: true }),
+  P('selene', 'total-eclipse', 'Total Eclipse', { pct: 32 }, v => `Call and Cast damage gain ${v.pct}%.`, (m, v) => { m.callMul *= 1 + v.pct / 100; m.castMul *= 1 + v.pct / 100; }, { signature: true }),
+  P('selene', 'dark-side', 'Dark Side', { dodge: 12, dr: 8 }, v => `Become a living nightmare: ${v.dodge}% dodge, ${v.dr}% resistance.`, (m, v) => { m.dodge += v.dodge / 100; m.damageTaken *= 1 - v.dr / 100; }, { signature: true }),
 ];
 
 export const CANON_BOONS = [...NEW_CORE, ...SUPPORT];

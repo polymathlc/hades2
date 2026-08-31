@@ -19,6 +19,17 @@ function rider(m, slot, o) {
   r.color = GODS[o.god]; r.god = o.god; r.name = o.name;
 }
 
+// The curse vocabulary, duplicated as a plain literal because boons.js imports
+// *this* file — reaching back for CURSES would close an import cycle. The
+// canonical table in boons.js owns the semantics; this owns the wording.
+const CURSE_NAME = {
+  zeus: 'Blitz', hestia: 'Scorch', hephaestus: 'Scorch', dionysus: 'Scorch',
+  demeter: 'Freeze', hecate: 'Freeze', selene: 'Freeze', poseidon: 'Slow',
+  hera: 'Hitch', apollo: 'Blind', ares: 'Wither', hades: 'Wither',
+  aphrodite: 'Weak', athena: 'Weak', artemis: 'Weak',
+};
+const CURSE_ID = Object.fromEntries(Object.entries(CURSE_NAME).map(([g, n]) => [g, n.toLowerCase()]));
+
 const DEFINITIONS = {
   aphrodite: { names: ['Flutter Strike', 'Flutter Flourish', 'Rapture Ring', 'Passion Rush', 'Glamour Gain'], type: 'arcane', status: 'weak', dmg: [18, 28, 23, 15], stacks: 2 },
   apollo: { names: ['Nova Strike', 'Nova Flourish', 'Solar Ring', 'Blinding Rush', 'Lucid Gain'], type: 'arcane', status: 'weak', dmg: [14, 24, 21, 14], stacks: 2 },
@@ -40,13 +51,13 @@ for (const [god, spec] of Object.entries(DEFINITIONS)) {
     const slot = slots[i], name = spec.names[i];
     HADES2_BOONS.push(B(`h2.${god}.${slot}`, god, slot, name,
       { dmg: spec.dmg[i], stacks: spec.stacks, knock: spec.knock || 0 },
-      v => `Melinoe's ${labels[slot]} deals ${v.dmg} ${spec.type} damage${spec.status ? ` and inflicts ${v.stacks} ${spec.status === 'doom' ? 'Wounds' : spec.status}` : ` and knocks foes away ${v.knock}m`}.`,
+      v => `Melinoë's ${labels[slot]} deals ${v.dmg} ${spec.type} damage${spec.status ? ` and inflicts ${v.stacks} ${CURSE_NAME[god] || 'Weak'}` : ` and knocks foes away ${v.knock}m`}.`,
       (m, v) => {
         rider(m, slot, { bonus: spec.power ? 0 : v.dmg, type: spec.type, status: spec.status, stacks: v.stacks,
           statusPower: spec.power ? v.dmg : 0, knockback: v.knock, god, name });
         if (slot === 'cast') m.castRadius += 1.7;
         if (slot === 'dash') m.dashRadius += 1.5;
-      }, { status: spec.status || undefined, h2Core: true }));
+      }, { status: spec.status || undefined, curse: CURSE_ID[god] || undefined, h2Core: true }));
   }
   const gainName = spec.names[4];
   HADES2_BOONS.push(B(`h2.${god}.gain`, god, 'gain', gainName, { regen: 12, mana: 10 },

@@ -386,6 +386,40 @@ export const RAMPS = {
     S(0.00, '#0b0910'), S(0.28, '#181521'), S(0.55, '#2a2434'),
     S(0.78, '#413a4d'), S(1.00, '#6b6178'),
   ],
+
+  // ---- Accumulation family --------------------------------------------------
+  // NITRE / efflorescence. Damp masonry pushes salt out through its bedding
+  // joints and it dries as a pale, chalky, faintly green-grey crust. This is
+  // the one LIGHT accent the near-black Tartarus wall is allowed, and it is a
+  // different colour family from both the crimson stone and the gold — which
+  // is the whole point of it (§2 two-hue rule needs a third, quiet voice to
+  // stop the wall reading as one substance).
+  nitre: [
+    S(0.00, '#231d26'), S(0.24, '#463f42'), S(0.48, '#6e6660'),
+    S(0.70, '#968d80'), S(0.86, '#bab09c'), S(1.00, '#ded4bd'),
+  ],
+  // MOSS on cold stone: darker, bluer and far less saturated than `verdant`,
+  // which is Elysium's heraldic laurel green and much too clean for something
+  // growing in a joint.
+  moss: [
+    S(0.00, '#0b1410'), S(0.26, '#17251b'), S(0.52, '#283c28'),
+    S(0.74, '#3d5636'), S(0.90, '#5c744a'), S(1.00, '#8a9a68'),
+  ],
+  // BASALT — Asphodel's structural stone, as distinct from `obsidian`, which is
+  // its GLASS. Basalt is a rock: opaque, cool-grey with a violet cast, and it
+  // carries plagioclase flecks rather than a conchoidal sheen. Giving Asphodel
+  // two different stone families is most of what stops the biome reading as
+  // "Tartarus recoloured blue".
+  basalt: [
+    S(0.00, '#08080f'), S(0.20, '#14141f'), S(0.42, '#22222f'),
+    S(0.62, '#333243'), S(0.80, '#494758'), S(0.92, '#66627a'),
+    S(1.00, '#8d88a2'),
+  ],
+  'basalt.warm': [
+    S(0.00, '#0d0709'), S(0.22, '#1e1113'), S(0.44, '#33201c'),
+    S(0.64, '#4b3126'), S(0.82, '#6a4632'), S(0.94, '#8f6242'),
+    S(1.00, '#b6835a'),
+  ],
 };
 
 // ---------------------------------------------------------------------------

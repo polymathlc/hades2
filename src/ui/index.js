@@ -17,13 +17,13 @@
 // ---------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette } from './ornament.js';
+import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette, bindRarityPalette } from './ornament.js';
 import { HUD } from './hud.js';
 import { BoonOverlay } from './boons.js';
 import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
 import { WorldLabels } from './worldlabels.js';
-import { BoonState, BOONS, DUOS, GOD_INFO } from '../game/boons.js';
+import { BoonState, BOONS, DUOS, LEGENDARIES, GOD_INFO } from '../game/boons.js';
 import { CHARACTER_INFO } from '../game/characters.js';
 
 const REF_W = 1600, REF_H = 900;
@@ -60,6 +60,9 @@ export class UI {
 
   async init(ctx) {
     this.ctx = ctx;
+    // The rarity palette is authored in style.css; bind it before the first
+    // frame so canvas ornament and any DOM chrome agree from the very start.
+    bindRarityPalette();
     this.menus.settings.quality = ctx.quality?.source === 'auto' ? 'auto' : (ctx.quality?.tier || 'med');
     this._rng = ctx.rng && ctx.rng.fork ? ctx.rng.fork('ui') : ctx.rng;
 
@@ -136,12 +139,23 @@ export class UI {
 
     // ── input (pointer + keys) — only intercepts while a modal is open ──
     this._onMove = (e) => {
-      if (!this._modal()) return;
       const r = this.canvas.getBoundingClientRect ? this.canvas.getBoundingClientRect() : { left: 0, top: 0, width: innerWidth, height: innerHeight };
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
+      if (!this._modal()) {
+        // Outside a modal the only thing the pointer can address is the boon
+        // tray. Hovering a row explains that boon without pausing the fight.
+        if (this.hud.hitTray(x, y)) this.dirty = true;
+        return;
+      }
+      if (this.hud.hoverBoonId) { this.hud.hoverBoonId = null; this.dirty = true; }
       if (this.nectarUI.active) this.nectarUI.move(x, y);
-      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i !== this.boonUI.hover) { this.boonUI.hover = i; this.dirty = true; } }
+      else if (this.boonUI.active) {
+        const i = this.boonUI.hitTest(x, y);
+        if (i !== this.boonUI.hover) { this.boonUI.hover = i; this.dirty = true; }
+        const overReroll = this.boonUI.hitReroll(x, y);
+        if (overReroll !== this.boonUI.rerollHover) { this.boonUI.rerollHover = overReroll; this.dirty = true; }
+      }
       else this.menus.move(x, y);
     };
     this._onDown = (e) => {
@@ -150,7 +164,10 @@ export class UI {
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
       if (this.nectarUI.active) { if (this.nectarUI.click(x, y)) e.preventDefault(); }
-      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); } }
+      else if (this.boonUI.active) {
+        if (this.boonUI.hitReroll(x, y)) { this.boonUI.reroll(); e.preventDefault(); }
+        else { const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); } }
+      }
       else if (this.menus.click(x, y)) e.preventDefault();
     };
     this._onKey = (e) => {
@@ -159,6 +176,7 @@ export class UI {
         if (e.key === '1' || e.key === '2' || e.key === '3') this.boonUI.choose(+e.key - 1);
         else if (e.key === 'ArrowLeft') this.boonUI.moveSelection(-1);
         else if (e.key === 'ArrowRight') this.boonUI.moveSelection(1);
+        else if (e.key === 'r' || e.key === 'R') this.boonUI.reroll();
         else if (e.key === 'Enter' || e.key === ' ') this.boonUI.choose(this.boonUI.hover < 0 ? 0 : this.boonUI.hover);
         return;
       }
@@ -231,6 +249,18 @@ export class UI {
   damageNumber(worldPos, amount, o) { this.labels.damageNumber(worldPos, amount, o); }
   showBoonChoice(options, o) { return this.boonUI.open(options, o); }
   showHomeUpgrades(meta, page) { this.nectarUI.open(meta || this.ctx?.meta, page); }
+  /**
+   * A Pom of Power reward: the same three-card screen, offering one extra
+   * level on boons the player already holds. Resolves to the chosen offer, or
+   * null when there is nothing to deepen yet.
+   */
+  showPomChoice(o = {}) {
+    const bs = this.boonState;
+    const rng = this.ctx?.rng?.fork ? this.ctx.rng.fork('pom') : this.ctx?.rng;
+    const offers = bs?.pomOffers?.(rng, o.count || 3) || [];
+    if (!offers.length) return Promise.resolve(null);
+    return this.boonUI.open(offers, { ...o, kind: 'pom' });
+  }
   toast(text, o = {}) {
     this.toasts.push({ text: String(text), color: o.color || PAL.gold, icon: o.icon || null, t0: this.t, dur: o.dur || 2.4 });
     if (this.toasts.length > 4) this.toasts.shift();
@@ -249,7 +279,17 @@ export class UI {
   setDash(n, max) { this.hud.setDash(n, max); }
   setWeapon(w) { this.hud.setWeapon(w); }
   setBoss(o) { this.labels.setBoss(o); }
-  clearRunBoons() { this.hud.boons.length = 0; this.hud.boonPop.clear(); this.dirty = true; }
+  clearRunBoons() {
+    this.hud.boons.length = 0; this.hud.boonPop.clear();
+    this.hud.boonRects.length = 0; this.hud.hoverBoonId = null;
+    this.dirty = true;
+  }
+  /** Boon rerolls remaining this descent — for HUD/debug readouts. */
+  rerollsLeft() { return this.boonState?.rerolls || 0; }
+  /** Hand the player Fated Persuasion tokens (boss reward, shop, Chaos gate). */
+  grantRerolls(n = 1) { const v = this.boonState?.grantRerolls?.(n) || 0; this.dirty = true; return v; }
+  /** Spend a Pom of Power on an owned boon id. Returns the updated record. */
+  applyPom(id, levels = 1) { const r = this.boonState?.applyPom?.(id, levels); this.dirty = true; return r; }
   prompt(pos, text, o) { this.labels.prompt(pos, text, o); }
   clearPrompts() { this.labels.clearPrompts(); }
   sigil(pos, o) { this.labels.sigil(pos, o); }
@@ -316,6 +356,7 @@ export class UI {
     if (this.boonUI.active) {
       if (edge('left', lf)) this.boonUI.gamepad('left');
       else if (edge('right', rt)) this.boonUI.gamepad('right');
+      else if (edge('reroll', down(2))) this.boonUI.gamepad('reroll');
       else this.boonUI.pollGamepadAccept(acceptDown, accept);
       return; // the offer is a required decision; Start must not open behind it
     }
@@ -425,6 +466,7 @@ export class UI {
     if (name === 'ui') this.setupCaptureHUD(ctx);
     else if (name === 'boons') this.setupCaptureBoons(ctx, args?.god || 'zeus');
     else if (name === 'forge') this.setupCaptureBoons(ctx, 'hephaestus');
+    else if (name === 'payoff') this.setupCaptureBoons(ctx, 'payoff');
     else if (name === 'loadout') this.setupCaptureLoadout(ctx);
     else if (name === 'combat') {
       // the combat frame should carry the HUD too — it is what the player sees
@@ -504,6 +546,27 @@ export class UI {
       const currentAttack = BOONS.find(x => x.id === 'poseidon.attack');
       if (currentAttack) bs.grant(bs.offer(currentAttack, 'rare'));
     }
+    // `payoff` is the fixed-tier reference: a Duo the player has earned, a
+    // Legendary they have not (so the prerequisite callout is exercised), and a
+    // Pom of Power. These three cards are the ones the ordinary shot cannot show.
+    if (god === 'payoff') {
+      const zeusAttack = BOONS.find(b => b.id === 'zeus.attack');
+      const poseidonCast = BOONS.find(b => b.id === 'poseidon.cast');
+      bs.grant(bs.offer(zeusAttack, 'epic'));
+      bs.grant(bs.offer(poseidonCast, 'rare'));
+      const duo = DUOS.find(d => d.gods.includes('zeus') && d.gods.includes('poseidon'));
+      const legendary = LEGENDARIES.find(l => l.god === 'ares');
+      const cards = [];
+      if (duo) cards.push(bs.offer(duo));
+      if (legendary) cards.push(bs.offer(legendary));
+      cards.push(...bs.pomOffers({ f: () => 0.2 }, 1));
+      bs.grantRerolls(2);
+      this.boonUI.open(cards.slice(0, 3));
+      this.boonUI.t0 = this.t - 1.35;
+      this.boonUI.hover = 0;
+      this.dirty = true;
+      return;
+    }
     // Hand-picked from one deity to mirror the live post-gate audience. Three
     // slots and three rarities keep the upgrade language readable while the
     // repeated portrait makes it unmistakable that Zeus owns this offer.
@@ -520,6 +583,7 @@ export class UI {
     }
     const rng = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('boonshot') : ctx.rng;
     const list = opts.length === 3 ? opts : bs.roll(rng, { count: 3, god, allowDuo: false });
+    bs.grantRerolls(2);                            // the affordance must be live in the shot
     this.boonUI.open(list);
     this.boonUI.t0 = this.t - 1.35;                 // settled by the time we shoot
     this.boonUI.hover = 1;
@@ -530,16 +594,20 @@ export class UI {
   setupCaptureLoadout(ctx) {
     const bs = this.boonState;
     bs.clear();
+    // A late-run build that exercises every grade the Codex can show: all five
+    // ability slots filled, a Pom-levelled boon, a Duo and a Legendary.
     const seed = [
       ['zeus.attack', 'epic'], ['aphrodite.special', 'rare'], ['demeter.canon.cast', 'epic'],
       ['apollo.canon.dash', 'rare'], ['selene.call', 'heroic'], ['hera.canon.extended-family', 'rare'],
       ['hestia.canon.controlled-burn', 'epic'], ['chaos.canon.favor', 'rare'], ['hades.canon.life-tax', 'common'],
-      ['duo.canon.cold-fusion', 'heroic'],
+      ['duo.canon.cold-fusion', 'heroic'], ['legendary.splitting-bolt', 'legendary'],
     ];
     for (const [id, rarity] of seed) {
-      const boon = [...BOONS, ...DUOS].find(x => x.id === id);
+      const boon = [...BOONS, ...DUOS, ...LEGENDARIES].find(x => x.id === id);
       if (boon) bs.grant(bs.offer(boon, rarity));
     }
+    bs.applyPom('demeter.canon.cast', 2);
+    bs.grantRerolls(2);
     this.screen('pause');
     this.menus.activate('boons');
     this.menus.t0 = this.t - 1;

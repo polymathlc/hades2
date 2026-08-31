@@ -39,6 +39,8 @@ import { MetaProgression } from './meta.js';
 import { HomeBase, NectarDrop, TitanBloodDrop } from '../world/homebase.js';
 import { CHARACTER_INFO, characterInfo, characterOwnsWeapon, godIdsForCharacter } from './characters.js';
 import { FINAL_BOSS_DEPTH } from '../entities/spawner.js';
+import { prewarmBiomeTextures, ensureBiomeTextures } from '../materials/texture-budget.js';
+import { profiler } from '../core/profiler.js';
 
 // The descent uses the same five-depth cadence as spawner.js. Depths 5, 10
 // and 15 are regional bosses; clearing Heracles jumps directly to the
@@ -67,6 +69,9 @@ export class RunState {
     this._drops = [];
     this._bossRewardQueue = [];
     this._rewardedBosses = new Set();
+    this._entering = null;        // room entry awaiting a sliced chamber build
+    this._pendingReady = true;    // next biome's surfaces are baked
+    this._pendingWait = 0;
     this.selectedWeapon = null;
     this.selectedCharacter = 'zagreus';
   }
@@ -164,6 +169,8 @@ export class RunState {
     this.state = 'home';
     this.roomCleared = false;
     this._pending = null;
+    this._entering = null;
+    this._pendingReady = true;
     this._deathT = 0;
     this._victoryT = 0;
     this.obols = 0;
@@ -236,6 +243,7 @@ export class RunState {
     ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
     this.biome = 'tartarus';
     this.enterRoom(0, 'tartarus');
+    this._prewarmAhead();
     ctx.events.emit('run.started', {
       seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0, darkness: this.meta?.darkness || 0,
       weapon: this.selectedWeapon, character: this.selectedCharacter,
@@ -270,6 +278,13 @@ export class RunState {
     const changedBiome = biome && biome !== this.biome;
     this.biome = biome || this.biome;
 
+    // SLICED: a chamber is 50-130ms of geometry synthesis. Boot, the capture
+    // harness and the Crossroads want it in one call (they have no frame to
+    // protect); a live transition emphatically does not, so it is pumped a few
+    // milliseconds at a time by world.lateUpdate() and the encounter waits.
+    const sliced = !o.first && !ctx.CAPTURE && typeof world?.beginBuild === 'function';
+    const bopts = sliced ? { sliced: true } : {};
+
     if (world) {
       if (!o.first) {
         // setBiome() announces 'biome.changed' FIRST (the light rig retunes,
@@ -277,8 +292,8 @@ export class RunState {
         // atmosphere re-hazes) and THEN rebuilds the chamber against it, which
         // is the only order that produces one consistent frame. A same-biome
         // chamber is just a fresh layout on the same rig.
-        if (changedBiome && world.setBiome) world.setBiome(this.biome, ctx);
-        else if (world.build) world.build(this.biome, null, this.seedFor(depth));
+        if (changedBiome && world.setBiome) world.setBiome(this.biome, ctx, bopts);
+        else if (world.build) world.build(this.biome, null, this.seedFor(depth), bopts);
       } else if (changedBiome) {
         if (world.setBiome) world.setBiome(this.biome, ctx);
       }
@@ -293,11 +308,32 @@ export class RunState {
       ctx.post?.setBiome?.(this.biome);
     }
 
+    // The plan step of the build already ran, so bounds/profile describe the NEW
+    // chamber and the hero can be parked legally even while it is still
+    // assembling.
     this._placePlayer(o.first);
+
+    this._entering = { depth, biome: this.biome, first: !!o.first };
+    if (sliced && world.building) return this;      // finished in update()
+    this._finishRoomEntry();
+    return this;
+  }
+
+  /**
+   * The half of enterRoom() that must not happen until the chamber exists:
+   * announcing the room and opening the encounter. Called immediately for a
+   * one-call build, and from update() once a sliced build lands.
+   */
+  _finishRoomEntry() {
+    const e = this._entering;
+    if (!e) return this;
+    this._entering = null;
+    const ctx = this.ctx;
+    const depth = e.depth;
 
     ctx.events.emit('room.entered', {
       depth, biome: this.biome, seed: this.seedFor(depth),
-      boss: depth > 0 && depth % 5 === 0, first: !!o.first,
+      boss: depth > 0 && depth % 5 === 0, first: !!e.first,
     });
     // spawner.js subscribes to room.built AND room.entered, so it has already
     // composed the encounter by the time we get here. The direct call is the
@@ -307,6 +343,39 @@ export class RunState {
       ctx.spawner.beginRoom(this.biome, depth, { seed: this.seedFor(depth) });
     }
     ctx.ui?.setDepth?.(depth, this.biome);
+    profiler.spanEnd('run.transition');
+    profiler.spanEnd('boss.transition');
+    this._prewarmAhead();
+    return this;
+  }
+
+  /**
+   * Bake the NEXT biome's surfaces now, in the worker pool, while the player is
+   * still fighting this room.
+   *
+   * THE BUG THIS EXISTS TO KILL: MaterialLibrary starts that bake on
+   * 'biome.changed' — which the chamber rebuild emits and then immediately
+   * out-races, because the rebuild is synchronous and the workers are not. So
+   * every surface fell through to MaterialLibrary.set()'s main-thread bake:
+   * 1362ms for Asphodel, 301ms for Elysium, measured at the `high` profile.
+   * Bosses stand at depths 5/10/15 and the door out of a boss room is the door
+   * that changes biome, which is precisely why "the game freezes after the boss
+   * dies" was the loudest symptom in the game.
+   */
+  _prewarmAhead() {
+    const ctx = this.ctx;
+    const mats = ctx?.mats;
+    if (!mats) return this;
+    const next = this.depth === 15 ? FINAL_BOSS_DEPTH : this.depth + 1;
+    const targets = [this.biomeFor(next), this.biomeFor(next + 1)];
+    for (const b of targets) {
+      if (!b) continue;
+      prewarmBiomeTextures(mats, b).then(() => {
+        // and hand the fresh pixels to the GPU during idle frames, so the
+        // first frame of the new chamber is not also an upload storm.
+        ctx.renderSystem?.queueTextureWarm?.(ctx);
+      }, () => {});
+    }
     return this;
   }
 
@@ -426,8 +495,18 @@ export class RunState {
   _queueTransition(d) {
     if (this._pending) return;
     const next = this.depth === 15 ? FINAL_BOSS_DEPTH : this.depth + 1;
-    this._pending = { depth: next, biome: this.biomeFor(next), door: d ? d.index : 0, kind: d ? d.kind : null };
+    const biome = this.biomeFor(next);
+    this._pending = { depth: next, biome, door: d ? d.index : 0, kind: d ? d.kind : null };
     this.state = 'transition';
+    profiler.spanStart('run.transition');
+    // The chamber may not be built until the biome's surfaces are in the cache,
+    // or MaterialLibrary bakes them on the main thread and the whole game stops
+    // (see _prewarmAhead). Normally this is already true and resolves on the
+    // next microtask; the wait only bites if the player sprinted the room.
+    this._pendingReady = false;
+    this._pendingWait = 0;
+    const done = () => { this._pendingReady = true; };
+    ensureBiomeTextures(this.ctx?.mats, biome).then(done, done);
     this.ctx.events.emit('run.transition', this._pending);
     this.ctx.events.emit('camera.shake', { amp: 0.05, dur: 0.22, freq: 22 });
   }
@@ -450,6 +529,7 @@ export class RunState {
       { t: 0.26, kind: 'nectar', entity, pos: nectarPos, amount },
       { t: 0.48, kind: 'blood', entity, pos: bloodPos, amount: 1 },
     );
+    profiler.spanStart('boss.transition');
     const bossName = entity.def?.label || i?.name || 'THE BOSS';
     this.ctx.ui?.toast?.(`${bossName.toUpperCase()} DROPPED NECTAR + TITAN BLOOD`, { color: '#ff9a6b', dur: 2.8 });
   }
@@ -521,7 +601,16 @@ export class RunState {
       if (this._victoryT > 9.0) this.enterHome();
       return;
     }
+    // A sliced chamber build finishing is what opens the encounter.
+    if (this._entering) {
+      if (!ctx?.world?.building) this._finishRoomEntry();
+      return;
+    }
     if (this._pending) {
+      this._pendingWait += dt;
+      // 4s is a hard ceiling on the wait, not a target: if the worker pool is
+      // unavailable the sync path is still correct, just slower.
+      if (!this._pendingReady && this._pendingWait < 4) return;
       const t = this._pending;
       this._pending = null;
       this.enterRoom(t.depth, t.biome, { door: t.door });

@@ -55,3 +55,57 @@ canvas{display:block;width:100vw;height:100vh;position:fixed;inset:0}
 /* Boot state: the canvas fades up rather than snapping on. */
 body:not(.booted) #ui{opacity:0}
 #ui{transition:opacity .5s ease}
+
+/* ------------------------------------------------------------------------
+   THE RARITY PALETTE
+   ------------------------------------------------------------------------
+   Six grades. Common → Heroic is the ladder a boon can be promoted along;
+   Duo and Legendary are fixed grades that never roll, so they are allowed
+   treatments the ladder never reaches.
+
+   ornament.js reads these back through bindRarityPalette() for exactly the
+   same reason it reads the type stack back: the canvas interface and any DOM
+   chrome must never disagree about what "Heroic" looks like. `-ring` is three
+   space-separated stops (shadow, core, highlight) consumed by rarityRing().
+   ------------------------------------------------------------------------ */
+:root{
+  --rarity-common:#c9a476;    --rarity-common-ring:#8a6a44 #c9a476 #5a4028;
+  --rarity-rare:#cfdcee;      --rarity-rare-ring:#8fa3bd #e6f0ff #4d5b70;
+  --rarity-epic:#f2c14e;      --rarity-epic-ring:#c98f2b #ffe9a8 #6d4416;
+  --rarity-heroic:#ffd6f0;    --rarity-heroic-ring:#ff8ad2 #a8f0ff #ffe08a;
+  --rarity-duo:#7ef2c8;       --rarity-duo-ring:#2f7f68 #7ef2c8 #e8fff6;
+  --rarity-legendary:#ffb877; --rarity-legendary-ring:#ff9d5c #ffe9a8 #c2521a;
+
+  /* Status curses. Combat implements five primitives; these are the eight
+     names the player actually reads, so they need their own colour identity. */
+  --curse-scorch:#ff8c1a;  --curse-blitz:#ffe14d;   --curse-freeze:#3fb8ff;
+  --curse-slow:#8fd8ff;    --curse-hitch:#ff9bd6;   --curse-weak:#8ef0d0;
+  --curse-blind:#ffe9a8;   --curse-wither:#a05fe0;  --curse-hangover:#b884ff;
+
+  /* The type scale, in reference pixels at 1600x900. Every canvas surface
+     multiplies these by the UI scale rather than inventing its own sizes. */
+  --type-micro:8.5px; --type-caption:10.5px; --type-label:12px;
+  --type-body:14.4px; --type-lead:17px; --type-title:24px; --type-display:30px;
+
+  /* Card geometry, shared by the offer screen and the Codex. */
+  --card-w:292px; --card-h:452px; --card-gap:30px;
+}
+
+/* Small windows: the UI canvas is scaled by src/ui/index.js, but the boot
+   chrome and any DOM affordance still need to stay legible, and the game must
+   never produce a horizontal scrollbar at 1024x576 or below. */
+@media (max-width: 1100px), (max-height: 620px){
+  :root{
+    --type-body:13.4px; --type-lead:16px; --type-title:21px; --type-display:26px;
+    --card-w:252px; --card-h:412px; --card-gap:20px;
+  }
+}
+
+/* Reduced-motion viewers still get the interface, just without the travelling
+   speculars; ui/index.js reads this and damps its sweep phases. The default is
+   declared first so the media query can actually override it. */
+:root{ --ui-motion:1 }
+@media (prefers-reduced-motion: reduce){
+  :root{ --ui-motion:0 }
+  #ui{ transition:none }
+}
