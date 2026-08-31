@@ -645,7 +645,7 @@ export class HUD {
       // SHRINK BEFORE YOU CHOP. "LIGHTNING STRI…" tells the player nothing the
       // full name at 88% would not have told them better.
       const full = trackedWidth(g, name, { size, track: 0.06, weight: 600 });
-      if (full > room) size *= Math.max(0.80, room / full);
+      if (full > room) size *= Math.max(0.72, room / full);
       let shown = name;
       while (shown.length > 4 && trackedWidth(g, shown, { size, track: 0.06, weight: 600 }) > room) shown = shown.slice(0, -1);
       if (shown !== name) shown = shown.trimEnd() + '…';

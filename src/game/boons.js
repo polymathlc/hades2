@@ -22,7 +22,7 @@ export const SLOTS = {
   cast:    { name: 'Cast',    glyph: 'bolt' },
   dash:    { name: 'Dash',    glyph: 'chevron' },
   call:    { name: 'Call',    glyph: 'horn' },
-  passive: { name: 'Boon',    glyph: 'laurel' },
+  passive: { name: 'Blessing', glyph: 'laurel' },   // the Codex's own word for the group
   forge:   { name: 'Weapon Forge', glyph: 'hammer' },
   gain:    { name: 'Magick Gain', glyph: 'moons' },
   legendary: { name: 'Legendary', glyph: 'laurel' },

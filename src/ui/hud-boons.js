@@ -86,7 +86,7 @@ export function hudBoonOrder(boon) {
 
 export function hudBoonSlotLabel(boon) {
   if (!boon) return 'BOON';
-  if (boon.legendary) return 'LEGEND';
+  if (boon.legendary) return 'LEGENDARY';   // the word, not an abbreviation of it
   if (boon.duo) return 'DUO';
   const slot = String(boon.slot || 'passive').toUpperCase();
   return slot === 'PASSIVE' ? 'PASSIVE' : slot;
