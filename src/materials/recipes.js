@@ -2300,8 +2300,27 @@ const RECIPES = {
   // them — and a flute is a piece of geometry no wall material can imply.
   // ======================================================================
   'marble.elysium.column': { size: MID, build(n, rng, seed) {
-    // 20 flutes around the shaft (the cylindrical unwrap's U axis)
-    const FL = TG.tileGrid(n, { cols: 20, rows: 1, pattern: 'grid', gap: 0.001, bevel: 0.024, rng, wobble: 0.0015 });
+    // ── HOW MANY FLUTES, AND WHY NOT TWENTY ───────────────────────────────
+    // A Doric shaft has twenty flutes and the first version of this recipe
+    // painted twenty. In the frame that is wrong twice over.
+    //   1. SCREEN DENSITY. The shaft is ~0.5 m across and the play camera sits
+    //      at 12.6 m on a 36 deg lens, so the lit half of a shaft is ~45 px
+    //      wide. Twenty flutes across a half-turn is ~4 px per flute at the
+    //      widest point of the barrel and 1-2 px at the silhouette. Painted at
+    //      that pitch with a hard arris either side, it is a barcode, and the
+    //      mip chain turns it into crawling moire the moment the camera moves.
+    //   2. IT FIGHTS THE GEOMETRY. world/kit.js flutedShaft() already CARVES
+    //      14 (doric) / 18 (corinthian) flutes into the mesh, deliberately
+    //      fewer and deeper than twenty so each arris carries a real lit edge.
+    //      A texture drawing its own 20 on top of a carved 14 beats against it
+    //      at 6 cycles a turn — a visible interference band no amount of
+    //      contrast tuning removes.
+    // Seven is half of fourteen, so the painted channel lands on every second
+    // CARVED channel instead of beating with it, and one painted flute is
+    // ~13 px on screen. The paint's job here is no longer to invent the flute
+    // (the mesh has it) but to shade it: hence the contrast below is about a
+    // third of what it was, and the height contribution about half.
+    const FL = TG.tileGrid(n, { cols: 7, rows: 1, pattern: 'grid', gap: 0.004, bevel: 0.105, rng, wobble: 0.002 });
     const veinsRaw = TG.veinNetwork(n, { count: 5, seed, len: 2.0, width: [0.6, 2.6], meander: 0.5, jitter: 0.04, branch: 0.006 });
     const cloud = warpLo(n, { freq: 3, octaves: 5, seed: seed + 1 }, { amp: 0.08, freq: 2, seed: seed + 2 });
     const grain = TG.fbm(n, { freq: 24, octaves: 3, seed: seed + 3, ppc: 3 });
@@ -2318,19 +2337,29 @@ const RECIPES = {
     // height so the field is hollow and the joints are the sharp arrises.
     const h = F(n);
     for (let i = 0; i < h.length; i++) {
-      h[i] = clamp01(0.30 + (1 - FL.height[i]) * 0.42 + (cloud[i] - 0.5) * 0.12 + grain[i] * 0.05
+      // 0.42 of inverted tile height on top of a mesh that is already fluted
+      // double-counts the same channel and drives the normal map into the
+      // barcode. 0.18 leaves a soft cross-section on the painted flute and
+      // lets the carved geometry carry the form.
+      h[i] = clamp01(0.30 + (1 - FL.height[i]) * 0.18 + (cloud[i] - 0.5) * 0.12 + grain[i] * 0.05
         + (sugar[i] - 0.30) * 0.13 - crazing[i] * 0.20 - vM[i] * 0.05);
     }
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 4.5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.003), 6.5);
     const v = F(n);
     for (let i = 0; i < v.length; i++) {
-      // the flute's own light/shade: bright on the arris, shading into the hollow
-      v[i] = 0.50 + FL.arris[i] * 0.22 - FL.seam[i] * 0.10 + (cloud[i] - 0.5) * 0.48 + grain[i] * 0.09
-        + (sugar[i] - 0.30) * 0.18 - crazing[i] * 0.24 - halo[i] * 0.30;
+      // The flute's own light/shade, at about a third of the amplitude it had.
+      // A 0.22 arris step on a pale marble ramp is a 60-value jump across two
+      // texels; on a shaft whose flutes are already carved it reads as printed
+      // stripes rather than as a form turning away from the key. 0.085 is a
+      // shading cue that survives the mip chain instead of aliasing in it.
+      v[i] = 0.50 + FL.arris[i] * 0.085 - FL.seam[i] * 0.038 + (cloud[i] - 0.5) * 0.50 + grain[i] * 0.09
+        + (sugar[i] - 0.30) * 0.09 - crazing[i] * 0.24 - halo[i] * 0.30;
     }
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 7 }), -0.42), 2.2)), n >> 2);
-    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.72 - FL.arris[i] * 0.30);
+    // hue separation across the arris follows the value down: a 0.30 push into
+    // the cool ramp on a 2 px feature is chromatic aliasing, nothing else.
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.72 - FL.arris[i] * 0.12);
     paintValue(v, n, { rng, seed: seed + 8, temp, cavity: cav, cavityAmt: 0.20, edge, edgeAmt: 0.18, tooth: grain,
       flowBase: 1.52, swirl: 0.28, flowFreq: 1.1, light: [0.015, 0.07], dark: [-0.06, -0.015], highlight: 0.7,
       ink: 0.05, inkTemp: 0.40 });
