@@ -151,6 +151,48 @@ export class Props {
     this._sway = [];       // {obj, amp, rate, phase, axis}
     this._lights = [];
     this._t = 0;
+    // ── WHY THE SHADER MATERIALS ARE POOLED ────────────────────────────────
+    // Every chamber mints a fresh ShaderMaterial for each of the three flame
+    // layers and one for the ember field, and dispose() destroyed them on the
+    // way out. Disposing a ShaderMaterial drops three.js' refcount on its
+    // PROGRAM to zero, so the driver throws the compiled shader away and the
+    // next chamber recompiles it from source — a synchronous driver stall
+    // landing on the first frame of a room transition, which is the frame that
+    // can least afford one. (Under a software rasteriser one program is tens of
+    // seconds; on a real GPU it is single-digit milliseconds, but it is a
+    // hitch either way and it is entirely avoidable.)
+    // The uniform VALUES differ per chamber; the programs do not. So the
+    // materials are recycled across chambers exactly as world/doors.js does,
+    // and only their uniforms are re-stamped. `destroy()` is the real teardown.
+    this._shaderPool = { 'flame0': [], 'flame1': [], 'flame2': [], ember: [] };
+    this._shaderLive = [];
+  }
+
+  /**
+   * Take a ShaderMaterial of `kind` out of the pool (or mint one), stamped with
+   * this chamber's uniform values. See the constructor note.
+   */
+  _shaderMat(kind, vertexShader, fragmentShader, params, values) {
+    const pool = this._shaderPool[kind] || (this._shaderPool[kind] = []);
+    let m = pool.pop();
+    if (!m) {
+      const uniforms = {};
+      for (const k in values) {
+        const v = values[k];
+        uniforms[k] = { value: (v && v.isColor) ? v.clone() : v };
+      }
+      m = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, ...params });
+      m.userData.poolKind = kind;
+    } else {
+      for (const k in values) {
+        const u = m.uniforms[k], v = values[k];
+        if (!u) { m.uniforms[k] = { value: (v && v.isColor) ? v.clone() : v }; continue; }
+        if (u.value && u.value.isColor && v && v.isColor) u.value.copy(v);
+        else u.value = v;
+      }
+    }
+    this._shaderLive.push(m);
+    return m;
   }
 
   // =========================================================================
@@ -283,19 +325,16 @@ export class Props {
       const geo = new THREE.PlaneGeometry(1, 1);
       geo.translate(0, 0.5, 0);
       this._geo.push(geo);
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          uTime: { value: 0 },
-          uCore: { value: new THREE.Color(cfg.core) },
-          uBody: { value: new THREE.Color(cfg.body) },
-          uGlow: { value: new THREE.Color(cfg.glow) },
-          uLayer: { value: cfg.L }, uWidth: { value: cfg.w }, uAlpha: { value: cfg.a },
-        },
-        vertexShader: FLAME_VERT, fragmentShader: FLAME_FRAG,
+      const mat = this._shaderMat('flame' + li, FLAME_VERT, FLAME_FRAG, {
         transparent: true, blending: THREE.AdditiveBlending,
         depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+      }, {
+        uTime: 0,
+        uCore: new THREE.Color(cfg.core),
+        uBody: new THREE.Color(cfg.body),
+        uGlow: new THREE.Color(cfg.glow),
+        uLayer: cfg.L, uWidth: cfg.w, uAlpha: cfg.a,
       });
-      this._mats.push(mat);
       mats.push(mat);
       const im = new THREE.InstancedMesh(geo, mat, points.length);
       im.name = 'flame.layer' + li;
@@ -349,20 +388,17 @@ export class Props {
     const f = rng && rng.f ? () => rng.f() : () => 0.5;
     const geo = new THREE.PlaneGeometry(1, 1);
     this._geo.push(geo);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uHot: { value: new THREE.Color(opts.color || '#ff8a44') },
-        uCool: { value: new THREE.Color(opts.accent || '#5fd0ff') },
-        uRise: { value: opts.rise ? 1 : 0 },
-        uSpan: { value: opts.span ?? 16 },
-        uStreak: { value: opts.streak ? 1 : 0 },
-      },
-      vertexShader: EMBER_VERT, fragmentShader: EMBER_FRAG,
+    const mat = this._shaderMat('ember', EMBER_VERT, EMBER_FRAG, {
       transparent: true, blending: THREE.AdditiveBlending,
       depthWrite: false, depthTest: true, side: THREE.DoubleSide, toneMapped: false,
+    }, {
+      uTime: 0,
+      uHot: new THREE.Color(opts.color || '#ff8a44'),
+      uCool: new THREE.Color(opts.accent || '#5fd0ff'),
+      uRise: opts.rise ? 1 : 0,
+      uSpan: opts.span ?? 16,
+      uStreak: opts.streak ? 1 : 0,
     });
-    this._mats.push(mat);
     const im = new THREE.InstancedMesh(geo, mat, n);
     im.name = opts.name || 'void.embers';
     im.frustumCulled = false;
@@ -438,16 +474,36 @@ export class Props {
     }
   }
 
+  /**
+   * Tear the dressing down between chambers. The animated-prop ShaderMaterials
+   * are RECYCLED rather than disposed so their compiled programs survive the
+   * transition — see the constructor note. `destroy()` is the real teardown.
+   */
   dispose() {
     const L = this.ctx && this.ctx.lighting;
     for (const l of this._lights) { try { L && L.releaseLight && L.releaseLight(l); } catch (e) { /* rig may be gone */ } }
     this._lights.length = 0;
+    for (const m of this._shaderLive) {
+      const kind = m.userData.poolKind;
+      (this._shaderPool[kind] || (this._shaderPool[kind] = [])).push(m);
+    }
+    this._shaderLive.length = 0;
     for (const m of this._mats) m.dispose?.();
     for (const g of this._geo) g.dispose?.();
     this._mats.length = 0; this._geo.length = 0;
     this._sway.length = 0;
     this.flames = null; this.embers = null; this.drips = null;
     this.root.clear();
+  }
+
+  /** Final teardown (page unload / world dispose): free the pooled programs. */
+  destroy() {
+    this.dispose();
+    for (const kind in this._shaderPool) {
+      for (const m of this._shaderPool[kind]) m.dispose?.();
+      this._shaderPool[kind].length = 0;
+    }
+    return this;
   }
 }
 

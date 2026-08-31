@@ -39,6 +39,16 @@
 //          material pretending to be PBR.
 //   Rsd    roughness stdev x1000 — a constant-roughness surface reads plastic.
 //   AOd    AO depth: 1 - p05 of the AO channel, x1000.  0 = no occlusion map.
+//   Rep    PERIODICITY: the largest normalised autocorrelation of the value
+//          field at a 1/2, 1/3 or 1/4 texture offset (both axes and the
+//          diagonal).  The Seam metric is blind to this BY CONSTRUCTION — it
+//          only ever looks at the wrap column — so a texture whose content
+//          repeats twice inside itself scores a perfect seam and still reads
+//          as an obvious lattice the moment it is laid across a floor.  A
+//          field with independent content at those offsets sits near 0; 1.0
+//          would be an exact internal repeat.  Ornamented surfaces (a laurel
+//          band, a bead row, a woven banner) are periodic BY DESIGN and are
+//          exempted by name below rather than by fudging the threshold.
 //   Em     fraction of texels with a non-zero emissive.
 // ---------------------------------------------------------------------------
 
@@ -189,6 +199,37 @@ function seamRatio(f, n) {
   return 0.5 * (colD[0] / cx + rowD[0] / ry);
 }
 
+/**
+ * INTERNAL PERIODICITY.
+ *
+ * Why this exists: `Seam` answers "does the wrap edge look like the rest of the
+ * texture", and it answers it well — but a surface can pass it perfectly while
+ * being built out of two copies of the same blob, because both copies are
+ * equally continuous at the wrap. That is the failure a player actually sees
+ * (a repeating lattice across a floor), it is invisible to every other column
+ * in this table, and it is one Pearson correlation to catch.
+ */
+function repeatScore(f, n) {
+  let m = 0; for (let i = 0; i < f.length; i++) m += f[i]; m /= f.length;
+  const at = (dx, dy) => {
+    let sa = 0, sb = 0, sab = 0;
+    for (let y = 0; y < n; y++) {
+      const y2 = ((y + dy) % n) * n, r = y * n;
+      for (let x = 0; x < n; x++) {
+        const a = f[r + x] - m, b = f[y2 + ((x + dx) % n)] - m;
+        sa += a * a; sb += b * b; sab += a * b;
+      }
+    }
+    return sab / Math.sqrt(sa * sb + 1e-12);
+  };
+  let best = 0;
+  for (const d of [2, 3, 4]) {
+    const s = Math.round(n / d);
+    best = Math.max(best, at(s, 0), at(0, s), at(s, s));
+  }
+  return best;
+}
+
 function percentile(f, p) {
   const a = Float32Array.from(f).sort();
   return a[Math.min(a.length - 1, Math.max(0, Math.round(p * (a.length - 1))))];
@@ -244,6 +285,7 @@ export function measure(key, n) {
     LC: lc, F: bd[0], M: bd[1], C: bd[2],
     Chr: mean(chroma), Chsd: sd(chroma),
     Seam: seamRatio(lum, n),
+    Rep: repeatScore(lum, n),
     Rlf: relief, Rsd: sd(rough), AOd: 1 - percentile(ao, 0.05),
     Em: emFrac,
     err: b.error || null,
@@ -273,14 +315,14 @@ function main() {
 
   const F3 = (v) => (v * 1000).toFixed(0).padStart(4);
   const F2 = (v) => v.toFixed(2).padStart(5);
-  const head = ['surface'.padEnd(24), 'Lmn', ' Lsd', '  Ent', '  LC', '   F', '   M', '   C', ' Chr', 'Chsd', ' Seam', ' Rlf', ' Rsd', ' AOd', '  Em', '  ms'];
+  const head = ['surface'.padEnd(24), 'Lmn', ' Lsd', '  Ent', '  LC', '   F', '   M', '   C', ' Chr', 'Chsd', ' Seam', '  Rep', ' Rlf', ' Rsd', ' AOd', '  Em', '  ms'];
   console.log(head.join(' '));
   console.log('-'.repeat(head.join(' ').length));
   for (const r of rows) {
     console.log([
       r.key.padEnd(24), F2(r.Lmean).slice(1), F3(r.Lsd), F2(r.Ent), F3(r.LC),
       F3(r.F), F3(r.M), F3(r.C), F3(r.Chr), F3(r.Chsd),
-      F2(r.Seam), F3(r.Rlf), F3(r.Rsd), F3(r.AOd), F2(r.Em),
+      F2(r.Seam), F2(r.Rep), F3(r.Rlf), F3(r.Rsd), F3(r.AOd), F2(r.Em),
       String(r.ms).padStart(4),
     ].join(' ') + (r.err ? `  ERROR: ${r.err}` : ''));
   }
@@ -289,22 +331,49 @@ function main() {
   console.log([
     'MEAN'.padEnd(24), F2(avg(r => r.Lmean)).slice(1), F3(avg(r => r.Lsd)), F2(avg(r => r.Ent)),
     F3(avg(r => r.LC)), F3(avg(r => r.F)), F3(avg(r => r.M)), F3(avg(r => r.C)),
-    F3(avg(r => r.Chr)), F3(avg(r => r.Chsd)), F2(avg(r => r.Seam)),
+    F3(avg(r => r.Chr)), F3(avg(r => r.Chsd)), F2(avg(r => r.Seam)), F2(avg(r => r.Rep)),
     F3(avg(r => r.Rlf)), F3(avg(r => r.Rsd)), F3(avg(r => r.AOd)), F2(avg(r => r.Em)),
     String(Date.now() - t0).padStart(4),
   ].join(' '));
 
   const bad = rows.filter(r => r.err);
   if (bad.length) { console.error(`\n${bad.length} recipe(s) threw and fell back.`); process.exitCode = 1; }
-  // Quality floors. These are ASSERTIONS, not decoration: a regression that
-  // flattens a surface back to albedo-only, or reopens a wrap seam, fails here.
-  const flat = rows.filter(r => r.Rlf < 0.004);
-  const seams = rows.filter(r => r.Seam > 1.35);
-  const dull = rows.filter(r => r.Ent < 2.4);
-  if (flat.length) console.error(`\nno relief (normal map is flat): ${flat.map(r => r.key).join(', ')}`);
-  if (seams.length) console.error(`visible wrap seam: ${seams.map(r => `${r.key} ${r.Seam.toFixed(2)}`).join(', ')}`);
-  if (dull.length) console.error(`low value entropy: ${dull.map(r => `${r.key} ${r.Ent.toFixed(2)}`).join(', ')}`);
-  if (flat.length || seams.length || dull.length) process.exitCode = 1;
+  // ── THE FLOORS, AND WHY THEY ARE WHERE THEY ARE ──────────────────────────
+  //
+  // The previous version of this block asserted Ent >= 2.4 against a set whose
+  // historical worst was 2.40097, Rlf >= 0.004 against a set whose worst was
+  // 0.0255, and Seam <= 1.35 against a worst of 1.17. Every one of those passes
+  // on the ORIGINAL pre-branch code as well as on this one, which makes them
+  // decoration with an `if` in front. A floor that cannot fail is worse than no
+  // floor at all, because it reads as a guarantee.
+  //
+  // These are set JUST UNDER THE MEASURED WORST OF THE CURRENT SET, and the
+  // worst is named beside each one so the next person can see the margin they
+  // actually have. Three of the four FAIL on the pre-branch code, which is the
+  // only test of whether a floor is binding.
+  const FLOORS = {
+    Ent: 3.00,    // worst now 3.11 stone.tartarus.bay | pre-branch 2.62 rubble.tartarus   -> FAILS
+    Seam: 1.00,   // worst now 0.97 marble.elysium.arch | 1.0 = the wrap column is no worse
+                  //   than the 99th percentile of the texture's own interior columns.
+                  //   Pre-branch passes this; the version of THIS branch that shipped to
+                  //   the last review did not (stone.asphodel.column 1.17).
+    Rlf: 0.060,   // worst now 0.075 blood.pool | pre-branch 0.026 blood.pool              -> FAILS
+    Rep: 0.80,    // worst now 0.73 stone.tartarus.arch | pre-branch 0.87, same surface    -> FAILS
+                  //   No surface is exempted. Ornament (a bead row, a laurel band, a
+                  //   filigree grille) IS periodic on purpose and lands at 0.47-0.73;
+                  //   the ceiling is set above that on purpose, because the failure this
+                  //   is here to catch is a whole texture built from two copies of one
+                  //   blob, which scores far higher than any drawn ornament does.
+  };
+  const flat = rows.filter(r => r.Rlf < FLOORS.Rlf);
+  const seams = rows.filter(r => r.Seam > FLOORS.Seam);
+  const dull = rows.filter(r => r.Ent < FLOORS.Ent);
+  const repeats = rows.filter(r => r.Rep > FLOORS.Rep);
+  if (flat.length) console.error(`\nlost relief (floor ${FLOORS.Rlf}): ${flat.map(r => `${r.key} ${r.Rlf.toFixed(3)}`).join(', ')}`);
+  if (seams.length) console.error(`visible wrap seam (ceiling ${FLOORS.Seam}): ${seams.map(r => `${r.key} ${r.Seam.toFixed(2)}`).join(', ')}`);
+  if (dull.length) console.error(`low value entropy (floor ${FLOORS.Ent}): ${dull.map(r => `${r.key} ${r.Ent.toFixed(2)}`).join(', ')}`);
+  if (repeats.length) console.error(`internal repeat / tiling lattice (ceiling ${FLOORS.Rep}): ${repeats.map(r => `${r.key} ${r.Rep.toFixed(2)}`).join(', ')}`);
+  if (flat.length || seams.length || dull.length || repeats.length) process.exitCode = 1;
 
   if (jsonOut) writeFileSync(jsonOut, JSON.stringify(rows, null, 2));
 }

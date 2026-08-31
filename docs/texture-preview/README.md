@@ -28,3 +28,17 @@ and an occlusion map cannot be judged as greyscale images.
 `_contact-sheet.png` puts every lit preview on one page.
 
 See `../texture-notes.md` for the measured before/after numbers.
+
+## `_inengine-before-after.png`
+
+The flat-tile sheets in this directory are **not sufficient on their own** — see
+`docs/texture-notes.md` §4. Three regressions shipped in round 1 that were
+invisible here and unmistakable in a play-camera frame.
+
+`_inengine-before-after.png` is the in-engine gate: 3 rows (Tartarus / Asphodel /
+Elysium) x 3 columns (play framing / colonnade framing / floor framing), each
+cell **before on top, after underneath**, all at the shipping camera rig
+(distance 12.6 m, pitch 45°, fov 36°, seed 1337, `?capture&q=high`).
+
+Regenerate with `tools/capture.mjs` against `dist/` — see §4 for the exact
+`window.EREBUS.capture` calls.

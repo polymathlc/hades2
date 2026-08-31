@@ -1337,7 +1337,7 @@ export function ashlar(n, o = {}) {
       }
     }
   }
-  return { height, id, mortar: seam, seam, joint, lobe, arris, rise, cu, cv, wrapX, wrapY };
+  return { height, id, mortar: seam, seam, joint, lobe, arris, rise, cu, cv, wrapX, wrapY, cols, rows };
 }
 
 // ---------------------------------------------------------------------------
@@ -1356,12 +1356,32 @@ export function ashlar(n, o = {}) {
  * bedding change direction at every joint — which is what actually happens
  * when blocks are cut from a quarry and laid by hand.
  *
+ * ── ZOOM, AND THE BUG THAT `span` ALONE HID ──────────────────────────────────
+ * `span` is "what fraction of the WHOLE TEXTURE does one cell read", which
+ * means the magnification it applies is `span x cellsPerAxis`, not `span`. On a
+ * 4x4 marble floor, span 0.8 is a mild 3.2x zoom-out and the grain stays in the
+ * band it was authored in. On a flagstone bed 15 stones wide, the same-looking
+ * span 0.75 is an ELEVEN-fold zoom-out: every feature of the source — mineral
+ * flecks, chisel scores, bedding — is squeezed to a ninth of its authored size
+ * and lands in the finest band of the spectrum as speckle. That is measurable
+ * and it was measured: floor.tartarus's per-flag aggregate contributed nothing
+ * whatever to the mid or coarse bands, and a control that simply dithered the
+ * old albedo with white noise reproduced the whole of its supposed gain.
+ *
+ * `zoom` states the thing the caller actually means: "one cell reads a window
+ * `zoom` times its own size". zoom 1 preserves scale exactly; 1.5 gives a
+ * little slack so neighbouring cells cannot read the same patch. It needs the
+ * layout's cell counts, which tileGrid/ashlar/flagBond now return.
+ *
  * @param {Float32Array} src   source field (n*n), wrapped-sampled
- * @param {object} L           a layout result: needs { cu, cv, id }
- * @param {object} o           span: fraction of src one cell covers (0.55)
+ * @param {object} L           a layout result: needs { cu, cv, id } (+ cols/rows for zoom)
+ * @param {object} o           zoom: window size in CELLS (preferred), or
+ *                             span: fraction of src one cell covers (legacy)
  */
 export function cellVariant(src, n, L, o = {}) {
-  const span = (o.span ?? 0.55) * n;
+  const zoom = o.zoom;
+  const spanX = (zoom != null ? zoom / Math.max(1, L.cols || 1) : (o.span ?? 0.55)) * n;
+  const spanY = (zoom != null ? zoom / Math.max(1, L.rows || 1) : (o.span ?? 0.55)) * n;
   const out = new Float32Array(n * n);
   const cu = L.cu, cv = L.cv, id = L.id;
   // An axis whose cell spans the whole texture wraps inside its own cell, so a
@@ -1381,8 +1401,8 @@ export function cellVariant(src, n, L, o = {}) {
       const t = id[i];
       const k = ((t * STEPS * 7.13) | 0) % STEPS;
       const ca = flat ? 1 : CA[k], sa = flat ? 0 : SA[k];
-      const px = wx ? x : (cu[i] - 0.5) * span;
-      const py = wy ? y : (cv[i] - 0.5) * span;
+      const px = wx ? x : (cu[i] - 0.5) * spanX;
+      const py = wy ? y : (cv[i] - 0.5) * spanY;
       const ox = (t * 1103.0) % n, oy = (t * 617.7 + 311.0) % n;
       out[i] = sampleWrap(src, n, px * ca - py * sa + ox, px * sa + py * ca + oy);
     }
@@ -1439,7 +1459,22 @@ export function lichen(n, o = {}) {
 export function aggregate(n, o = {}) {
   const freq = Math.max(2, Math.round(o.freq ?? 34));
   const seed = (o.seed ?? 77) | 0;
-  const res = Math.max(128, Math.min(n, o.res || n));
+  // ── RESOLUTION CAP, AND WHY IT IS FREE ────────────────────────────────────
+  // A fused Worley pass walks a 3x3 cell neighbourhood per texel, so it is the
+  // most expensive operator any of these recipes runs at full resolution, and
+  // it was running at full resolution on every 448-1024 surface in the game.
+  // What it draws is a field of `freq` x `freq` grains, so the resolution it
+  // needs is set by the GRAIN, not by the texture: fourteen texels across one
+  // grain resolves a ragged crystal boundary with room to spare, and every
+  // texel past that is spent describing an edge the resample, the grain octave
+  // over it and the mip chain all soften anyway. On a 448 wall whose flecks are
+  // freq 18 that is 252 instead of 448 — a third of the work for a difference
+  // no frame contains. Callers that genuinely need a sharper grain still pass
+  // an explicit `res`.
+  // The 256 floor is not slack: below it the saving is a millisecond and the
+  // cost is real — dropping iron.dark's flake field from 256 to 224 measured
+  // -0.05 bits of entropy and a third of its fine band, for 2 ms.
+  const res = Math.max(128, Math.min(n, o.res || Math.max(256, Math.round(freq * 14))));
   const size = o.size ?? 0.30;
   const hard = o.hard ?? 6;
   // RAGGED GRAIN BOUNDARIES. A plain thresholded Worley distance is a field of
@@ -1609,7 +1644,7 @@ export function tileGrid(n, o = {}) {
       }
     }
   }
-  return { height, id, seam, joint, arris, lobe, cu, cv, wrapX, wrapY };
+  return { height, id, seam, joint, arris, lobe, cu, cv, wrapX, wrapY, cols, rows };
 }
 
 /** Woven cloth weave (warp/weft) height field. */
