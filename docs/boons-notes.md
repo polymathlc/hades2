@@ -200,6 +200,19 @@ Was a column of unexplained god sigils. Now a **loadout**:
   so it prints the numbers actually in play — not the authored template), and
   the god's identity line.
 
+### Combat readouts
+The magick bar's label used to vanish against its own lit fill; it now sits on
+a narrow ink plate and reads `64 /100` in the same grammar as the life bar. The
+Cast and Dash meters carry their bindings (`CAST · Q`, `DASH · SPACE`), matching
+the tray's legend so one vocabulary covers the whole HUD.
+
+### Capture scenarios
+`capture.state('payoff')` is a new reference shot: an earned Duo, an unearned
+Legendary (so the prerequisite callout is exercised) and a Pom of Power — the
+three cards the ordinary `boons` shot cannot show. `capture.state('loadout')`
+now seeds a build with a Duo, a Legendary and a Pom-levelled boon so the Codex
+shot exercises every grade it can render.
+
 ### Typography and small windows
 `style.css` now carries the type scale, card geometry, rarity and curse palettes
 as custom properties, with a small-viewport block that steps the scale and card

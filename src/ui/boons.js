@@ -15,7 +15,7 @@ import {
 } from './ornament.js';
 import {
   GOD_INFO, SLOTS, RARITY_LABEL, BoonState,
-  CURSES, curseForBoon, CURSE_NAMES, prerequisiteStatus,
+  CURSES, curseForBoon, CURSE_NAMES, prerequisiteStatus, isFixedTier,
 } from '../game/boons.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from './boon-choice.js';
 // Cards never display these atlases at source resolution. Compact browser
@@ -377,10 +377,11 @@ function slotGlyph(g, kind, cx, cy, r, color) {
 // ═══════════════════════════════════════════════════════ THE OVERLAY ══════
 const CARD_W = 292, CARD_H = 452, CARD_GAP = 30;
 /** Words the effect text lifts out of the body colour. */
-function keywordRegex() {
-  return new RegExp(
-    '(\\d+(?:\\.\\d+)?%?|' + CURSE_NAMES.join('|') + '|Shock|Chill|Doom|Critical|Exposed?|Deflect|Magick|Life)', 'g');
-}
+// Built once: drawMixed runs per line, per card, every frame, and a regex
+// literal rebuilt in that loop is pure garbage for the collector. `split` with
+// a global regex resets lastIndex itself, so one shared instance is safe.
+const KEYWORDS = new RegExp(
+  '(\\d+(?:\\.\\d+)?%?|' + CURSE_NAMES.join('|') + '|Shock|Chill|Doom|Critical|Exposed?|Deflect|Magick|Life)', 'g');
 const CURSE_SET = new Set(CURSE_NAMES);
 const CURSE_BY_NAME = new Map(Object.values(CURSES).map(c => [c.name, c]));
 const curseColorByName = (name) => CURSE_BY_NAME.get(name)?.color || null;
@@ -708,7 +709,7 @@ export class BoonOverlay {
     const col = o.color;
     const R = RARITY[o.rarity] || RARITY.common;
     const sweep = ((t * 0.30) + (st.index || 0) * 0.19) % 1;
-    const fixed = o.tier === 'duo' || o.tier === 'legendary';
+    const fixed = isFixedTier(o.tier);
 
     // frame + panel. Fixed tiers (Duo / Legendary) burn brighter and use the
     // tier colour for their edge light instead of the god's, because the tier
@@ -1025,7 +1026,7 @@ export class BoonOverlay {
  * enemy matters more than who is offering it.
  */
 function drawMixed(g, line, cx, y, size, maxW, col, curse) {
-  const parts = line.split(keywordRegex()).filter(s => s !== '');
+  const parts = line.split(KEYWORDS).filter(s => s !== '');
   let total = 0;
   for (const p of parts) total += g.measureText(p).width;
   let px = cx - total / 2;

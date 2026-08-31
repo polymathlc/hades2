@@ -27,11 +27,6 @@ export const SLOTS = {
   gain:    { name: 'Magick Gain', glyph: 'moons' },
   legendary: { name: 'Legendary', glyph: 'laurel' },
 };
-/** Short tags for the HUD tray, which has room for four characters at most. */
-export const SLOT_TAG = {
-  attack: 'ATK', special: 'SPC', cast: 'CAST', dash: 'DASH', call: 'CALL',
-  passive: 'BOON', forge: 'FORGE', gain: 'GAIN', legendary: 'LGND',
-};
 
 // ── RARITY ─────────────────────────────────────────────────────────────────
 // Hades separates two axes and so do we.
@@ -1191,7 +1186,7 @@ export class BoonState {
 
 export const ALL_BOONS = BOONS;
 export default {
-  BOONS, DUOS, LEGENDARIES, BoonState, GOD_INFO, SLOTS, SLOT_TAG, ACTION_SLOTS,
+  BOONS, DUOS, LEGENDARIES, BoonState, GOD_INFO, SLOTS, ACTION_SLOTS,
   RARITIES, TIERS, RARITY_LABEL, RARITY_COLOR, CURSES, curseInfo, curseForBoon,
   prerequisiteStatus, valuesFor,
 };
