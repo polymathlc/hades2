@@ -33,18 +33,20 @@
 //     specular lobe of the warm key: a flat cream cutout, by construction,
 //     whatever colour it was painted.
 //
-// The rebuild below fixes all three. Every arm is now built from one material
+// The rebuild below fixes all three. Every arm is now built from one PAINT
 // vocabulary — steel, edge, gold, gold-hot, gold-deep, leather, wrap, wood, and
 // the weapon's own accent — patched with the CHARACTER look and pinned to
 // SLOT_PAINT.metal / SLOT_PAINT.cloth so an arm is lit by exactly the same law
 // as the armour on the arm that carries it. Per-weapon identity moves off the
 // structural metal (where it was making twelve cream props) and on to the
-// ACCENT, which is where §5's core/body/glow puts it anyway.
+// ACCENT, which is where §5's core/body/glow puts it anyway. (Those nine names
+// are now vertex TINTS on four slot materials rather than nine materials of
+// their own — see "ONE MATERIAL PER SLOT" below — but every hex is unchanged.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as THREE from 'three';
 import { WEAPONS, WEAPON_IDS } from './weapons.js';
-import { HERO_PALETTE, SLOT_PAINT } from './rig.js';
+import { HERO_PALETTE, SLOT_PAINT, linRGB } from './rig.js';
 import { painterly, setPaint, paintParams, keyRef } from '../materials/painterly.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
@@ -66,63 +68,135 @@ const P = {
   bone:     '#cfc0a4',
 };
 
+// ── ONE MATERIAL PER SLOT, HUE PER VERTEX ────────────────────────────────────
+// The rebuild above got the arms' COLOUR right and their COST wrong. It gave
+// every arm its own thirteen-material vocabulary and modelled every quillon
+// finial, cord turn and gem as a separate Mesh, so the equipped arm alone was
+// 17 draw submissions (blade: 15 meshes, and the leaf's three material groups
+// are three more) — doubled by the shadow pass. §9's frame budget is < 400
+// calls and the capture measured 419.
+//
+// Nothing in bladeModel() — or in any of the other eleven — moves relative to
+// its group. The runtime only ever toggles `group.visible`; the spear's throw
+// is a projectile built in vfx/, not this mesh detaching, and no code anywhere
+// outside this file looks a weapon sub-mesh up by name. So the parts do not
+// need to be separate OBJECTS, only separate SURFACES.
+//
+// entities/rig.js already solved this for the body: it bakes the palette into a
+// per-vertex COLOUR attribute and buckets parts by material SLOT, which is how
+// several hundred authored pieces of hero render in five calls. The arsenal now
+// runs the same law. The thirteen hexes collapse to four slot materials —
+//
+//   metal   the diffuse-led body metal      (steel, steelLit, steelDeep, gold,
+//                                            goldDeep, bone)
+//   edge    the specular-led narrow bevels  (edge, goldHot)
+//   cloth   leather, cord and wood          (leather, wrap, wood)
+//   accent / core   the one emissive        (the arm's identity glow)
+//
+// — and every hex that used to be a material is now a vertex colour. WHY FOUR
+// AND NOT THREE: roughness is a material scalar, not a vertex attribute, and
+// §4's "small, bright, sharp glint" IS the 0.15-roughness bevel. Folding the
+// edge into the 0.44-roughness body would spread one broad lobe over the whole
+// face and undo the exact thing the rebuild was for. Colour merges; a specular
+// lobe width does not.
+//
+// The parts themselves survive as named, zero-cost WeaponPart anchors (see
+// below), so the design is still addressable and still auditable — they simply
+// stop being draw calls.
+const SLOT_MAT = {
+  metal:  { paint: 'metal', roughness: 0.44, metalness: 0.35, tune: { specGain: 0.44 } },
+  // Roughness 0.15 and a raised specGain put the whole lobe inside a few pixels
+  // — the sharpened bevel of the leaf, the guard's hot arris, the rail's rails.
+  edge:   { paint: 'metal', roughness: 0.15, metalness: 0.42, tune: { specGain: 1.12, rimStrength: 2.2 } },
+  cloth:  { paint: 'cloth', roughness: 0.85, metalness: 0.03 },
+  accent: { paint: 'metal', roughness: 0.26, metalness: 0.10, tune: { specGain: 0.50 }, emissive: 'glow', emissiveIntensity: 0.55 },
+  core:   { paint: 'metal', roughness: 0.20, metalness: 0.08, tune: { litGain: 0.30, specGain: 0.40 }, emissive: 'core', emissiveIntensity: 0.90 },
+};
+// Fixed iteration order — the merge must be byte-identical run to run.
+const SLOT_ORDER = ['metal', 'edge', 'cloth', 'accent', 'core'];
+
 /**
- * A weapon material. `paint` is the per-slot painterly table the hero's own
+ * A weapon slot material. `paint` is the per-slot painterly table the hero's own
  * armour runs — importing it rather than restating it is what keeps an arm and
  * a bracer in the same light when either is retuned.
+ *
+ * The base colour is WHITE on purpose: every hue on the arm arrives through the
+ * vertex-colour attribute the bake writes, exactly as it does on the body.
  */
-function weaponMaterial(hex, o, owned, kr) {
+function slotMaterial(slot, wp, owned, kr) {
+  const cfg = SLOT_MAT[slot];
+  const paint = SLOT_PAINT[cfg.paint];
   const m = new THREE.MeshStandardMaterial({
-    color: D(hex),
-    roughness: o.roughness,
+    color: 0xffffff,
+    roughness: cfg.roughness,
     // METALNESS IS CAPPED AT 0.42 ON PURPOSE. These arms have no prefiltered
     // environment (see the header), and a conductor without one loses both its
     // diffuse and its indirect specular. 0.30-0.42 keeps ~2/3 of the albedo in
     // the diffuse term — which is the only term that can carry a HUE here — and
     // still tints the direct lobe, so a low-roughness bevel gives §4's "small,
     // bright, sharp glint" without the body going dead.
-    metalness: o.metalness ?? 0.32,
-    emissive: D(o.emissive || '#000000'),
-    emissiveIntensity: o.emissiveIntensity || 0,
+    metalness: cfg.metalness,
+    emissive: D(cfg.emissive ? (wp[cfg.emissive] || wp.glow) : '#000000'),
+    emissiveIntensity: cfg.emissiveIntensity || 0,
     dithering: false,
   });
-  painterly(m, { variant: 'character', keyRef: kr || keyRef(), ...(o.paint || SLOT_PAINT.metal) });
-  if (o.paint) setPaint(m, o.paint);
-  if (o.tune) setPaint(m, o.tune);
+  m.vertexColors = true;
+  painterly(m, { variant: 'character', keyRef: kr || keyRef(), ...paint });
+  setPaint(m, paint);
+  if (cfg.tune) setPaint(m, cfg.tune);
   // _applyRim in materials/library.js honours paintOverrides; these arms are
   // never in its cache, but declaring them keeps the contract identical to the
   // one entities/rig.js signs for the body.
-  const base = o.paint || SLOT_PAINT.metal;
   m.userData.paintOverrides = {
-    rimStrength: (o.tune && o.tune.rimStrength) ?? base.rimStrength,
-    rimPower: (o.tune && o.tune.rimPower) ?? base.rimPower,
-    rimColor: base.rimColor, rimDir: base.rimDir,
+    rimStrength: (cfg.tune && cfg.tune.rimStrength) ?? paint.rimStrength,
+    rimPower: (cfg.tune && cfg.tune.rimPower) ?? paint.rimPower,
+    rimColor: paint.rimColor, rimDir: paint.rimDir,
   };
   m.needsUpdate = true;
   owned.add(m);
   return m;
 }
 
-function finish(mesh, name) {
-  mesh.name = name;
-  mesh.castShadow = true;
-  mesh.receiveShadow = false;
-  mesh.frustumCulled = false;
-  return mesh;
+/**
+ * AN AUTHORED PART: a geometry, a paint token and a transform.
+ *
+ * It is deliberately NOT a Mesh. bakeArm() below transforms every part's
+ * geometry into arm space, writes its paint into the vertex-colour attribute
+ * and merges it with every other part in the same slot, so the whole arm ships
+ * as three or four meshes. The Part stays in the graph as a named, geometry-free
+ * anchor: it costs nothing to render, it keeps the authored design addressable
+ * (`group.getObjectByName('avatar.weapon.blade.pommel')` still resolves, and
+ * still carries the pommel's transform for anything that wants to hang a socket
+ * or an emitter off it), and it is what makes the merge auditable — the part
+ * list is still the part list.
+ *
+ * If a part ever has to MOVE relative to its arm, this is the seam: give it its
+ * own Mesh in bakeArm() instead of folding it into a bucket. Nothing needs that
+ * today — the runtime only toggles `group.visible`, and the spear's throw is a
+ * projectile, not this mesh detaching.
+ */
+class WeaponPart extends THREE.Object3D {
+  constructor(geometry, paint, name) {
+    super();
+    this.isWeaponPart = true;
+    this.geometry = geometry;
+    this.paint = paint;
+    this.name = name;
+  }
 }
 
-function addMesh(parent, geometry, material, name) {
-  const mesh = finish(new THREE.Mesh(geometry, material), name);
-  parent.add(mesh);
-  return mesh;
+function addMesh(parent, geometry, paint, name) {
+  const part = new WeaponPart(geometry, paint, name);
+  parent.add(part);
+  return part;
 }
 
-function rod(parent, a, b, radius, material, name, sides = 8) {
+function rod(parent, a, b, radius, paint, name, sides = 8) {
   const delta = b.clone().sub(a);
-  const mesh = addMesh(parent, new THREE.CylinderGeometry(radius, radius, delta.length(), sides), material, name);
-  mesh.position.copy(a).add(b).multiplyScalar(0.5);
-  mesh.quaternion.setFromUnitVectors(Y, delta.normalize());
-  return mesh;
+  const part = addMesh(parent, new THREE.CylinderGeometry(radius, radius, delta.length(), sides), paint, name);
+  part.position.copy(a).add(b).multiplyScalar(0.5);
+  part.quaternion.setFromUnitVectors(Y, delta.normalize());
+  return part;
 }
 
 /**
@@ -131,16 +205,16 @@ function rod(parent, a, b, radius, material, name, sides = 8) {
  * scale — the turns break the one long specular streak a bare cylinder gives
  * into a row of short ones, which is what reads as binding.
  */
-function wrappedGrip(g, mats, { y, r0, r1, len, turns = 5, name }) {
+function wrappedGrip(g, pal, { y, r0, r1, len, turns = 5, name }) {
   const coreGeo = new THREE.CylinderGeometry(r0, r1, len, 10);
-  const core = addMesh(g, coreGeo, mats.leather, name);
+  const core = addMesh(g, coreGeo, pal.leather, name);
   core.position.y = y;
   const out = [coreGeo];
   for (let i = 0; i < turns; i++) {
     const t = (i + 0.5) / turns;
     const r = r0 + (r1 - r0) * t;
     const ringGeo = new THREE.TorusGeometry(r * 0.98, r * 0.20, 5, 12);
-    const ring = addMesh(g, ringGeo, mats.wrap, `${name}.wrap.${i}`);
+    const ring = addMesh(g, ringGeo, pal.wrap, `${name}.wrap.${i}`);
     ring.position.y = y + len * (0.5 - t);
     ring.rotation.x = Math.PI / 2;
     ring.rotation.y = 0.20 * (i % 2 ? 1 : -1);
@@ -149,9 +223,14 @@ function wrappedGrip(g, mats, { y, r0, r1, len, turns = 5, name }) {
   return out;
 }
 
-function materialsFor(id, owned, kr) {
+/**
+ * The arm's PAINT TABLE: the same thirteen-name vocabulary the models are
+ * authored against, but each name now resolves to a slot plus a linear vertex
+ * tint instead of to a material of its own. The models did not change; what a
+ * name MEANS did.
+ */
+function paintsFor(id) {
   const wp = WEAPONS[id].palette;
-  const M = SLOT_PAINT.metal, C = SLOT_PAINT.cloth;
   // A per-arm tint on the structural steel: 16% toward the weapon's own body
   // hue, so the Nocturnal arms read cooler than the Infernal ones as black
   // shapes with a colour cast.
@@ -163,6 +242,10 @@ function materialsFor(id, owned, kr) {
   // same cream failure in a new place. Scaling the target to the base's own
   // luminance first makes this a HUE cast and nothing else: the steel keeps its
   // value and the cool stays cool.
+  //
+  // IT SURVIVES THE MERGE UNCHANGED. The per-arm identity was never carried by
+  // the material — it is two hexes and an emissive — so moving the hexes into
+  // the vertex-colour attribute moves the identity with them, byte for byte.
   const tintTo = (baseHex, towardHex, k) => {
     const a = D(baseHex), b = D(towardHex);
     const la = 0.2126 * a.r + 0.7152 * a.g + 0.0722 * a.b;
@@ -172,34 +255,168 @@ function materialsFor(id, owned, kr) {
   };
   const steel = tintTo(P.steel, wp.body || P.steel, 0.16);
   const steelLit = tintTo(P.steelLit, wp.body || P.steelLit, 0.14);
+  // linRGB is entities/rig.js's own hex -> scene-linear conversion, so a weapon
+  // vertex colour and a body vertex colour are made by the same function.
+  const T = (slot, hex) => ({ slot, tint: linRGB(hex) });
   return {
     // THE BODY IS DIFFUSE-LED, THE EDGE IS SPECULAR-LED. §4: "specular is a
     // small, bright, sharp glint — jewelry and metal only", and the operative
-    // word is SMALL. At roughness 0.30 with the metal slot's specGain the lobe
-    // covered the entire face and the blade read as one pale wash again, with
-    // the facets of the new section flattened underneath it. Roughness 0.46 and
-    // a cut specGain hand the body back to the diffuse ramp — which is what
-    // separates the four facets — and leave the whole highlight budget to the
-    // 0.14-roughness bevel, where it belongs.
-    steel:     weaponMaterial(steel, { roughness: 0.46, metalness: 0.34, paint: M, tune: { specGain: 0.38 } }, owned, kr),
-    steelLit:  weaponMaterial(steelLit, { roughness: 0.34, metalness: 0.38, paint: M, tune: { specGain: 0.58 } }, owned, kr),
-    steelDeep: weaponMaterial(P.steelDeep, { roughness: 0.52, metalness: 0.26, paint: M, tune: { specGain: 0.34 } }, owned, kr),
-    // THE EDGE. §4 wants the glint small, bright and SHARP, and an edge bevel is
-    // the only geometry on a sword narrow enough to give it one. Roughness 0.14
-    // and a raised specGain put the whole lobe inside a few pixels.
-    edge:      weaponMaterial(P.edge, { roughness: 0.14, metalness: 0.42, paint: M, tune: { specGain: 1.15, rimStrength: 2.2 } }, owned, kr),
-    gold:      weaponMaterial(P.gold, { roughness: 0.32, metalness: 0.40, paint: M }, owned, kr),
-    goldHot:   weaponMaterial(P.goldHot, { roughness: 0.18, metalness: 0.42, paint: M, tune: { specGain: 1.05 } }, owned, kr),
-    goldDeep:  weaponMaterial(P.goldDeep, { roughness: 0.56, metalness: 0.30, paint: M, tune: { specGain: 0.30 } }, owned, kr),
-    leather:   weaponMaterial(P.leather, { roughness: 0.88, metalness: 0.02, paint: C }, owned, kr),
-    wrap:      weaponMaterial(P.wrap, { roughness: 0.80, metalness: 0.04, paint: C }, owned, kr),
-    wood:      weaponMaterial(id === 'spear' ? '#533c31' : P.wood, { roughness: 0.84, metalness: 0.03, paint: C }, owned, kr),
-    bone:      weaponMaterial(P.bone, { roughness: 0.62, metalness: 0.05, paint: M, tune: { specGain: 0.40 } }, owned, kr),
+    // word is SMALL. At roughness 0.30 the lobe covered the entire face and the
+    // blade read as one pale wash, with the facets of the new section flattened
+    // underneath it. The metal slot's 0.44 roughness and cut specGain hand the
+    // body back to the diffuse ramp — which is what separates the four facets —
+    // and leave the whole highlight budget to the edge slot's 0.15-roughness
+    // bevel, where it belongs. steel / steelLit / steelDeep are now three tints
+    // of one material: the ridge is still brighter than the mid-face, and the
+    // FACET is still doing the work.
+    steel:     T('metal', steel),
+    steelLit:  T('metal', steelLit),
+    steelDeep: T('metal', P.steelDeep),
+    // THE EDGE. An edge bevel is the only geometry on a sword narrow enough to
+    // give §4 its small, bright, sharp glint, so it keeps its own material.
+    edge:      T('edge',  P.edge),
+    gold:      T('metal', P.gold),
+    goldHot:   T('edge',  P.goldHot),   // arris only, never a face — so: edge slot
+    goldDeep:  T('metal', P.goldDeep),
+    leather:   T('cloth', P.leather),
+    wrap:      T('cloth', P.wrap),
+    wood:      T('cloth', id === 'spear' ? '#533c31' : P.wood),
+    bone:      T('metal', P.bone),
     // THE ACCENT carries the arm's identity, and it is the only emissive on it.
-    // §5: a bright core, a saturated body, and nothing wide.
-    accent:    weaponMaterial(wp.glow, { roughness: 0.26, metalness: 0.10, emissive: wp.glow, emissiveIntensity: 0.55, paint: M, tune: { specGain: 0.5 } }, owned, kr),
-    core:      weaponMaterial(wp.core, { roughness: 0.20, metalness: 0.08, emissive: wp.core, emissiveIntensity: 0.90, paint: M, tune: { litGain: 0.30, specGain: 0.4 } }, owned, kr),
+    // §5: a bright core, a saturated body, and nothing wide. Emissive is a
+    // material uniform, not a vertex attribute — but an arm only ever has ONE
+    // accent hue, so it costs exactly one more mesh and no generality.
+    accent:    T('accent', wp.glow),
+    core:      T('core', wp.core || wp.glow),
   };
+}
+
+// ── THE BAKE ────────────────────────────────────────────────────────────────
+
+const _nm = new THREE.Matrix3();
+
+/**
+ * One part (or one material group of one part) reduced to flat arrays in arm
+ * space, with its tint written per vertex.
+ *
+ * Only the vertices the range actually indexes are emitted, remapped in
+ * first-encounter order — deterministic, and it is what lets a multi-group
+ * geometry like the leaf split cleanly across two slots without dragging the
+ * other slot's vertices along.
+ */
+function chunkOf(geo, matrix, from, count, tint) {
+  const pos = geo.getAttribute('position'), nrm = geo.getAttribute('normal'), uvA = geo.getAttribute('uv');
+  const index = geo.index ? geo.index.array : null;
+  const map = new Map();
+  const idx = new Uint32Array(count);
+  for (let i = 0; i < count; i++) {
+    const v = index ? index[from + i] : from + i;
+    let n = map.get(v);
+    if (n === undefined) { n = map.size; map.set(v, n); }
+    idx[i] = n;
+  }
+  const n = map.size;
+  const p = new Float32Array(n * 3), nr = new Float32Array(n * 3), uv = new Float32Array(n * 2), col = new Float32Array(n * 3);
+  _nm.getNormalMatrix(matrix);
+  const me = matrix.elements, ne = _nm.elements;
+  for (const [src, dst] of map) {
+    const x = pos.getX(src), y = pos.getY(src), z = pos.getZ(src);
+    const w = 1 / (me[3] * x + me[7] * y + me[11] * z + me[15] || 1);
+    p[dst * 3]     = (me[0] * x + me[4] * y + me[8]  * z + me[12]) * w;
+    p[dst * 3 + 1] = (me[1] * x + me[5] * y + me[9]  * z + me[13]) * w;
+    p[dst * 3 + 2] = (me[2] * x + me[6] * y + me[10] * z + me[14]) * w;
+    if (nrm) {
+      const a = nrm.getX(src), b = nrm.getY(src), c = nrm.getZ(src);
+      let nx = ne[0] * a + ne[3] * b + ne[6] * c;
+      let ny = ne[1] * a + ne[4] * b + ne[7] * c;
+      let nz = ne[2] * a + ne[5] * b + ne[8] * c;
+      const l = Math.hypot(nx, ny, nz) || 1;
+      nr[dst * 3] = nx / l; nr[dst * 3 + 1] = ny / l; nr[dst * 3 + 2] = nz / l;
+    }
+    if (uvA) { uv[dst * 2] = uvA.getX(src); uv[dst * 2 + 1] = uvA.getY(src); }
+    col[dst * 3] = tint[0]; col[dst * 3 + 1] = tint[1]; col[dst * 3 + 2] = tint[2];
+  }
+  return { p, nr, uv, col, idx, n };
+}
+
+/** Concatenate one slot's chunks into a single indexed geometry. */
+function mergeChunks(chunks) {
+  let nv = 0, ni = 0;
+  for (const c of chunks) { nv += c.n; ni += c.idx.length; }
+  const pos = new Float32Array(nv * 3), nrm = new Float32Array(nv * 3);
+  const uv = new Float32Array(nv * 2), col = new Float32Array(nv * 3);
+  const idx = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let vo = 0, io = 0;
+  for (const c of chunks) {
+    pos.set(c.p, vo * 3); nrm.set(c.nr, vo * 3); uv.set(c.uv, vo * 2); col.set(c.col, vo * 3);
+    for (let i = 0; i < c.idx.length; i++) idx[io + i] = c.idx[i] + vo;
+    io += c.idx.length; vo += c.n;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeBoundingSphere();
+  return g;
+}
+
+/**
+ * Collapse an authored arm into one mesh per slot.
+ *
+ * Every WeaponPart in the group is flattened into arm space, bucketed by the
+ * slot its paint names and merged. The parts stay in the graph as anchors (see
+ * WeaponPart); what leaves is 6-17 draw submissions per arm, replaced by 3-4.
+ *
+ * @param g          the arm group, already fully authored
+ * @param slotMat    (slot) => the arm's lazily-built material for that slot
+ * @param geometries the disposal set — the MERGED geometries are the ones that
+ *                   ever reach the GPU, so they are what has to be tracked
+ */
+function bakeArm(g, slotMat, geometries) {
+  const buckets = new Map();
+  const walk = (node, parentMatrix) => {
+    for (const child of node.children) {
+      child.updateMatrix();
+      // Direct children keep their own matrix untouched — no re-multiplication,
+      // so a part's baked position is bit-identical to the transform authored
+      // for it. Only genuinely nested parts compose (there are none today).
+      const m = parentMatrix ? new THREE.Matrix4().multiplyMatrices(parentMatrix, child.matrix) : child.matrix;
+      if (child.isWeaponPart) {
+        const geo = child.geometry;
+        const total = geo.index ? geo.index.count : geo.getAttribute('position').count;
+        // A part painted with an ARRAY carries one paint per material group —
+        // the lenticular leaf is steel / edge / steelLit across its three — so
+        // it splits across buckets by group rather than merging as a whole.
+        const spans = Array.isArray(child.paint)
+          ? geo.groups.map((gr, i) => [gr.start, gr.count, child.paint[Math.min(i, child.paint.length - 1)]])
+          : [[0, total, child.paint]];
+        for (const [start, count, paint] of spans) {
+          if (!count) continue;
+          let b = buckets.get(paint.slot);
+          if (!b) buckets.set(paint.slot, b = []);
+          b.push(chunkOf(geo, m, start, count, paint.tint));
+        }
+      }
+      if (child.children.length) walk(child, m);
+    }
+  };
+  walk(g, null);
+
+  for (const slot of SLOT_ORDER) {
+    const chunks = buckets.get(slot);
+    if (!chunks || !chunks.length) continue;
+    const geo = mergeChunks(chunks);
+    geometries.add(geo);
+    const mesh = new THREE.Mesh(geo, slotMat(slot));
+    mesh.name = `${g.name}.${slot}`;
+    mesh.castShadow = true;
+    mesh.receiveShadow = false;
+    mesh.frustumCulled = false;
+    g.add(mesh);
+  }
+  return g;
 }
 
 /**
@@ -282,7 +499,7 @@ function bladeSection({ stations, steps = 4 }) {
 // blade with a real lenticular section — cutting edge, bevel, mid-face, ridge —
 // a six-sided gold quillon with a hot arris and turned finials, a ferrule, a
 // wrapped grip and a gold pommel with the ember gem.
-function bladeModel(mats, geometries) {
+function bladeModel(pal, geometries) {
   const g = new THREE.Group();
   g.name = 'avatar.weapon.blade';
   g.userData.design = 'leaf-xiphos';
@@ -312,7 +529,7 @@ function bladeModel(mats, geometries) {
     ],
     steps: 4,
   }));
-  const blade = addMesh(g, bladeGeo, [mats.steel, mats.edge, mats.steelLit], 'avatar.weapon.blade.leaf');
+  const blade = addMesh(g, bladeGeo, [pal.steel, pal.edge, pal.steelLit], 'avatar.weapon.blade.leaf');
   blade.position.set(0, -0.150, 0);
 
   // NO PAINTED FULLER. One was built as four thin boxes laid on the faces and
@@ -327,21 +544,21 @@ function bladeModel(mats, geometries) {
   // 60 degrees, so the gold rolls from its deep through its core to its hot
   // instead of reading as one flat yellow rectangle.
   const guardGeo = keep(new THREE.CylinderGeometry(0.026, 0.026, 0.272, 6, 1));
-  const guard = addMesh(g, guardGeo, mats.gold, 'avatar.weapon.blade.guard');
+  const guard = addMesh(g, guardGeo, pal.gold, 'avatar.weapon.blade.guard');
   guard.position.set(0, -0.146, 0);
   guard.rotation.set(0, 0, Math.PI / 2);
   guard.scale.set(1, 1, 0.82);
   const arrisGeo = keep(new THREE.BoxGeometry(0.268, 0.006, 0.013));
-  const arris = addMesh(g, arrisGeo, mats.goldHot, 'avatar.weapon.blade.guard.arris');
+  const arris = addMesh(g, arrisGeo, pal.goldHot, 'avatar.weapon.blade.guard.arris');
   arris.position.set(0, -0.1315, 0.014);
   const underGeo = keep(new THREE.BoxGeometry(0.240, 0.007, 0.030));
-  const under = addMesh(g, underGeo, mats.goldDeep, 'avatar.weapon.blade.guard.under');
+  const under = addMesh(g, underGeo, pal.goldDeep, 'avatar.weapon.blade.guard.under');
   under.position.set(0, -0.164, 0);
   // Quillon finials: small turned blocks on the ends, so the crossguard stops
   // rather than just being cut off.
   for (const s of [-1, 1]) {
     const tipGeo = keep(new THREE.CylinderGeometry(0.020, 0.032, 0.026, 6, 1));
-    const tip = addMesh(g, tipGeo, mats.goldHot, `avatar.weapon.blade.guard.tip.${s < 0 ? 'l' : 'r'}`);
+    const tip = addMesh(g, tipGeo, pal.goldHot, `avatar.weapon.blade.guard.tip.${s < 0 ? 'l' : 'r'}`);
     tip.position.set(s * 0.148, -0.146, 0);
     tip.rotation.set(0, 0, s * Math.PI / 2);
     tip.scale.set(1, 1, 0.82);
@@ -349,66 +566,66 @@ function bladeModel(mats, geometries) {
 
   // FERRULE — the collar that closes the tang into the guard.
   const ferruleGeo = keep(new THREE.CylinderGeometry(0.036, 0.032, 0.030, 10));
-  const ferrule = addMesh(g, ferruleGeo, mats.goldDeep, 'avatar.weapon.blade.ferrule');
+  const ferrule = addMesh(g, ferruleGeo, pal.goldDeep, 'avatar.weapon.blade.ferrule');
   ferrule.position.y = -0.118;
 
-  wrappedGrip(g, mats, { y: -0.044, r0: 0.026, r1: 0.030, len: 0.150, turns: 5, name: 'avatar.weapon.blade.grip' })
+  wrappedGrip(g, pal, { y: -0.044, r0: 0.026, r1: 0.030, len: 0.150, turns: 5, name: 'avatar.weapon.blade.grip' })
     .forEach(keep);
 
   const pommelGeo = keep(new THREE.OctahedronGeometry(0.048, 0));
-  const pommel = addMesh(g, pommelGeo, mats.gold, 'avatar.weapon.blade.pommel');
+  const pommel = addMesh(g, pommelGeo, pal.gold, 'avatar.weapon.blade.pommel');
   pommel.position.y = 0.052;
   pommel.scale.set(1.0, 0.86, 1.0);
   const gemGeo = keep(new THREE.OctahedronGeometry(0.020, 0));
-  const gem = addMesh(g, gemGeo, mats.accent, 'avatar.weapon.blade.pommel.gem');
+  const gem = addMesh(g, gemGeo, pal.accent, 'avatar.weapon.blade.pommel.gem');
   gem.position.set(0, 0.052, 0.038);
 
   g.rotation.z = -0.08;
   return g;
 }
 
-function spearModel(mats, geometries) {
+function spearModel(pal, geometries) {
   const g = new THREE.Group();
   g.name = 'avatar.weapon.spear';
   g.userData.design = 'dory-leaf-spear';
   const keep = (geo) => { geometries.add(geo); return geo; };
 
   const shaftGeo = keep(new THREE.CylinderGeometry(0.021, 0.026, 1.42, 9));
-  const shaft = addMesh(g, shaftGeo, mats.wood, 'avatar.weapon.spear.shaft');
+  const shaft = addMesh(g, shaftGeo, pal.wood, 'avatar.weapon.spear.shaft');
   shaft.position.y = -0.30;
 
   const collarGeo = keep(new THREE.CylinderGeometry(0.048, 0.034, 0.11, 10));
-  const collar = addMesh(g, collarGeo, mats.gold, 'avatar.weapon.spear.collar');
+  const collar = addMesh(g, collarGeo, pal.gold, 'avatar.weapon.spear.collar');
   collar.position.y = -1.02;
   const collarArris = keep(new THREE.TorusGeometry(0.048, 0.007, 5, 14));
-  const ca = addMesh(g, collarArris, mats.goldHot, 'avatar.weapon.spear.collar.arris');
+  const ca = addMesh(g, collarArris, pal.goldHot, 'avatar.weapon.spear.collar.arris');
   ca.position.y = -0.975; ca.rotation.x = Math.PI / 2;
 
   // A leaf head with a socket, not a bare cone: the socket is what makes it a
   // dory rather than a spike glued to a pole.
   const headGeo = keep(new THREE.ConeGeometry(0.100, 0.40, 4));
-  const head = addMesh(g, headGeo, mats.steel, 'avatar.weapon.spear.head');
+  const head = addMesh(g, headGeo, pal.steel, 'avatar.weapon.spear.head');
   head.position.y = -1.27;
   head.rotation.set(0, Math.PI / 4, Math.PI);
   const headEdge = keep(new THREE.ConeGeometry(0.104, 0.41, 4, 1, true));
-  const he = addMesh(g, headEdge, mats.edge, 'avatar.weapon.spear.head.edge');
+  const he = addMesh(g, headEdge, pal.edge, 'avatar.weapon.spear.head.edge');
   he.position.y = -1.272; he.rotation.set(0, Math.PI / 4, Math.PI); he.scale.set(1, 1, 0.34);
   const spineGeo = keep(new THREE.BoxGeometry(0.014, 0.34, 0.028));
-  const spine = addMesh(g, spineGeo, mats.steelLit, 'avatar.weapon.spear.head.spine');
+  const spine = addMesh(g, spineGeo, pal.steelLit, 'avatar.weapon.spear.head.spine');
   spine.position.y = -1.26;
 
   const buttGeo = keep(new THREE.ConeGeometry(0.050, 0.22, 6));
-  const butt = addMesh(g, buttGeo, mats.steelDeep, 'avatar.weapon.spear.butt');
+  const butt = addMesh(g, buttGeo, pal.steelDeep, 'avatar.weapon.spear.butt');
   butt.position.y = 0.51;
 
-  wrappedGrip(g, mats, { y: -0.035, r0: 0.031, r1: 0.033, len: 0.24, turns: 6, name: 'avatar.weapon.spear.grip' })
+  wrappedGrip(g, pal, { y: -0.035, r0: 0.031, r1: 0.033, len: 0.24, turns: 6, name: 'avatar.weapon.spear.grip' })
     .forEach(keep);
 
   g.rotation.z = 0.06;
   return g;
 }
 
-function bowModel(mats, geometries) {
+function bowModel(pal, geometries) {
   const g = new THREE.Group();
   g.name = 'avatar.weapon.bow';
   g.userData.design = 'recurve-heart-bow';
@@ -424,21 +641,21 @@ function bowModel(mats, geometries) {
     new THREE.Vector3(0.08, 0.66, 0),
   ]);
   const limbGeo = keep(new THREE.TubeGeometry(curve, 24, 0.026, 7, false));
-  addMesh(g, limbGeo, mats.wood, 'avatar.weapon.bow.limbs');
+  addMesh(g, limbGeo, pal.wood, 'avatar.weapon.bow.limbs');
   // A gold backing strip along the belly of the limb — the ornament that lets
   // the recurve catch a line of light instead of reading as a dark noodle.
   const backGeo = keep(new THREE.TubeGeometry(curve, 24, 0.010, 5, false));
-  const back = addMesh(g, backGeo, mats.gold, 'avatar.weapon.bow.limbs.inlay');
+  const back = addMesh(g, backGeo, pal.gold, 'avatar.weapon.bow.limbs.inlay');
   back.position.z = 0.020;
 
   const top = new THREE.Vector3(0.08, 0.66, 0);
   const nock = new THREE.Vector3(-0.13, 0, 0.006);
   const bottom = new THREE.Vector3(0.08, -0.66, 0);
-  const stringA = rod(g, top, nock, 0.005, mats.bone, 'avatar.weapon.bow.string.top', 5);
-  const stringB = rod(g, nock, bottom, 0.005, mats.bone, 'avatar.weapon.bow.string.bottom', 5);
+  const stringA = rod(g, top, nock, 0.005, pal.bone, 'avatar.weapon.bow.string.top', 5);
+  const stringB = rod(g, nock, bottom, 0.005, pal.bone, 'avatar.weapon.bow.string.bottom', 5);
   keep(stringA.geometry); keep(stringB.geometry);
 
-  wrappedGrip(g, mats, { y: 0, r0: 0.038, r1: 0.040, len: 0.20, turns: 5, name: 'avatar.weapon.bow.grip' })
+  wrappedGrip(g, pal, { y: 0, r0: 0.038, r1: 0.040, len: 0.20, turns: 5, name: 'avatar.weapon.bow.grip' })
     .forEach(keep);
   g.getObjectByName('avatar.weapon.bow.grip').position.set(0.08, 0, 0);
   for (let i = 0; i < 5; i++) {
@@ -447,7 +664,7 @@ function bowModel(mats, geometries) {
   }
 
   const heartGeo = keep(new THREE.OctahedronGeometry(0.046, 0));
-  const heart = addMesh(g, heartGeo, mats.accent, 'avatar.weapon.bow.heart');
+  const heart = addMesh(g, heartGeo, pal.accent, 'avatar.weapon.bow.heart');
   heart.position.set(0.10, 0, 0.038);
   heart.scale.set(1.05, 1.25, 0.7);
 
@@ -456,44 +673,44 @@ function bowModel(mats, geometries) {
   return g;
 }
 
-function shieldModel(mats, geometries) {
+function shieldModel(pal, geometries) {
   const g = new THREE.Group();
   g.name = 'avatar.weapon.shield';
   g.userData.design = 'chaos-hoplite-shield';
   const keep = (geo) => { geometries.add(geo); return geo; };
 
   const diskGeo = keep(new THREE.CylinderGeometry(0.36, 0.36, 0.060, 24));
-  const disk = addMesh(g, diskGeo, mats.wood, 'avatar.weapon.shield.disk');
+  const disk = addMesh(g, diskGeo, pal.wood, 'avatar.weapon.shield.disk');
   disk.rotation.x = Math.PI / 2;
   // A bronze face over the boards, inset from the rim so the rim reads as a
   // separate rolled edge rather than as a painted ring.
   const faceGeo = keep(new THREE.CylinderGeometry(0.305, 0.305, 0.020, 24));
-  const face = addMesh(g, faceGeo, mats.gold, 'avatar.weapon.shield.face');
+  const face = addMesh(g, faceGeo, pal.gold, 'avatar.weapon.shield.face');
   face.rotation.x = Math.PI / 2; face.position.z = 0.038;
 
   const rimGeo = keep(new THREE.TorusGeometry(0.335, 0.034, 7, 28));
-  const rim = addMesh(g, rimGeo, mats.steel, 'avatar.weapon.shield.rim');
+  const rim = addMesh(g, rimGeo, pal.steel, 'avatar.weapon.shield.rim');
   rim.position.z = 0.046;
   const rimArris = keep(new THREE.TorusGeometry(0.348, 0.009, 5, 30));
-  const ra = addMesh(g, rimArris, mats.goldHot, 'avatar.weapon.shield.rim.arris');
+  const ra = addMesh(g, rimArris, pal.goldHot, 'avatar.weapon.shield.rim.arris');
   ra.position.z = 0.050;
 
   const bossGeo = keep(new THREE.SphereGeometry(0.12, 14, 9));
-  const boss = addMesh(g, bossGeo, mats.gold, 'avatar.weapon.shield.boss');
+  const boss = addMesh(g, bossGeo, pal.gold, 'avatar.weapon.shield.boss');
   boss.scale.z = 0.42;
   boss.position.z = 0.075;
   const eyeGeo = keep(new THREE.OctahedronGeometry(0.040, 0));
-  const eye = addMesh(g, eyeGeo, mats.accent, 'avatar.weapon.shield.boss.eye');
+  const eye = addMesh(g, eyeGeo, pal.accent, 'avatar.weapon.shield.boss.eye');
   eye.position.z = 0.118; eye.scale.set(1, 1, 0.5);
 
   const barGeo = keep(new THREE.BoxGeometry(0.30, 0.038, 0.026));
   for (let i = 0; i < 3; i++) {
-    const bar = addMesh(g, barGeo, i === 1 ? mats.goldHot : mats.steelDeep, `avatar.weapon.shield.chaos.${i}`);
+    const bar = addMesh(g, barGeo, i === 1 ? pal.goldHot : pal.steelDeep, `avatar.weapon.shield.chaos.${i}`);
     bar.position.z = 0.120;
     bar.rotation.z = (i - 1) * Math.PI / 3;
   }
 
-  wrappedGrip(g, mats, { y: 0, r0: 0.024, r1: 0.024, len: 0.28, turns: 4, name: 'avatar.weapon.shield.handle' })
+  wrappedGrip(g, pal, { y: 0, r0: 0.024, r1: 0.024, len: 0.28, turns: 4, name: 'avatar.weapon.shield.handle' })
     .forEach(keep);
   const handle = g.getObjectByName('avatar.weapon.shield.handle');
   handle.position.z = -0.075; handle.rotation.x = Math.PI / 2;
@@ -503,87 +720,87 @@ function shieldModel(mats, geometries) {
   return g;
 }
 
-function fistsModel(mats, geometries) {
+function fistsModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.fists'; g.userData.design = 'malphon-lion-gauntlets';
   const keep = (geo) => { geometries.add(geo); return geo; };
   const cuffG = keep(new THREE.CylinderGeometry(0.105, 0.085, 0.30, 10));
-  const cuff = addMesh(g, cuffG, mats.leather, 'avatar.weapon.fists.cuff'); cuff.position.y = -0.05;
+  const cuff = addMesh(g, cuffG, pal.leather, 'avatar.weapon.fists.cuff'); cuff.position.y = -0.05;
   const bandG = keep(new THREE.TorusGeometry(0.100, 0.014, 6, 16));
-  const band = addMesh(g, bandG, mats.gold, 'avatar.weapon.fists.cuff.band');
+  const band = addMesh(g, bandG, pal.gold, 'avatar.weapon.fists.cuff.band');
   band.position.y = -0.16; band.rotation.x = Math.PI / 2;
   const knuckleG = keep(new THREE.BoxGeometry(0.30, 0.13, 0.16));
-  const knuckle = addMesh(g, knuckleG, mats.gold, 'avatar.weapon.fists.knuckles'); knuckle.position.set(0, -0.23, 0.07);
+  const knuckle = addMesh(g, knuckleG, pal.gold, 'avatar.weapon.fists.knuckles'); knuckle.position.set(0, -0.23, 0.07);
   const kArrisG = keep(new THREE.BoxGeometry(0.30, 0.016, 0.020));
-  const kA = addMesh(g, kArrisG, mats.goldHot, 'avatar.weapon.fists.knuckles.arris'); kA.position.set(0, -0.175, 0.140);
+  const kA = addMesh(g, kArrisG, pal.goldHot, 'avatar.weapon.fists.knuckles.arris'); kA.position.set(0, -0.175, 0.140);
   for (let i = -1; i <= 1; i++) {
     const clawG = keep(new THREE.ConeGeometry(0.033, 0.24, 5));
-    const claw = addMesh(g, clawG, mats.edge, `avatar.weapon.fists.claw.${i + 1}`);
+    const claw = addMesh(g, clawG, pal.edge, `avatar.weapon.fists.claw.${i + 1}`);
     claw.position.set(i * 0.085, -0.41, 0.09); claw.rotation.z = Math.PI;
   }
   const emberG = keep(new THREE.OctahedronGeometry(0.036, 0));
-  const ember = addMesh(g, emberG, mats.accent, 'avatar.weapon.fists.ember');
+  const ember = addMesh(g, emberG, pal.accent, 'avatar.weapon.fists.ember');
   ember.position.set(0, -0.235, 0.155); ember.scale.set(1, 1.2, 0.5);
   g.rotation.z = -0.05; return g;
 }
 
-function railModel(mats, geometries) {
+function railModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.rail'; g.userData.design = 'adamant-rail-cannon';
   const keep = (geo) => { geometries.add(geo); return geo; };
   const bodyG = keep(new THREE.BoxGeometry(0.18, 0.72, 0.16));
-  const body = addMesh(g, bodyG, mats.steel, 'avatar.weapon.rail.body'); body.position.y = -0.30;
+  const body = addMesh(g, bodyG, pal.steel, 'avatar.weapon.rail.body'); body.position.y = -0.30;
   const railG = keep(new THREE.BoxGeometry(0.040, 0.68, 0.030));
   for (const s of [-1, 1]) {
-    const r = addMesh(g, railG, mats.goldHot, `avatar.weapon.rail.rail.${s < 0 ? 'l' : 'r'}`);
+    const r = addMesh(g, railG, pal.goldHot, `avatar.weapon.rail.rail.${s < 0 ? 'l' : 'r'}`);
     r.position.set(s * 0.072, -0.30, 0.086);
   }
   const barrelG = keep(new THREE.CylinderGeometry(0.052, 0.070, 0.72, 12));
-  const barrel = addMesh(g, barrelG, mats.steelDeep, 'avatar.weapon.rail.barrel'); barrel.position.y = -0.82;
+  const barrel = addMesh(g, barrelG, pal.steelDeep, 'avatar.weapon.rail.barrel'); barrel.position.y = -0.82;
   const bandG = keep(new THREE.TorusGeometry(0.062, 0.013, 6, 16));
-  const bnd = addMesh(g, bandG, mats.gold, 'avatar.weapon.rail.barrel.band');
+  const bnd = addMesh(g, bandG, pal.gold, 'avatar.weapon.rail.barrel.band');
   bnd.position.y = -0.92; bnd.rotation.x = Math.PI / 2;
   const muzzleG = keep(new THREE.TorusGeometry(0.074, 0.018, 6, 16));
-  const muzzle = addMesh(g, muzzleG, mats.accent, 'avatar.weapon.rail.muzzle'); muzzle.rotation.x = Math.PI / 2; muzzle.position.y = -1.19;
+  const muzzle = addMesh(g, muzzleG, pal.accent, 'avatar.weapon.rail.muzzle'); muzzle.rotation.x = Math.PI / 2; muzzle.position.y = -1.19;
   const stockG = keep(new THREE.BoxGeometry(0.13, 0.30, 0.13));
-  const stock = addMesh(g, stockG, mats.wood, 'avatar.weapon.rail.stock'); stock.position.set(0, 0.22, -0.03); stock.rotation.z = -0.18;
+  const stock = addMesh(g, stockG, pal.wood, 'avatar.weapon.rail.stock'); stock.position.set(0, 0.22, -0.03); stock.rotation.z = -0.18;
   return g;
 }
 
-function staffModel(mats, geometries) {
+function staffModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.staff'; g.userData.design = 'descura-crescent-staff';
   const keep = (geo) => { geometries.add(geo); return geo; };
   const shaftG = keep(new THREE.CylinderGeometry(0.024, 0.032, 1.58, 9));
-  const shaft = addMesh(g, shaftG, mats.wood, 'avatar.weapon.staff.shaft'); shaft.position.y = -0.35;
+  const shaft = addMesh(g, shaftG, pal.wood, 'avatar.weapon.staff.shaft'); shaft.position.y = -0.35;
   for (let i = 0; i < 3; i++) {
     const ferG = keep(new THREE.TorusGeometry(0.030 + i * 0.002, 0.008, 5, 12));
-    const fer = addMesh(g, ferG, mats.gold, `avatar.weapon.staff.ferrule.${i}`);
+    const fer = addMesh(g, ferG, pal.gold, `avatar.weapon.staff.ferrule.${i}`);
     fer.position.y = -0.08 - i * 0.42; fer.rotation.x = Math.PI / 2;
   }
   const crownG = keep(new THREE.TorusGeometry(0.17, 0.024, 7, 24, Math.PI * 1.55));
-  const crown = addMesh(g, crownG, mats.steel, 'avatar.weapon.staff.crescent'); crown.position.y = -1.18; crown.rotation.z = 0.72;
+  const crown = addMesh(g, crownG, pal.steel, 'avatar.weapon.staff.crescent'); crown.position.y = -1.18; crown.rotation.z = 0.72;
   const crownEdgeG = keep(new THREE.TorusGeometry(0.186, 0.008, 5, 26, Math.PI * 1.55));
-  const ce = addMesh(g, crownEdgeG, mats.edge, 'avatar.weapon.staff.crescent.edge');
+  const ce = addMesh(g, crownEdgeG, pal.edge, 'avatar.weapon.staff.crescent.edge');
   ce.position.y = -1.18; ce.rotation.z = 0.72;
   const gemG = keep(new THREE.OctahedronGeometry(0.080, 0));
-  const gem = addMesh(g, gemG, mats.accent, 'avatar.weapon.staff.moonstone'); gem.position.y = -1.18;
-  wrappedGrip(g, mats, { y: -0.30, r0: 0.030, r1: 0.031, len: 0.26, turns: 6, name: 'avatar.weapon.staff.grip' })
+  const gem = addMesh(g, gemG, pal.accent, 'avatar.weapon.staff.moonstone'); gem.position.y = -1.18;
+  wrappedGrip(g, pal, { y: -0.30, r0: 0.030, r1: 0.031, len: 0.26, turns: 6, name: 'avatar.weapon.staff.grip' })
     .forEach(keep);
   return g;
 }
 
-function bladesModel(mats, geometries) {
+function bladesModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.blades'; g.userData.design = 'lim-oros-sister-knives';
   const keep = (geo) => { geometries.add(geo); return geo; };
   for (const [i, x] of [-0.065, 0.065].entries()) {
     const bladeG = keep(new THREE.ConeGeometry(0.062, 0.62, 4));
-    const blade = addMesh(g, bladeG, mats.steel, `avatar.weapon.blades.sister.${i}`);
+    const blade = addMesh(g, bladeG, pal.steel, `avatar.weapon.blades.sister.${i}`);
     blade.position.set(x, -0.40, i ? -0.025 : 0.025); blade.rotation.set(0, Math.PI / 4, Math.PI + (i ? -0.08 : 0.08));
     const edgeG = keep(new THREE.ConeGeometry(0.066, 0.63, 4, 1, true));
-    const e = addMesh(g, edgeG, mats.edge, `avatar.weapon.blades.sister.${i}.edge`);
+    const e = addMesh(g, edgeG, pal.edge, `avatar.weapon.blades.sister.${i}.edge`);
     e.position.copy(blade.position); e.rotation.copy(blade.rotation); e.scale.set(1, 1, 0.28);
     const guardG = keep(new THREE.BoxGeometry(0.10, 0.020, 0.044));
-    const guard = addMesh(g, guardG, mats.gold, `avatar.weapon.blades.guard.${i}`);
+    const guard = addMesh(g, guardG, pal.gold, `avatar.weapon.blades.guard.${i}`);
     guard.position.set(x, -0.096, i ? -0.025 : 0.025);
-    wrappedGrip(g, mats, { y: 0.0, r0: 0.024, r1: 0.028, len: 0.17, turns: 4, name: `avatar.weapon.blades.grip.${i}` })
+    wrappedGrip(g, pal, { y: 0.0, r0: 0.024, r1: 0.028, len: 0.17, turns: 4, name: `avatar.weapon.blades.grip.${i}` })
       .forEach(keep);
     const grip = g.getObjectByName(`avatar.weapon.blades.grip.${i}`);
     grip.position.set(x, 0.0, i ? -0.025 : 0.025);
@@ -595,83 +812,83 @@ function bladesModel(mats, geometries) {
   return g;
 }
 
-function flamesModel(mats, geometries) {
+function flamesModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.flames'; g.userData.design = 'ygnium-umbral-torches';
   const keep = (geo) => { geometries.add(geo); return geo; };
   const handleG = keep(new THREE.CylinderGeometry(0.035, 0.05, 0.46, 9));
-  const handle = addMesh(g, handleG, mats.leather, 'avatar.weapon.flames.handle'); handle.position.y = -0.08;
+  const handle = addMesh(g, handleG, pal.leather, 'avatar.weapon.flames.handle'); handle.position.y = -0.08;
   for (let i = 0; i < 4; i++) {
     const wrG = keep(new THREE.TorusGeometry(0.040 + i * 0.004, 0.010, 5, 12));
-    const wr = addMesh(g, wrG, mats.wrap, `avatar.weapon.flames.handle.wrap.${i}`);
+    const wr = addMesh(g, wrG, pal.wrap, `avatar.weapon.flames.handle.wrap.${i}`);
     wr.position.y = 0.04 - i * 0.075; wr.rotation.x = Math.PI / 2;
   }
   for (let i = 0; i < 3; i++) {
     const ringG = keep(new THREE.TorusGeometry(0.10 + i * 0.035, 0.015, 6, 18));
-    const ring = addMesh(g, ringG, i === 2 ? mats.goldHot : mats.gold, `avatar.weapon.flames.ring.${i}`);
+    const ring = addMesh(g, ringG, i === 2 ? pal.goldHot : pal.gold, `avatar.weapon.flames.ring.${i}`);
     ring.position.y = -0.38; ring.rotation.x = Math.PI / 2 + i * 0.22;
   }
   const fireG = keep(new THREE.OctahedronGeometry(0.10, 1));
-  const fire = addMesh(g, fireG, mats.core, 'avatar.weapon.flames.core'); fire.position.y = -0.48; fire.scale.set(0.8, 1.5, 0.8);
+  const fire = addMesh(g, fireG, pal.core, 'avatar.weapon.flames.core'); fire.position.y = -0.48; fire.scale.set(0.8, 1.5, 0.8);
   return g;
 }
 
-function axeModel(mats, geometries) {
+function axeModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.axe'; g.userData.design = 'zorephet-moonstone-axe';
   const keep = (geo) => { geometries.add(geo); return geo; };
   const shaftG = keep(new THREE.CylinderGeometry(0.032, 0.040, 1.52, 9));
-  const shaft = addMesh(g, shaftG, mats.wood, 'avatar.weapon.axe.shaft'); shaft.position.y = -0.36;
+  const shaft = addMesh(g, shaftG, pal.wood, 'avatar.weapon.axe.shaft'); shaft.position.y = -0.36;
   const langetG = keep(new THREE.BoxGeometry(0.020, 0.34, 0.070));
-  const langet = addMesh(g, langetG, mats.gold, 'avatar.weapon.axe.langet');
+  const langet = addMesh(g, langetG, pal.gold, 'avatar.weapon.axe.langet');
   langet.position.set(0.028, -1.00, 0);
   const headG = keep(new THREE.BoxGeometry(0.52, 0.18, 0.10));
-  const head = addMesh(g, headG, mats.steel, 'avatar.weapon.axe.head'); head.position.set(0.16, -1.11, 0); head.rotation.z = 0.20;
+  const head = addMesh(g, headG, pal.steel, 'avatar.weapon.axe.head'); head.position.set(0.16, -1.11, 0); head.rotation.z = 0.20;
   const cheekG = keep(new THREE.BoxGeometry(0.50, 0.055, 0.030));
-  const cheek = addMesh(g, cheekG, mats.steelDeep, 'avatar.weapon.axe.head.cheek');
+  const cheek = addMesh(g, cheekG, pal.steelDeep, 'avatar.weapon.axe.head.cheek');
   cheek.position.set(0.16, -1.09, 0.050); cheek.rotation.z = 0.20;
   const edgeG = keep(new THREE.ConeGeometry(0.25, 0.48, 4));
-  const edge = addMesh(g, edgeG, mats.edge, 'avatar.weapon.axe.moon-edge'); edge.position.set(0.39, -1.09, 0); edge.rotation.set(0, Math.PI / 4, Math.PI / 2);
+  const edge = addMesh(g, edgeG, pal.edge, 'avatar.weapon.axe.moon-edge'); edge.position.set(0.39, -1.09, 0); edge.rotation.set(0, Math.PI / 4, Math.PI / 2);
   const gemG = keep(new THREE.OctahedronGeometry(0.072, 0));
-  const gem = addMesh(g, gemG, mats.accent, 'avatar.weapon.axe.gem'); gem.position.set(0.10, -1.11, 0.07);
-  wrappedGrip(g, mats, { y: -0.20, r0: 0.036, r1: 0.038, len: 0.28, turns: 6, name: 'avatar.weapon.axe.grip' })
+  const gem = addMesh(g, gemG, pal.accent, 'avatar.weapon.axe.gem'); gem.position.set(0.10, -1.11, 0.07);
+  wrappedGrip(g, pal, { y: -0.20, r0: 0.036, r1: 0.038, len: 0.28, turns: 6, name: 'avatar.weapon.axe.grip' })
     .forEach(keep);
   return g;
 }
 
-function skullModel(mats, geometries) {
+function skullModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.skull'; g.userData.design = 'revaal-argent-skull';
   const keep = (geo) => { geometries.add(geo); return geo; };
   const skullG = keep(new THREE.DodecahedronGeometry(0.22, 1));
-  const skull = addMesh(g, skullG, mats.bone, 'avatar.weapon.skull.cranium'); skull.position.y = -0.28; skull.scale.set(1, 1.1, 0.88);
+  const skull = addMesh(g, skullG, pal.bone, 'avatar.weapon.skull.cranium'); skull.position.y = -0.28; skull.scale.set(1, 1.1, 0.88);
   const circletG = keep(new THREE.TorusGeometry(0.205, 0.020, 6, 20));
-  const circlet = addMesh(g, circletG, mats.gold, 'avatar.weapon.skull.circlet');
+  const circlet = addMesh(g, circletG, pal.gold, 'avatar.weapon.skull.circlet');
   circlet.position.y = -0.20; circlet.rotation.x = Math.PI / 2;
   for (const s of [-1, 1]) {
     const eyeG = keep(new THREE.OctahedronGeometry(0.042, 0));
-    const eye = addMesh(g, eyeG, mats.accent, `avatar.weapon.skull.eye.${s}`); eye.position.set(s * 0.075, -0.30, 0.18);
+    const eye = addMesh(g, eyeG, pal.accent, `avatar.weapon.skull.eye.${s}`); eye.position.set(s * 0.075, -0.30, 0.18);
   }
   const jawG = keep(new THREE.BoxGeometry(0.24, 0.10, 0.17));
-  const jaw = addMesh(g, jawG, mats.bone, 'avatar.weapon.skull.jaw'); jaw.position.set(0, -0.48, 0.02);
+  const jaw = addMesh(g, jawG, pal.bone, 'avatar.weapon.skull.jaw'); jaw.position.set(0, -0.48, 0.02);
   const teethG = keep(new THREE.BoxGeometry(0.22, 0.022, 0.030));
-  const teeth = addMesh(g, teethG, mats.steelDeep, 'avatar.weapon.skull.teeth');
+  const teeth = addMesh(g, teethG, pal.steelDeep, 'avatar.weapon.skull.teeth');
   teeth.position.set(0, -0.432, 0.088);
   return g;
 }
 
-function coatModel(mats, geometries) {
+function coatModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.coat'; g.userData.design = 'xinth-jet-gauntlet';
   const keep = (geo) => { geometries.add(geo); return geo; };
   const armG = keep(new THREE.CylinderGeometry(0.12, 0.095, 0.48, 10));
-  const arm = addMesh(g, armG, mats.leather, 'avatar.weapon.coat.gauntlet'); arm.position.y = -0.12;
+  const arm = addMesh(g, armG, pal.leather, 'avatar.weapon.coat.gauntlet'); arm.position.y = -0.12;
   const plateG = keep(new THREE.BoxGeometry(0.32, 0.34, 0.10));
-  const plate = addMesh(g, plateG, mats.steel, 'avatar.weapon.coat.shield-plate'); plate.position.set(0, -0.18, 0.10);
+  const plate = addMesh(g, plateG, pal.steel, 'avatar.weapon.coat.shield-plate'); plate.position.set(0, -0.18, 0.10);
   const plateArrisG = keep(new THREE.BoxGeometry(0.325, 0.014, 0.022));
   for (const y of [-0.02, -0.34]) {
-    const pa = addMesh(g, plateArrisG, mats.goldHot, `avatar.weapon.coat.shield-plate.arris.${y < -0.2 ? 'b' : 't'}`);
+    const pa = addMesh(g, plateArrisG, pal.goldHot, `avatar.weapon.coat.shield-plate.arris.${y < -0.2 ? 'b' : 't'}`);
     pa.position.set(0, y, 0.150);
   }
   for (const s of [-1, 1]) {
     const jetG = keep(new THREE.ConeGeometry(0.052, 0.26, 8));
-    const jet = addMesh(g, jetG, mats.accent, `avatar.weapon.coat.jet.${s}`); jet.position.set(s * 0.10, 0.18, -0.05);
+    const jet = addMesh(g, jetG, pal.accent, `avatar.weapon.coat.jet.${s}`); jet.position.set(s * 0.10, 0.18, -0.05);
   }
   return g;
 }
@@ -720,8 +937,21 @@ export function createAvatarWeapons(rig, initialId = 'blade', allowedIds = WEAPO
 
   const ids = allowedIds.filter(id => WEAPONS[id] && BUILDERS[id]);
   for (const id of ids) {
-    const mats = materialsFor(id, materials, kr);
-    const group = BUILDERS[id](mats, geometries);
+    const wp = WEAPONS[id].palette;
+    // LAZY, so an arm pays for the slots it actually uses. The spear has no
+    // emissive at all and the sister knives have no edge-slot arris; building
+    // the full table eagerly (as the first rebuild did) made 156 painterly
+    // materials for 12 arms, of which 76 were ever bound.
+    const cache = {};
+    const slotMat = (slot) => cache[slot] || (cache[slot] = slotMaterial(slot, wp, materials, kr));
+    // The builders' own `keep()` set. These are the AUTHORED geometries: after
+    // the bake they exist only as source data for the merged buffers and never
+    // reach the GPU, so they are released here and the disposal set tracks the
+    // merged geometries instead.
+    const authored = new Set();
+    const group = BUILDERS[id](paintsFor(id), authored);
+    bakeArm(group, slotMat, geometries);
+    for (const geometry of authored) geometry.dispose();
     group.visible = false;
     group.userData.weaponId = id;
     group.userData.hand = HAND[id];
