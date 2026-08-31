@@ -662,7 +662,7 @@ export class BoonOverlay {
       } else if (hovered) {
         lift0 -= 9 * S;
       }
-      if (o.locked) alpha *= 0.62;
+      if (o.locked) alpha *= 0.78;   // dimmed, never illegible: a gate is only a goal if it can be read
       g.globalAlpha = alpha;
       g.translate(r.x + r.w / 2, r.y + r.h / 2 + lift0);
       g.scale(scale, scale);
@@ -782,10 +782,13 @@ export class BoonOverlay {
     const ribX = cx - ribW / 2;
     g.save();
     plaqueRect(g, ribX, ribY, ribW, ribH, 5 * S);
+    // The tier's hue survives at the ENDS of the plate, in the stroke and in
+    // the rule; the middle — where the word sits — is as close to ink as the
+    // card gets, because that is the half of the ratio the plate controls.
     const rg2 = g.createLinearGradient(ribX, ribY, ribX + ribW, ribY + ribH);
-    rg2.addColorStop(0, rgba(shade(R.ring[0], 0.90), 0.97));
-    rg2.addColorStop(0.5, rgba(shade(R.ring[1], 0.88), 0.97));
-    rg2.addColorStop(1, rgba(shade(R.ring[2] || R.ring[0], 0.90), 0.97));
+    rg2.addColorStop(0, rgba(shade(R.ring[0], 0.90), 0.98));
+    rg2.addColorStop(0.5, rgba('#0b0715', 0.98));
+    rg2.addColorStop(1, rgba(shade(R.ring[2] || R.ring[0], 0.90), 0.98));
     g.fillStyle = rg2; g.fill();
     g.strokeStyle = rgba(R.text, fixed ? 0.95 : 0.82); g.lineWidth = (fixed ? 1.4 : 1.1) * S; g.stroke();
     g.restore();
@@ -798,9 +801,16 @@ export class BoonOverlay {
     g.fillStyle = rrg; g.fillRect(cx - ruleW / 2, ribY + ribH - 5 * S, ruleW, Math.max(1, 1.6 * S));
     const grade = (RARITY_LABEL[o.rarity] || 'Common').toUpperCase();
     const lvl = (o.level || 1) > 1 ? `  ·  LV ${o.level}` : '';
-    tracked(g, grade + lvl, cx, ribY + ribH * 0.63, {
-      size: 11.5 * S, track: 0.26, weight: 700, align: 'center',
-      color: fixed ? lift(R.text, 0.30) : R.text, shadow: '#05020a', shadowDy: 1.3 * S,
+    // As large as the ribbon will carry: a four-letter grade at caption size is
+    // a handful of anti-aliased pixels, and anti-aliased pixels are exactly the
+    // ones that measure as half-lit ink.
+    const gradeText = grade + lvl;
+    let gradeSize = 14.5 * S;
+    const gradeW = trackedWidth(g, gradeText, { size: gradeSize, track: 0.26, weight: 700 });
+    if (gradeW > ribW - 16 * S) gradeSize *= (ribW - 16 * S) / gradeW;
+    tracked(g, gradeText, cx, ribY + ribH * 0.66, {
+      size: gradeSize, track: 0.26, weight: 700, align: 'center',
+      color: lift(R.text, fixed ? 0.42 : 0.34), shadow: '#04020a', shadowDy: 1.2 * S,
     });
 
     // The card number is an affordance, not just a footer instruction.
@@ -899,10 +909,10 @@ export class BoonOverlay {
           : o.duo ? 'A DUO BOON'
             : o.legendary ? 'A LEGENDARY BOON' : (GOD_INFO[o.god]?.title || '').toUpperCase();
     if (epithet) tracked(g, epithet, cx, cursorY, {
-      size: 8.8 * S, track: 0.30, weight: 600, align: 'center',
+      size: 10.2 * S, track: 0.28, weight: 700, align: 'center',
       // this line used to sit at 1.1:1 against the card's own wash
-      color: fixed ? lift(R.text, 0.34) : rgba(PAL.parch, 0.92),
-      shadow: '#06030c', shadowDy: 1.2 * S,
+      color: fixed ? lift(R.text, 0.45) : rgba(PAL.parch, 0.96),
+      shadow: '#06030c', shadowDy: 1.3 * S,
     });
     cursorY += 13 * S;
 
@@ -1064,7 +1074,14 @@ export class BoonOverlay {
     // ── rarity footer: label, arms, and one pip per tier ──
     const fy = foot;
     const label2 = (RARITY_LABEL[o.rarity] || 'Common').toUpperCase();
-    const lw = trackedWidth(g, label2, { size: 10.5 * S, track: 0.34, weight: 600 });
+    const lw = trackedWidth(g, label2, { size: 12 * S, track: 0.32, weight: 700 });
+    // its own ground, for the same reason the Magick bar's label got one: the
+    // panel body under the footer is lit by the god wash and the tier ink is
+    // warm, which is precisely the pairing that measures worst.
+    g.save();
+    plaqueRect(g, cx - lw / 2 - 9 * S, fy - 11 * S, lw + 18 * S, 16 * S, 3 * S);
+    g.fillStyle = 'rgba(7,4,14,0.72)'; g.fill();
+    g.restore();
     const armW = (w - lw) / 2 - 34 * S;
     for (const sgn of [-1, 1]) {
       const ax = cx + sgn * (lw / 2 + 13 * S);
@@ -1072,7 +1089,10 @@ export class BoonOverlay {
       ag.addColorStop(0, rgba(R.text, 0.75)); ag.addColorStop(1, 'rgba(0,0,0,0)');
       g.fillStyle = ag; g.fillRect(Math.min(ax, ax + sgn * armW), fy - 4 * S, armW, Math.max(1, 1.1 * S));
     }
-    tracked(g, label2, cx, fy, { size: 10.5 * S, track: 0.34, weight: 600, align: 'center', color: R.text, shadow: '#07040d', shadowDy: 1.4 * S });
+    tracked(g, label2, cx, fy, {
+      size: 12 * S, track: 0.32, weight: 700, align: 'center',
+      color: lift(R.text, 0.30), shadow: '#07040d', shadowDy: 1.4 * S,
+    });
     const tier = R.pips || 1;
     const pipGap = 11 * S, pipY = fy + 13 * S;
     for (let k = 0; k < 4; k++) {
@@ -1090,7 +1110,7 @@ export class BoonOverlay {
     if (o.locked) {
       g.save();
       roundRect(g, x + 4 * S, y + 4 * S, w - 8 * S, h - 8 * S, 7 * S); g.clip();
-      g.fillStyle = rgba('#0a0716', 0.42); g.fillRect(x, y, w, h);
+      g.fillStyle = rgba('#0a0716', 0.26); g.fillRect(x, y, w, h);
       g.restore();
       const sw = 92 * S, sh = 17 * S, sy2 = my - sh * 0.5;
       g.save();
