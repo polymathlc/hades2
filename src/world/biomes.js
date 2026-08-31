@@ -191,10 +191,14 @@ export const BIOMES = {
       shrine: 'shrine.divine',
       divine: 'gold.divine',
       bay: 'marble.elysium',
-      // FLUTED marble for the shafts — twenty vertical channels with sharp
-      // arrises and moss in the hollows — and laurel-banded voussoirs for the
-      // arch. Elysium's ornament family (laurel + bead) is deliberately
-      // different from Tartarus's meander and Asphodel's plain bronze bead.
+      // FLUTED marble for the shafts — SEVEN painted channels shading the
+      // fourteen that world/kit.js flutedShaft() actually carves, with moss in
+      // the hollows — and laurel-banded voussoirs for the arch. (The recipe
+      // painted twenty until it was measured in frame: at the play lens twenty
+      // is ~4 px a flute and it beat against the carved fourteen. See the
+      // comment above 'marble.elysium.column' in materials/recipes.js.)
+      // Elysium's ornament family (laurel + bead) is deliberately different
+      // from Tartarus's meander and Asphodel's plain bronze bead.
       column: 'marble.elysium.column',
       arch: 'marble.elysium.arch',
       trim: 'gold.filigree',

@@ -446,12 +446,30 @@ having their own shafts and voussoirs instead of one wall texture in five roles.
 are set just under the measured worst of the current set, and the worst is named
 next to each so the next person can see the margin:
 
-| floor | now | worst surface now | pre-branch worst | pre-branch verdict |
-|---|---|---|---|---|
-| `Ent >= 3.00` | 3.10 | `stone.tartarus.bay` | 2.62 `rubble.tartarus` | **FAILS** |
-| `Seam <= 1.00` | 0.97 | `marble.elysium.arch` | 0.87 `lava` | passes |
-| `Rlf >= 0.060` | 0.075 | `blood.pool` | 0.026 `blood.pool` | **FAILS** |
-| `Rep <= 0.80` | 0.73 | `stone.tartarus.arch` | 0.87 same surface | **FAILS** |
+| floor | now | headroom | worst surface now | pre-branch worst | pre-branch verdict |
+|---|---|---|---|---|---|
+| `Ent >= 3.00` | 3.113 | 3.8% | `stone.tartarus.bay` | 2.62 `rubble.tartarus` | **FAILS** |
+| `Seam <= 1.00` | 0.939 | 6.1% | `marble.elysium.arch` | 0.87 `lava` | passes |
+| `Rlf >= 0.060` | 0.0754 | 25.6% | `blood.pool` | 0.026 `blood.pool` | **FAILS** |
+| `Rep <= 0.80` | 0.729 | 8.8% | `stone.tartarus.arch` | 0.87 same surface | **FAILS** |
+
+**Which surface each gate is pinned to, stated plainly.** A floor set just under
+the measured worst has, by construction, very little margin, and two of these
+have less than the table suggests:
+
+* **`Rep` is pinned to a PAIR** — `stone.tartarus.arch` 0.7294 and
+  `gold.filigree` 0.7272, two thousandths apart. Both are legitimately periodic
+  objects (a fifteen-voussoir arch; a drawn filigree grille), so their score is
+  the ornament they are supposed to have. There is no version of either that
+  scores much lower and is still that object. If a future change pushes one past
+  0.80, the thing to look at is the ornament pitch, not this number.
+* **`Seam` is pinned to `marble.elysium.arch`**, and it came into this round at
+  **0.97** — a 3% margin on a gate this branch set itself. It is at 0.939 now
+  because the aggregate term in that recipe gained the same ramp-brightness gate
+  `marble.elysium` and `floor.elysium` already had (§1), which took energy out
+  of the plate's brightest columns — which is where its wrap error lived. That
+  is margin bought by work on the surface. **It is still the tightest of the four
+  and it is still one surface deep**; neither threshold was moved to create it.
 
 The old assertions were `Ent < 2.4` against a historical worst of 2.40097,
 `Rlf < 0.004` against a worst of 0.0255, and `Seam > 1.35` against a worst of

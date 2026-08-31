@@ -351,9 +351,39 @@ function main() {
   // worst is named beside each one so the next person can see the margin they
   // actually have. Three of the four FAIL on the pre-branch code, which is the
   // only test of whether a floor is binding.
+  //
+  // ── WHICH SURFACE EACH GATE IS PINNED TO, AND BY HOW MUCH ────────────────
+  // A floor set just under the measured worst is a floor with almost no margin,
+  // and the honest thing is to name the surface holding it up rather than to
+  // widen the number until the margin looks comfortable. Every gate below lists
+  // the surface it is currently pinned to and that surface's headroom; NONE of
+  // these thresholds has ever been moved to buy margin.
+  //
+  //   Ent  >= 3.00   pinned to stone.tartarus.bay 3.113      headroom 3.8%
+  //   Seam <= 1.00   pinned to marble.elysium.arch 0.939     headroom 6.1%
+  //   Rlf  >= 0.060  pinned to blood.pool 0.0754             headroom 25.6%
+  //   Rep  <= 0.80   pinned to stone.tartarus.arch 0.7294    headroom 8.8%
+  //
+  // TWO OF THESE ARE TIGHT AND ARE DECLARED AS SUCH.
+  //
+  //   * `Rep` is effectively pinned to a PAIR: stone.tartarus.arch 0.7294 and
+  //     gold.filigree 0.7272, two thousandths apart. Both are legitimately
+  //     periodic objects — a fifteen-voussoir arch and a drawn filigree grille —
+  //     so their score is the ornament they are supposed to have, and there is
+  //     no version of either that scores much lower while still being that
+  //     object. If a future change to either pushes past 0.80 the right response
+  //     is to look at the ornament pitch, not at this number.
+  //   * `Seam` is pinned to marble.elysium.arch, which came into this round at
+  //     0.97 — a 3% margin. It sits at 0.939 now because the brightness gate
+  //     added to that recipe's aggregate term (see 'marble.elysium.arch' in
+  //     materials/recipes.js) took energy out of the plate's brightest columns,
+  //     which is where its wrap error lived. That is margin bought by work on
+  //     the surface, not by moving the gate. It is still the tightest of the
+  //     four and it is still one surface deep.
+  //
   const FLOORS = {
     Ent: 3.00,    // worst now 3.11 stone.tartarus.bay | pre-branch 2.62 rubble.tartarus   -> FAILS
-    Seam: 1.00,   // worst now 0.97 marble.elysium.arch | 1.0 = the wrap column is no worse
+    Seam: 1.00,   // worst now 0.94 marble.elysium.arch | 1.0 = the wrap column is no worse
                   //   than the 99th percentile of the texture's own interior columns.
                   //   Pre-branch passes this; the version of THIS branch that shipped to
                   //   the last review did not (stone.asphodel.column 1.17).
@@ -364,6 +394,8 @@ function main() {
                   //   the ceiling is set above that on purpose, because the failure this
                   //   is here to catch is a whole texture built from two copies of one
                   //   blob, which scores far higher than any drawn ornament does.
+                  //   THIS IS THE GATE WITH THE LEAST SLACK IN PRACTICE: see the
+                  //   pinned-surface block above.
   };
   const flat = rows.filter(r => r.Rlf < FLOORS.Rlf);
   const seams = rows.filter(r => r.Seam > FLOORS.Seam);

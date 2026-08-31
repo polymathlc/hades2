@@ -2511,8 +2511,18 @@ const RECIPES = {
       // double-counts the same channel and drives the normal map into the
       // barcode. 0.18 leaves a soft cross-section on the painted flute and
       // lets the carved geometry carry the form.
-      h[i] = clamp01(0.30 + (1 - FL.height[i]) * 0.18 + (cloud[i] - 0.5) * 0.12 + grain[i] * 0.05
-        + (sugar[i] - 0.30) * 0.06 - crazing[i] * 0.20 - vM[i] * 0.05);
+      // ── AND THE MICRO-RELIEF COMES DOWN WITH THE SAME ARGUMENT ────────────
+      // The wall lays this plate down at triScale 0.20 — one plate every five
+      // metres, ~64 texels per metre. This shaft is unwrapped once around a
+      // ~3 m barrel, which is ~107 texels per metre horizontally however the
+      // vertical scale is set, so every high-frequency term in the height field
+      // lands on screen finer than it was authored to. Normal-map noise at that
+      // pitch does not read as crystal, it reads as static, and it costs real
+      // brightness: half the texels tilt away from the warm key and are lit by
+      // cool ambient instead. Grain and sugar are roughly halved here; they keep
+      // full amplitude on the wall, which is at the scale they were drawn for.
+      h[i] = clamp01(0.30 + (1 - FL.height[i]) * 0.18 + (cloud[i] - 0.5) * 0.12 + grain[i] * 0.03
+        + (sugar[i] - 0.30) * 0.03 - crazing[i] * 0.20 - vM[i] * 0.05);
     }
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 4.5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.003), 6.5);
@@ -2523,14 +2533,49 @@ const RECIPES = {
       // texels; on a shaft whose flutes are already carved it reads as printed
       // stripes rather than as a form turning away from the key. 0.085 is a
       // shading cue that survives the mip chain instead of aliasing in it.
-      v[i] = 0.50 + FL.arris[i] * 0.085 - FL.seam[i] * 0.038 + (cloud[i] - 0.5) * 0.50 + grain[i] * 0.09
-        + (sugar[i] - 0.30) * 0.09 - crazing[i] * 0.24 - halo[i] * 0.30;
+      //
+      // ── THE GROUND IS THE WALL'S GROUND ────────────────────────────────────
+      // 0.50 base and a 0.30 vein halo were authored while this plate was only
+      // ever looked at as a flat sheet. In frame the shaft is the SAME STONE as
+      // marble.elysium two metres behind it, and it was measurably darker and
+      // greyer than the wall: over the pier ROI at the shipping rig it lost 31%
+      // of its luminance and 39% of its chroma against the marble.elysium the
+      // biome used to dress these shafts with. The ground now matches the wall
+      // exactly (0.56 base, and a halo weight in the wall's 0.16-0.18 band);
+      // what makes this a SHAFT rather than a wall is the flute, the fillet and
+      // the cylindrical unwrap, not a darker, greyer marble.
+      const v0 = 0.56 + FL.arris[i] * 0.085 - FL.seam[i] * 0.038 + (cloud[i] - 0.5) * 0.50 + grain[i] * 0.09
+        - crazing[i] * 0.24 - halo[i] * 0.18;
+      // ── BLOB AMPLITUDE IS GATED ON RAMP BRIGHTNESS ────────────────────────
+      // Identical to marble.elysium's gate, and it belongs here for identical
+      // reasons: 0.09 of aggregate on the bright half of the marble ramp is a
+      // dark blotch, and a field of them is why a polished shaft reads as bark.
+      // It was applied to the wall and the floor and missed on the two props.
+      const gate = 0.30 + 0.70 * (1 - clamp01(v0));
+      v[i] = v0 + (sugar[i] - 0.30) * 0.09 * gate;
     }
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 7 }), -0.42), 2.2)), n >> 2);
     // hue separation across the arris follows the value down: a 0.30 push into
     // the cool ramp on a 2 px feature is chromatic aliasing, nothing else.
     for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.72 - FL.arris[i] * 0.12);
+    // ── WHAT REPLACES THE DE-TILER'S SPATIAL AVERAGE ──────────────────────────
+    // The shafts used to be dressed with marble.elysium through a flat world
+    // projection, and painterly.js runs its three-tap rotated de-tiler on flat
+    // world projections only (see FRAG_PROJ_PARS: the cylinder branch passes
+    // uStoch = 0 unconditionally, because rotating a cylindrical unwrap would
+    // shear the flute channels and snap the gold fillets). That de-tiler was
+    // averaging three rotated taps together, and averaging is a low-pass: it
+    // was quietly halving the amplitude of the stroke/tooth field as well as
+    // hiding the lattice. A correct cylinderY unwrap removes the artefact AND
+    // the accidental blur, which is why this plate arrived in frame at roughly
+    // triple the apparent contrast it was authored against and read as bark.
+    // `stochastic: true` cannot buy the blur back here — the shader refuses it
+    // on a cylinder by design — so the amplitude comes out of the brushwork
+    // instead: tooth 0.55 -> 0.30 (a drier, less contrasty dry-brush), the
+    // cross-hatch off, and the fine hatch at two thirds count. This is the
+    // polished half of a marble family; the wall keeps the full tooth.
     paintValue(v, n, { rng, seed: seed + 8, temp, cavity: cav, cavityAmt: 0.20, edge, edgeAmt: 0.18, tooth: grain,
+      toothAmount: 0.30, cross: 0, fine: [-0.045, 0.045], fineCount: Math.round(n * 0.6),
       flowBase: 1.52, swirl: 0.28, flowFreq: 1.1, light: [0.015, 0.07], dark: [-0.06, -0.015], highlight: 0.7,
       ink: 0.05, inkTemp: 0.40 });
     const rgb = TG.applyRamp2(v, temp, n, 'marble.elysium', 'floor.elysium');
@@ -2539,11 +2584,18 @@ const RECIPES = {
     TG.tintRGB(rgb, n, powField(crazing, 1.2), C255('#4b4361'), 0.55);
     // MOSS in the flutes — it grows in the channel, never on the arris, which
     // is the cue that reads as "this column has stood outside for an age"
-    const moss = TG.lichen(n, { seed: seed + 9, freq: Math.max(4, n >> 7), cover: 0.30, ragged: 0.07,
+    // COVER, MEASURED IN FRAME. The wall carries 0.34 cover at triScale 0.20 —
+    // one plate every five metres, so a colony is a hand's width. The shaft is
+    // unwrapped once around a ~3 m barrel at roughly 1.7x the wall's texel
+    // density, so the SAME cover number is a much larger blotch in world space,
+    // and grey-green blotches over a cream shaft are most of what made this
+    // prop read as bark. 0.18 at 0.52 keeps the cue (moss in the channel, never
+    // on the arris) without repainting the stone.
+    const moss = TG.lichen(n, { seed: seed + 9, freq: Math.max(4, n >> 7), cover: 0.18, ragged: 0.07,
       bias: clampField(combine(n, [[FL.seam, 1.0], [cav, 1.2], [crazing, 0.8]])), biasAmount: 1.0, biasFloor: 0.04,
       res: Math.max(128, n >> 2) });
     for (let i = 0; i < moss.length; i++) moss[i] = clamp01(moss[i] * clamp01((cloud[i] - 0.28) * 2.3));
-    TG.compositeRamp(rgb, n, scaleField(powField(moss, 1.1), 0.80), clampField(biasField(scaleField(TG.copyField(cloud), 0.9), 0.08)), 'moss', 0.66);
+    TG.compositeRamp(rgb, n, scaleField(powField(moss, 1.1), 0.52), clampField(biasField(scaleField(TG.copyField(cloud), 0.9), 0.08)), 'moss', 0.60);
     // a worn gold fillet at the top and bottom of the shaft
     const fillet = F(n);
     TG.drawLine(fillet, n, 0, n * 0.055, n, n * 0.055, Math.max(2, n * 0.010), 1.0, 1.3);
@@ -2552,21 +2604,54 @@ const RECIPES = {
     for (let i = 0; i < goldV.length; i++) goldV[i] = clamp01(0.40 + (grain[i] - 0.5) * 0.5 + edge[i] * 0.35 - cav[i] * 0.4);
     TG.compositeRamp(rgb, n, powField(fillet, 1.1), goldV, 'gold', 0.88);
 
-    const rough = TG.artisticRoughness(n, { base: 0.42, height: h, cavity: cav, edge, polish: 0.22, dry: 0.30, variation: 0.14, seed: seed + 10, min: 0.12, max: 0.92 });
+    // base 0.42 was a full 0.12 rougher than the wall this shaft is cut from,
+    // and roughness is a brightness knob under a warm key: a polished marble
+    // shaft carries a broad sheen, a 0.42 one carries none, and the pier
+    // measured darker than the wall behind it partly for that reason alone.
+    const rough = TG.artisticRoughness(n, { base: 0.32, height: h, cavity: cav, edge, polish: 0.22, dry: 0.30, variation: 0.14, seed: seed + 10, min: 0.10, max: 0.86 });
     const metal = F(n);
     for (let i = 0; i < metal.length; i++) {
       metal[i] = clamp01(fillet[i] * 0.85);
-      rough[i] = clamp01(rough[i] * (1 - fillet[i] * 0.6) + moss[i] * 0.45 + sugar[i] * 0.14 + crazing[i] * 0.18);
+      rough[i] = clamp01(rough[i] * (1 - fillet[i] * 0.6) + moss[i] * 0.45 + sugar[i] * 0.10 + crazing[i] * 0.18);
+    }
+    // ── THE SAME FAKE SUBSURFACE THE WALL HAS ─────────────────────────────────
+    // marble.elysium carries a whisper of warm self-illumination (0.030) so its
+    // shadow side is warm cream rather than neutral grey — that is what makes
+    // white marble read as marble instead of as plaster. The shafts inherited
+    // it for free while they were dressed with marble.elysium; splitting this
+    // recipe out silently dropped it, and the shadowed half of every pier went
+    // grey. It is the single largest term in the chroma the pier lost.
+    const emissive = new Float32Array(n * n * 3);
+    for (let i = 0; i < n * n; i++) {
+      const k = clamp01((1 - vM[i]) * (0.35 + v[i] * 0.6)) * 0.9, j = i * 3;
+      emissive[j] = 255 * k; emissive[j + 1] = 232 * k; emissive[j + 2] = 205 * k;
     }
     // normalScale: see marble.elysium — a shaft is polished, and 1.10 over a
-    // sugared height field lit it as gravel. Relief still measures 0.093,
-    // comfortably over the 0.060 floor and over the 0.059 marble.elysium
-    // started this branch at.
-    return { rgb, height: h, rough, metal, normalScale: 0.85,
+    // sugared height field lit it as gravel. With the height field's grain and
+    // sugar halved above, relief measures 0.068 — still over the 0.060 floor and
+    // over the 0.059 marble.elysium started this branch at, but this surface is
+    // now the one that floor is pinned to (see scripts/test-textures-quality.mjs)
+    // and that is stated there rather than fixed by moving the floor.
+    return { rgb, height: h, rough, metal, emissive, emissiveIntensity: 0.030, normalScale: 0.85,
       params: { envMapIntensity: 0.6 },
-      paint: { projection: 'cylinderY', triScale: 0.34, circScale: 1.0,
-        macroStrength: 0.18, macroScale: 0.02, macroTint: ELYSIUM.marbleLight, variation: 0.10, variationTint: ELYSIUM.marbleShadow,
-        detailStrength: 0.16, detailScale: 5, detailBump: 0.45, detailRough: 0.24 } };
+      // macroStrength 0.18 was another silent split from the wall: the legacy
+      // macro LEVEL (painterly.js macroLegacyLevel) is a multiply toward the
+      // macroTint scaled by this number, so at 0.18 against marble.elysium's
+      // inherited 0.55 the shaft got a third of the warm lift toward
+      // ELYSIUM.marbleLight that the wall behind it got. The drift amplitude is
+      // capped at 0.24 either way, so matching the wall costs no extra blotch.
+      // circScale must stay an INTEGER — the angular coordinate is atan/2pi, so
+      // anything else leaves a mip seam down one side of every shaft — which
+      // pins the horizontal density at one plate per barrel. triScale is the
+      // only density knob left, and 0.34 put the vertical pitch at ~109 texels
+      // per metre against the wall's 64. 0.24 brings the two within a third of
+      // each other and stops the shaft aliasing against a wall of the same
+      // stone. detailBump/detailRough come down for the same reason as the
+      // height field's grain: this plate lands finer on screen here than it
+      // does on the wall, and micro-relief at that pitch is static.
+      paint: { projection: 'cylinderY', triScale: 0.24, circScale: 1.0,
+        macroStrength: 0.55, macroScale: 0.02, macroTint: ELYSIUM.marbleLight, variation: 0.10, variationTint: ELYSIUM.marbleShadow,
+        detailStrength: 0.18, detailScale: 5, detailBump: 0.28, detailRough: 0.16 } };
   } },
 
   // Elysium voussoirs: marble wedges with a laurel band and gold beads — the
@@ -2600,8 +2685,15 @@ const RECIPES = {
     for (let i = 0; i < v.length; i++) {
       // a chamfer on a PALE ground carries far more contrast than the same
       // chamfer on near-black Tartarus stone: half the amplitude, same read
-      v[i] = 0.46 + T.id[i] * 0.20 + T.lobe[i] * 0.16 + T.arris[i] * 0.14 + (cloud[i] - 0.5) * 0.48
-        + grain[i] * 0.08 + (sugar[i] - 0.30) * 0.16;
+      const v0 = 0.46 + T.id[i] * 0.20 + T.lobe[i] * 0.16 + T.arris[i] * 0.14 + (cloud[i] - 0.5) * 0.48
+        + grain[i] * 0.08;
+      // The same brightness gate as marble.elysium and floor.elysium, and at
+      // 0.16 this was the largest ungated aggregate term left in the biome —
+      // nearly twice the wall's. A voussoir is a sawn face of the same block as
+      // the wall beside it: the crystal facet is a FINISH, so it keeps full
+      // amplitude in the height and roughness maps below and is scaled down in
+      // the albedo wherever the ground is already light.
+      v[i] = v0 + (sugar[i] - 0.30) * 0.16 * (0.30 + 0.70 * (1 - clamp01(v0)));
     }
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 5 }), -0.40), 2.0)), n >> 2);
     for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.72 + T.id[i] * 0.40 - T.arris[i] * 0.22);
