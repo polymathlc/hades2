@@ -30,6 +30,51 @@ corrections are most of what round 2 is.
 Two things the review confirmed and that are **kept unchanged**: both `tileGrid`
 seam fixes (§5), and the nine surfaces that carry real structure (§2).
 
+## 0a. Round 3: the fix for a regression was itself a regression
+
+Round 2's headline hero-prop fix — splitting a dedicated `marble.elysium.column`
+out of `marble.elysium` and giving it a correct `cylinderY` unwrap — shipped a
+regression **worse than the thing it replaced**, and every number in §3 said it
+was an improvement, because every number in §3 is measured on a flat sheet. In
+the frame the Elysium pier read as grey bark.
+
+| pier ROI, mean over the rectangle | `812a7f4` | round 2 | control | round 3 |
+|---|---|---|---|---|
+| left pier `342,262 80x115` — luminance | 133.1 | 97.9 (-26%) | 129.9 (-2%) | **128.4 (-3%)** |
+| left pier — chroma (max−min channel) | 43.7 | 26.3 (-40%) | 39.9 (-9%) | **39.0 (-11%)** |
+| left pier — local contrast (3x3) | 12.9 | 13.9 (+8%) | 14.8 (+15%) | **15.1 (+17%)** |
+| right pier `988,382 42x140` — luminance | 130.6 | 108.4 (-17%) | 127.3 (-3%) | **137.7 (+5%)** |
+| right pier — chroma | 41.0 | 28.7 (-30%) | 38.4 (-7%) | **40.1 (-2%)** |
+| right pier — local contrast | 14.1 | 14.2 (+1%) | 14.3 (+2%) | **14.5 (+3%)** |
+
+Both rectangles are fixed pixel rects in the 1600x900 `?capture&q=high&seed=1337`
+frame at the shipping rig (12.6 m / 45° / fov 36°), Elysium, `state('play')`,
+HUD suppressed. The geometry is identical across the trees, so the same rect
+samples the same stone.
+
+**The `control` column is the important one.** It is THIS tree, with one line
+changed: `world/biomes.js` dressing the piers with `marble.elysium` again, the
+way `812a7f4` did. It measures 2-3% under upstream on luminance and 7-9% under
+on chroma — so that much of the gap belongs to everything else that has landed
+on this branch (the biome light rig, the atmosphere and grade work, and this
+branch's own changes to `marble.elysium`) and no amount of work on the shaft
+recipe can recover it.
+
+**Against that control, round 3's shaft is −1% / +8% on luminance and −2% / +5%
+on chroma across the two piers.** Summed over both rectangles it is **+1.0% on
+luminance against `812a7f4` itself** and **−6.6% on chroma, where the control is
+−7.6%** — that is, the shaft now carries more chroma than the pier does when it
+is dressed with `marble.elysium` in this tree, and the residual against upstream
+is the tree's, not the recipe's. §4a has the causes and the fixes; the crops are
+rows 1 and 2 of `docs/texture-preview/_inengine-before-after.png`.
+
+Three smaller things this round also corrects, all of them things the last
+review was right about: `world/biomes.js` still described the shaft recipe as
+painting "twenty vertical channels" when it paints seven; §4 claimed the
+in-engine sheet was gitignored and uncommitted when it is committed on purpose;
+and that sheet was a grid of whole frames whose before and after cells were
+indistinguishable at the size it shipped.
+
 ---
 
 ## 1. The three in-engine regressions, and what was done about them
@@ -59,6 +104,11 @@ is ~13 px on screen. The arris value step goes 0.22 → **0.085**, the flute's
 height contribution 0.42 → **0.18**, and the hue push across the arris
 0.30 → **0.12**: the paint's job is no longer to invent the flute (the mesh has
 it) but to shade it.
+
+That much survived review. What did not is everything else the split silently
+changed — the emissive, the macro level, the ramp-brightness gate, the de-tiler
+and the plate's density on a `cylinderY` unwrap. See §0a for the measurement and
+§4a for the five causes.
 
 ### `stone.asphodel.column` — the ember came back, and the seam closed
 
@@ -102,9 +152,11 @@ field amplitude is grain at one end of it and dirt at the other.**
    `marble.elysium.column` and `marble.elysium.arch` all inherited it; the floor
    asked for 0.45 at `detailScale: 9`, a 0.9 m period. On Tartarus's bottom-fifth
    albedo that is grain; on cream it is a 40-unit dust storm at exactly the
-   frequency the frame reads as gravel. Now 0.16-0.18 at `detailScale: 5`, with
+   frequency the frame reads as gravel. Now 0.18 at `detailScale: 5`, with
    `detailBump` and `detailRough` kept at full strength — the layer earns its
-   keep as micro-relief, not as pigment.
+   keep as micro-relief, not as pigment. (Round 3 tried cutting `detailBump` and
+   `detailRough` on the column as well and measured it: see §4a. It cost local
+   contrast and bought no brightness, and it was reverted.)
 4. Floor moss cover 0.40 → **0.20** at 0.92 → 0.60 strength, weighted harder
    into the joint/cavity/crazing seed bed. A third of a marble floor gone olive
    under a warm key is the difference between "moss in the joints" and "dirt".
@@ -206,8 +258,8 @@ entirely on its handful of bright texels.
 | `rubble.asphodel` | 3.89 → **3.89** | 21 → **21** | 37 → **37** | 20 → **21** | 17 → **17** | 227 → **227** | 0.72 → **0.71** | 0.07 → **0.08** | 1.01 |
 | `lava` | 5.29 → **5.28** | 54 → **54** | 86 → **86** | 74 → **74** | 96 → **96** | 259 → **259** | 0.87 → **0.87** | 0.08 → **0.08** | 1.00 |
 | `marble.elysium` | 4.69 → **4.79** | 14 → **19** | 24 → **30** | 27 → **33** | 33 → **39** | 59 → **133** | 0.49 → **0.57** | 0.13 → **0.12** | 1.18 |
-| `marble.elysium.column` *(new)* | – → **4.71** | – → **15** | – → **25** | – → **31** | – → **46** | – → **92** | – → **0.46** | – → **0.20** | – |
-| `marble.elysium.arch` *(new)* | – → **4.90** | – → **23** | – → **36** | – → **50** | – → **53** | – → **372** | – → **0.97** | – → **0.44** | – |
+| `marble.elysium.column` *(new)* | – → **4.65** | – → **14** | – → **26** | – → **32** | – → **50** | – → **92** | – → **0.47** | – → **0.29** | – |
+| `marble.elysium.arch` *(new)* | – → **4.86** | – → **21** | – → **34** | – → **47** | – → **51** | – → **372** | – → **0.94** | – → **0.47** | – |
 | `floor.elysium` | 4.02 → **4.42** | 7 → **19** | 13 → **29** | 16 → **30** | 20 → **35** | 188 → **316** | 0.09 → **0.18** | 0.34 → **0.35** | **1.65** |
 | `bone` | 4.44 → **4.44** | 31 → **31** | 63 → **63** | 50 → **50** | 37 → **38** | 274 → **274** | 0.33 → **0.32** | 0.03 → **0.03** | 1.00 |
 | `wood.dark` | 4.42 → **4.39** | 19 → **19** | 35 → **34** | 54 → **53** | 63 → **61** | 269 → **259** | 0.03 → **0.46** | 0.34 → **0.37** | 0.98 |
@@ -269,32 +321,86 @@ PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers node tools/capture.mjs \
   'http://localhost:4173/?capture&q=high&seed=1337' shot.png
 ```
 
-`window.EREBUS.capture` exposes `biome(name)`, `pose(p)` and `render()`, so a
-three-biome sheet is a loop over `['tartarus','asphodel','elysium']` x three
-poses, all at the shipping rig geometry (distance 12.6 m, pitch 45°, fov 36°).
+`window.EREBUS.capture` exposes `biome(name)`, `pose(p)`, `render()` and
+`clean()` — the same frame with the HUD suppressed, for measurement — so a
+three-biome comparison is a loop over `['tartarus','asphodel','elysium']` at the
+shipping rig geometry (distance 12.6 m, pitch 45°, fov 36°).
 
-**`docs/texture-preview/_inengine-before-after.png`** is that sheet: three rows
-(Tartarus / Asphodel / Elysium), three columns (the play framing, the
-gate-and-arch framing, the near-floor framing), each cell **before over after**,
-before on top. The colonnade shafts appear in columns 1 and 3; the voussoirs and
-the gate ornament in column 2. (`docs/texture-preview/*.png` is gitignored, so
-the sheet lives on disk beside the flat-tile ones and is regenerated, not
-committed.) Reading it:
+**Boot the biome from the URL (`&biome=elysium`), do not switch into it.**
+`materials/library.js::setBiome()` fires `prebuild()` without awaiting it, and
+the biome light rig transitions over sim time that `capture.step()` has to
+advance. A frame rendered straight after `capture.biome('elysium')` measured the
+pier at **58% of its luminance and 53% of its local contrast**, lit by the
+previous biome's rig — a measurement that says nothing about any texture. That
+is a trap worth one paragraph.
 
-* **Tartarus, columns 1 and 3.** Before: an even pink-and-cyan speckle in which
-  individual flags are hard to pick out. After: each flag carries its own bedding
-  direction and its own value, and the bond reads as laid stone.
-* **Elysium, columns 1 and 3.** Before: the shafts are high-contrast vertical
-  barcodes. After: pale stone with a soft seven-channel flute. This is the
-  single clearest difference on the sheet.
-* **Elysium, the floor under those shafts.** Before: an even granular mottle
-  with no stone identity. After: slabs with visible veining and joints. The
-  biome's floor glaze (`world/chamber.js`, not this pass) keeps it dark by
-  design; what changed is that there is legible structure underneath it.
-* **Asphodel, all three.** Before and after both good — this biome's floor was
-  the previous round's real win and is untouched. The shafts gain broader prism
-  faces (one turn of the plate instead of four), their vesicles and their ember
-  joint.
+### 4a. What the pier regression actually was
+
+Five causes, in descending order of how much of the 26%/40% they account for.
+All five are consequences of the same thing: a recipe was split out of
+`marble.elysium` and silently stopped inheriting what the wall had.
+
+1. **No emissive.** `marble.elysium` carries a warm cream fake-subsurface term.
+   The shafts had it for free; the split dropped it, and the shadowed half of
+   every pier went neutral grey. Restored, at 0.042 rather than the wall's 0.030
+   — a pier is a free-standing object lit mostly by fill. (0.085, the value that
+   once broke §14's subject test, is on the statuary's recipe and is untouched.)
+2. **`macroStrength: 0.18` against the wall's inherited 0.55.** `painterly.js`
+   derives the macro layer's LEVEL — a multiply toward `macroTint`, here
+   `ELYSIUM.marbleLight` — from that number, so the shaft was getting a third of
+   the warm lift the wall behind it got. Matched to the wall; the drift
+   amplitude is capped at 0.24 either way, so it costs no extra blotch.
+3. **The ramp-brightness gate was missing.** `0.30 + 0.70·(1 − v)` on the
+   aggregate term, the fix that cured "marble reads as gravel" on the wall and
+   the floor in round 2, was never applied to the two props. It is now on both
+   `marble.elysium.column` and `marble.elysium.arch`.
+4. **The de-tiler's blur went with the projection artefact.** Upstream dressed
+   these piers through a flat world projection, and `painterly.js` runs its
+   three-tap rotated de-tiler on flat world projections ONLY — the `cylinderY`
+   branch passes `uStoch = 0` unconditionally, because rotating a cylindrical
+   unwrap would shear the flute channels and snap the gold fillets. Averaging
+   three rotated taps is a low-pass: it was quietly halving the stroke/tooth
+   field as well as hiding the lattice. A correct unwrap removes both.
+   `stochastic: true` cannot buy it back here — the shader refuses it on a
+   cylinder by design — so the amplitude came out of the brushwork instead:
+   `toothAmount` 0.55 → 0.30, cross-hatch off, fine hatch at two thirds count.
+5. **Ground, crazing and moss, all at the wrong density.** One turn of the plate
+   around a ~3 m barrel puts it on screen denser than the wall's `triScale: 0.20`
+   ever does, so the same crack network, the same vein bruise and the same moss
+   cover more of a lit face and integrate darker. Base 0.50 → 0.66, halo 0.30 →
+   0.16, crazing 0.24 → 0.16 and its violet tint 0.55 → 0.42, moss cover 0.30 →
+   0.18, `envMapIntensity` 0.6 → 0.85, `triScale` 0.34 → 0.30.
+
+**One guess was wrong and is recorded rather than deleted.** An intermediate
+version halved the height field's `grain` and `sugar` and cut `detailBump` /
+`detailRough`, on the theory that normal-map noise at this density was what made
+the pier dark. Measured, it moved luminance by under 1% and cost 25-30% of the
+local contrast. It was reverted; the note is in the recipe.
+
+### 4b. The sheet
+
+**`docs/texture-preview/_inengine-before-after.png`** is **five 2x crops on
+named props**, before beside after, every cell the same fixed pixel rectangle of
+the same 1600x900 frame. It was a 3x3 grid of whole frames and it did not
+support its own caption: at the size it shipped the before and after cells were
+indistinguishable, including the row this file called "the single clearest
+difference on the sheet". Whole frames at thumbnail size cannot show a texture.
+
+| row | prop | BEFORE | what to look for |
+|---|---|---|---|
+| 1 | Elysium pier shaft `marble.elysium.column` | `812a7f4` | the shaft is pale warm marble in both; the round-3 one carries the flute's soft shading and a cooler side face |
+| 2 | the same rect | **round 2** (`f69b8b0`) | this is the regression: dark grey-brown bark against warm cream. The starkest pair on the sheet |
+| 3 | Elysium floor slab `floor.elysium` | `812a7f4` | before, an even grey-green mottle with no stone identity; after, a warm slab with violet veining and a legible joint |
+| 4 | Tartarus flag bed `floor.tartarus` | `812a7f4` | the subtlest pair here, and it is called that rather than oversold: the flags gain per-flag tone and a bedding direction, over an even pink-and-cyan speckle |
+| 5 | Asphodel shaft `stone.asphodel.column` | `812a7f4` | before, the pier wears the floor's polygonal ember network; after, vertical columnar prisms with the ember in the joint |
+
+**This file is committed on purpose** — `git add -f` past `.gitignore`'s
+`docs/texture-preview/*.png`. The flat-tile sheets really are regenerable from
+`tools/texture-preview.mjs` alone and are not committed; this one needs two
+builds of two different commits and half an hour of software-rasterised
+rendering, so it is in the tree. The previous version of this section claimed it
+was "regenerated, not committed", which was simply false. `docs/texture-preview/README.md`
+has the regeneration recipe and the crop rectangles.
 
 The `_contact-sheet.png` flat-tile sheet is still generated and still useful,
 but it is no longer the last word on anything.
@@ -570,9 +676,14 @@ layouts now also report their `cols`/`rows` so `cellVariant` can scale properly.
   only hue, so it survives the biome's floor glaze (§1).
 * `marble.elysium.column`: **seven** flutes, shading the fourteen the mesh
   carves rather than fighting them (§1); moss in the hollows, never on the
-  arris; a worn gold fillet.
+  arris; a worn gold fillet. Dressed to the same ground, macro level, emissive
+  whisper and aggregate gate as the wall it is cut from, because when it was
+  not, the pier measured 26% darker and 40% greyer than the wall in frame
+  (§0a, §4a).
 * `marble.elysium.arch`: per-wedge marble, a laurel band and bead rows —
-  Elysium's ornament family, distinct from Tartarus's meander.
+  Elysium's ornament family, distinct from Tartarus's meander. Its aggregate
+  term carries the same ramp-brightness gate as the wall and the floor; that is
+  also what took its wrap-seam score from 0.97 to 0.939 (§8).
 
 ### Metals and liquids
 

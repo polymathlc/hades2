@@ -2511,18 +2511,15 @@ const RECIPES = {
       // double-counts the same channel and drives the normal map into the
       // barcode. 0.18 leaves a soft cross-section on the painted flute and
       // lets the carved geometry carry the form.
-      // ── AND THE MICRO-RELIEF COMES DOWN WITH THE SAME ARGUMENT ────────────
-      // The wall lays this plate down at triScale 0.20 — one plate every five
-      // metres, ~64 texels per metre. This shaft is unwrapped once around a
-      // ~3 m barrel, which is ~107 texels per metre horizontally however the
-      // vertical scale is set, so every high-frequency term in the height field
-      // lands on screen finer than it was authored to. Normal-map noise at that
-      // pitch does not read as crystal, it reads as static, and it costs real
-      // brightness: half the texels tilt away from the warm key and are lit by
-      // cool ambient instead. Grain and sugar are roughly halved here; they keep
-      // full amplitude on the wall, which is at the scale they were drawn for.
-      h[i] = clamp01(0.30 + (1 - FL.height[i]) * 0.18 + (cloud[i] - 0.5) * 0.12 + grain[i] * 0.03
-        + (sugar[i] - 0.30) * 0.03 - crazing[i] * 0.20 - vM[i] * 0.05);
+      // A round of this fix halved `grain` and `sugar` here on the theory that
+      // normal-map noise at this plate's screen density was what made the pier
+      // dark. It was measured and it was not: over the pier ROI it moved mean
+      // luminance by under 1% and cost 25-30% of the local contrast. The height
+      // field is back where it was; the brightness came from the albedo and the
+      // env term instead (below), and the record of the wrong guess is here
+      // rather than in a commit message nobody reads.
+      h[i] = clamp01(0.30 + (1 - FL.height[i]) * 0.18 + (cloud[i] - 0.5) * 0.12 + grain[i] * 0.05
+        + (sugar[i] - 0.30) * 0.06 - crazing[i] * 0.20 - vM[i] * 0.05);
     }
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 4.5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.003), 6.5);
@@ -2534,18 +2531,28 @@ const RECIPES = {
       // stripes rather than as a form turning away from the key. 0.085 is a
       // shading cue that survives the mip chain instead of aliasing in it.
       //
-      // ── THE GROUND IS THE WALL'S GROUND ────────────────────────────────────
-      // 0.50 base and a 0.30 vein halo were authored while this plate was only
-      // ever looked at as a flat sheet. In frame the shaft is the SAME STONE as
-      // marble.elysium two metres behind it, and it was measurably darker and
-      // greyer than the wall: over the pier ROI at the shipping rig it lost 31%
-      // of its luminance and 39% of its chroma against the marble.elysium the
-      // biome used to dress these shafts with. The ground now matches the wall
-      // exactly (0.56 base, and a halo weight in the wall's 0.16-0.18 band);
-      // what makes this a SHAFT rather than a wall is the flute, the fillet and
-      // the cylindrical unwrap, not a darker, greyer marble.
-      const v0 = 0.56 + FL.arris[i] * 0.085 - FL.seam[i] * 0.038 + (cloud[i] - 0.5) * 0.50 + grain[i] * 0.09
-        - crazing[i] * 0.24 - halo[i] * 0.18;
+      // ── THE GROUND IS THE WALL'S GROUND, PLUS WHAT THE UNWRAP COSTS ───────
+      // 0.50 base, a 0.30 vein halo and a 0.24 crazing cut were authored while
+      // this plate was only ever looked at as a flat sheet. In frame the shaft
+      // is the SAME STONE as marble.elysium two metres behind it, and it was
+      // measurably darker and greyer: over the pier ROI at the shipping rig it
+      // lost 26% of its luminance and 40% of its chroma against the
+      // marble.elysium the biome used to dress these shafts with.
+      //
+      // The halo comes back to the wall's 0.16 weight. The base goes ABOVE
+      // the wall's 0.56 rather than to it, and the crazing cut comes down from
+      // 0.24 to 0.16, because a cylindrical unwrap around a ~3 m barrel puts
+      // this plate on screen denser than the wall's triplanar 0.20 ever does:
+      // the same crack network and the same vein bruise cover more of a lit
+      // face here than they do there, so the same numbers integrate darker. The
+      // control that says so is in the notes (§4a): dressing these piers with
+      // marble.elysium in THIS tree measures within 2.5% of upstream, so the
+      // remaining deficit was this recipe's and nothing else's.
+      //
+      // What makes this a SHAFT rather than a wall is the flute, the fillet and
+      // the cylindrical unwrap — not a darker, greyer marble.
+      const v0 = 0.66 + FL.arris[i] * 0.085 - FL.seam[i] * 0.030 + (cloud[i] - 0.5) * 0.50 + grain[i] * 0.09
+        - crazing[i] * 0.16 - halo[i] * 0.16;
       // ── BLOB AMPLITUDE IS GATED ON RAMP BRIGHTNESS ────────────────────────
       // Identical to marble.elysium's gate, and it belongs here for identical
       // reasons: 0.09 of aggregate on the bright half of the marble ramp is a
@@ -2581,7 +2588,9 @@ const RECIPES = {
     const rgb = TG.applyRamp2(v, temp, n, 'marble.elysium', 'floor.elysium');
     TG.compositeRamp(rgb, n, scaleField(powField(halo, 1.25), 0.5), clampField(biasField(scaleField(TG.copyField(v), 0.6), 0.18)), 'marble.vein', 0.70);
     TG.compositeRamp(rgb, n, powField(vM, 1.15), clampField(scaleField(TG.copyField(v), 0.55)), 'marble.vein', 0.85);
-    TG.tintRGB(rgb, n, powField(crazing, 1.2), C255('#4b4361'), 0.55);
+    // 0.55 of violet over a crack network that covers more of a lit face here
+    // than the wall's does: see the note on the crazing weight above.
+    TG.tintRGB(rgb, n, powField(crazing, 1.2), C255('#4b4361'), 0.42);
     // MOSS in the flutes — it grows in the channel, never on the arris, which
     // is the cue that reads as "this column has stood outside for an age"
     // COVER, MEASURED IN FRAME. The wall carries 0.34 cover at triScale 0.20 —
@@ -2615,25 +2624,35 @@ const RECIPES = {
       rough[i] = clamp01(rough[i] * (1 - fillet[i] * 0.6) + moss[i] * 0.45 + sugar[i] * 0.10 + crazing[i] * 0.18);
     }
     // ── THE SAME FAKE SUBSURFACE THE WALL HAS ─────────────────────────────────
-    // marble.elysium carries a whisper of warm self-illumination (0.030) so its
-    // shadow side is warm cream rather than neutral grey — that is what makes
-    // white marble read as marble instead of as plaster. The shafts inherited
-    // it for free while they were dressed with marble.elysium; splitting this
-    // recipe out silently dropped it, and the shadowed half of every pier went
-    // grey. It is the single largest term in the chroma the pier lost.
+    // marble.elysium carries a whisper of warm self-illumination so its shadow
+    // side is warm cream rather than neutral grey — that is what makes white
+    // marble read as marble instead of as plaster. The shafts inherited it for
+    // free while they were dressed with marble.elysium; splitting this recipe
+    // out silently dropped it, and the shadowed half of every pier went grey.
+    // It is the single largest term in the chroma the pier lost.
+    //
+    // 0.042 rather than the wall's 0.030, and the difference is deliberate: a
+    // pier is a free-standing object lit mostly by fill, where a wall gets the
+    // key across its whole face. The wall's 0.030 is also load-bearing for
+    // something this recipe is NOT — the statuary in world/chamber.js is built
+    // from marble.elysium, and §14's subject test failed once on a figure whose
+    // brightness was partly self-illumination. Nothing in this recipe is ever a
+    // figure, so 0.042 here does not touch that. It is still a whisper; 0.085,
+    // the number that caused the trouble, is twice this.
     const emissive = new Float32Array(n * n * 3);
     for (let i = 0; i < n * n; i++) {
       const k = clamp01((1 - vM[i]) * (0.35 + v[i] * 0.6)) * 0.9, j = i * 3;
       emissive[j] = 255 * k; emissive[j + 1] = 232 * k; emissive[j + 2] = 205 * k;
     }
     // normalScale: see marble.elysium — a shaft is polished, and 1.10 over a
-    // sugared height field lit it as gravel. With the height field's grain and
-    // sugar halved above, relief measures 0.068 — still over the 0.060 floor and
-    // over the 0.059 marble.elysium started this branch at, but this surface is
-    // now the one that floor is pinned to (see scripts/test-textures-quality.mjs)
-    // and that is stated there rather than fixed by moving the floor.
-    return { rgb, height: h, rough, metal, emissive, emissiveIntensity: 0.030, normalScale: 0.85,
-      params: { envMapIntensity: 0.6 },
+    // sugared height field lit it as gravel. Relief still measures 0.09,
+    // comfortably over the 0.060 floor and over the 0.059 marble.elysium
+    // started this branch at.
+    return { rgb, height: h, rough, metal, emissive, emissiveIntensity: 0.042, normalScale: 0.85,
+      // 0.6 -> 0.85: the env term is the warm half of what lights the shadow
+      // side of a pale shaft, and this prop is a free-standing pier lit mostly
+      // by fill rather than a wall that takes the key across its whole face.
+      params: { envMapIntensity: 0.85 },
       // macroStrength 0.18 was another silent split from the wall: the legacy
       // macro LEVEL (painterly.js macroLegacyLevel) is a multiply toward the
       // macroTint scaled by this number, so at 0.18 against marble.elysium's
@@ -2644,14 +2663,13 @@ const RECIPES = {
       // anything else leaves a mip seam down one side of every shaft — which
       // pins the horizontal density at one plate per barrel. triScale is the
       // only density knob left, and 0.34 put the vertical pitch at ~109 texels
-      // per metre against the wall's 64. 0.24 brings the two within a third of
-      // each other and stops the shaft aliasing against a wall of the same
-      // stone. detailBump/detailRough come down for the same reason as the
-      // height field's grain: this plate lands finer on screen here than it
-      // does on the wall, and micro-relief at that pitch is static.
-      paint: { projection: 'cylinderY', triScale: 0.24, circScale: 1.0,
+      // per metre against the wall's 64. 0.30 closes about a third of that gap;
+      // 0.24 was tried and measured, and taking it that far cost local contrast
+      // without buying any brightness back (see the height field above).
+      // detailBump/detailRough stay at the values the flute was authored with.
+      paint: { projection: 'cylinderY', triScale: 0.30, circScale: 1.0,
         macroStrength: 0.55, macroScale: 0.02, macroTint: ELYSIUM.marbleLight, variation: 0.10, variationTint: ELYSIUM.marbleShadow,
-        detailStrength: 0.18, detailScale: 5, detailBump: 0.28, detailRough: 0.16 } };
+        detailStrength: 0.18, detailScale: 5, detailBump: 0.45, detailRough: 0.24 } };
   } },
 
   // Elysium voussoirs: marble wedges with a laurel band and gold beads — the
