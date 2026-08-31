@@ -20,7 +20,8 @@ export class Profiler {
     this.enabled = opts.enabled !== false;
     this.capacity = opts.capacity || 4096;
     this.frames = new Float64Array(this.capacity);
-    this.n = 0;
+    this.n = 0;          // how many samples are live (<= capacity)
+    this._w = 0;         // ring write cursor
     this.sections = new Map();   // name -> { calls, ms, max }
     this.spans = new Map();      // name -> { t0, ms, frames, longestFrameMs, closed }
     this._open = new Map();
@@ -28,6 +29,7 @@ export class Profiler {
 
   reset() {
     this.n = 0;
+    this._w = 0;
     this.sections.clear();
     this.spans.clear();
     this._open.clear();
@@ -37,7 +39,11 @@ export class Profiler {
   /** Record one rendered frame's main-thread busy time, in ms. */
   frame(ms) {
     if (!this.enabled) return;
-    if (this.n < this.capacity) this.frames[this.n++] = ms;
+    // Ring buffer: a session runs for hours, so the newest `capacity` frames
+    // are what "how is it running right now" means.
+    this.frames[this._w] = ms;
+    this._w = (this._w + 1) % this.capacity;
+    if (this.n < this.capacity) this.n++;
     for (const s of this._open.values()) {
       s.frames++;
       if (ms > s.longestFrameMs) s.longestFrameMs = ms;
@@ -84,7 +90,9 @@ export class Profiler {
   frameStats() {
     const n = this.n;
     if (!n) return { frames: 0, longestMs: 0, p50: 0, p95: 0, p99: 0, meanMs: 0, over16: 0, over33: 0 };
-    const a = Array.prototype.slice.call(this.frames.subarray(0, n)).sort((x, y) => x - y);
+    const a = [];
+    for (let i = 0; i < n; i++) a.push(this.frames[(this._w - n + i + this.capacity) % this.capacity]);
+    a.sort((x, y) => x - y);
     let sum = 0, over16 = 0, over33 = 0;
     for (let i = 0; i < n; i++) { sum += a[i]; if (a[i] > 16.7) over16++; if (a[i] > 33.3) over33++; }
     const q = (p) => a[Math.min(n - 1, Math.floor(p * (n - 1)))];

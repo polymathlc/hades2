@@ -14,7 +14,7 @@ import {
   displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
 } from './ornament.js';
 import {
-  GOD_INFO, SLOTS, SLOT_TAG, RARITY_LABEL, BoonState,
+  GOD_INFO, SLOTS, RARITY_LABEL, BoonState,
   CURSES, curseForBoon, CURSE_NAMES, prerequisiteStatus,
 } from '../game/boons.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from './boon-choice.js';
@@ -860,7 +860,9 @@ export class BoonOverlay {
     }
 
     // ── slot pill (with its glyph) and, beside it, the curse chip ──
-    const slotName = (SLOTS[o.slot]?.name || o.slot || 'Boon').toUpperCase();
+    // A payoff card names its own kind on the pill: "BOON" is technically true
+    // of a Duo but tells the player nothing they need at the moment of choice.
+    const slotName = (o.duo ? 'Duo Boon' : SLOTS[o.slot]?.name || o.slot || 'Boon').toUpperCase();
     const curse = o.curse;
     const slotTextW = trackedWidth(g, slotName, { size: 10 * S, track: 0.28, weight: 600 });
     const pillW = slotTextW + 40 * S, pillH = 20 * S;
@@ -874,7 +876,7 @@ export class BoonOverlay {
     g.fillStyle = rgba(shade(col, 0.58), 0.92); g.fill();
     g.strokeStyle = rgba(PAL.goldMid, 0.8); g.lineWidth = 1.1 * S; g.stroke();
     g.restore();
-    slotGlyph(g, o.slot, px0 + 14 * S, py + pillH / 2, 6.6 * S, rgba(lift(col, 0.5), 0.95));
+    slotGlyph(g, o.duo ? 'duo' : o.slot, px0 + 14 * S, py + pillH / 2, 6.6 * S, rgba(lift(col, 0.5), 0.95));
     tracked(g, slotName, px0 + 25 * S, py + pillH * 0.70, {
       size: 10 * S, track: 0.28, weight: 600, align: 'left', color: lift(col, 0.50),
     });
@@ -909,7 +911,7 @@ export class BoonOverlay {
       g.fillStyle = rgba(cmp.kind === 'replace' ? shade(col, 0.72) : '#181026', 0.88); g.fill();
       g.strokeStyle = rgba(cmp.kind === 'replace' ? col : R.text, 0.55); g.lineWidth = 1 * S; g.stroke();
       g.restore();
-      const prefix = cmp.kind === 'replace' ? 'REPLACES' : 'IMPROVES';
+      const prefix = cmp.kind === 'replace' ? 'REPLACES' : cmp.kind === 'pom' ? 'DEEPENS' : 'IMPROVES';
       const decision = `${prefix}  ${cmp.fromName}`.toUpperCase();
       let ds = 8.8 * S;
       const decisionW = trackedWidth(g, decision, { size: ds, track: 0.18, weight: 700 });
@@ -1063,7 +1065,16 @@ function normalise(x, boonState) {
     pom: !!x.pom,
     level: Math.max(1, x.level || 1),
     upgrade: !!x.upgrade,
-    comparison: boonOfferComparison(x, boonState),
+    // A Pom is not a rarity change, so it must not borrow the rarity-change
+    // language. It gets the same plaque with the level transition instead.
+    comparison: x.pom
+      ? {
+        kind: 'pom',
+        fromName: x.name || (boon && boon.name) || 'Boon',
+        fromRarity: `Level ${x.fromLevel || Math.max(1, (x.level || 2) - 1)}`,
+        toRarity: `Level ${x.level || 2}`,
+      }
+      : boonOfferComparison(x, boonState),
     curse: x.curse || (boon ? curseForBoon(boon) : null),
     prereq,
     rarity: RARITY[rarity] ? rarity : 'common',

@@ -341,10 +341,12 @@ export class World {
   /**
    * beginBuild() — start a chamber and hand back a suspendable task.
    *
-   * WHY: measured on this machine a chamber costs 50-130ms of pure geometry
-   * synthesis, split fairly evenly across eleven sections. Executed in one call
+   * WHY: measured on this machine a chamber costs 70-275ms of pure geometry
+   * synthesis, spread fairly evenly across its sections. Executed in one call
    * that is a guaranteed multi-frame freeze on the exact frame the player walks
-   * through a door. Sliced, it is eleven ~6ms steps.
+   * through a door. Sliced into ~25 yield points it is a run of ~5-19ms steps,
+   * pumped a few milliseconds per frame by lateUpdate(). `npm run test:perf`
+   * measures both paths.
    *
    * The PLAN step (teardown, profile, door angles, archetype) runs
    * synchronously before we return, because the caller places the hero and
@@ -355,9 +357,8 @@ export class World {
     const ctx = this.ctx;
     if (!ctx) return null;
     if (this._task && !this._task.done) this._task.cancel();
-    const label = 'world.build';
     const task = this.sched.add(this._buildGen(biomeName, archetypeName, seed), {
-      label,
+      label: 'world.build',
       onStep: (t, name, ms) => profiler.section('world.build:' + (typeof name === 'string' ? name : 'final'), ms),
     });
     this._task = task;
@@ -540,10 +541,12 @@ export class World {
     G.flamePoints = [];
     G.slots = [];
 
-    // ── the eleven assembly steps ─────────────────────────────────────────
+    // ── the assembly steps ────────────────────────────────────────────────
     // Each `yield` is a legal suspension point: the chamber is renderable (if
     // incomplete) at every one of them, so a sliced build reads as the room
-    // assembling itself over ~10 frames instead of as a hard stall.
+    // assembling itself over ~15 frames instead of as a hard stall. The four
+    // most expensive sections (void, floor, back wall, colonnade) are
+    // generators of their own so they can suspend mid-section.
     yield 'plan';
     yield* this._buildVoid(ctx, G);
     yield* this._buildFloor(ctx, G);

@@ -11,7 +11,7 @@ import {
   lift, displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
 } from './ornament.js';
 import { godEmblem } from './boons.js';
-import { GOD_INFO, SLOTS } from '../game/boons.js';
+import { GOD_INFO } from '../game/boons.js';
 import { CONTROL_ROWS } from '../core/controls.js';
 
 const QUALITY = ['auto', 'low', 'med', 'high', 'ultra'];

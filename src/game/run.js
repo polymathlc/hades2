@@ -356,18 +356,22 @@ export class RunState {
    * THE BUG THIS EXISTS TO KILL: MaterialLibrary starts that bake on
    * 'biome.changed' — which the chamber rebuild emits and then immediately
    * out-races, because the rebuild is synchronous and the workers are not. So
-   * every surface fell through to MaterialLibrary.set()'s main-thread bake:
-   * 1362ms for Asphodel, 301ms for Elysium, measured at the `high` profile.
-   * Bosses stand at depths 5/10/15 and the door out of a boss room is the door
-   * that changes biome, which is precisely why "the game freezes after the boss
-   * dies" was the loudest symptom in the game.
+   * every surface fell through to MaterialLibrary.set()'s main-thread bake —
+   * measured at the `high` profile, well over a second for Asphodel and most of
+   * a second for Elysium (see docs/perf-notes.md; `npm run test:perf` prints the
+   * current figures). Bosses stand at depths 5/10/15 and the door out of a boss
+   * room is the door that changes biome, which is precisely why "the game
+   * freezes after the boss dies" was the loudest symptom in the game.
+   *
+   * Looking three rooms ahead is deliberate: it puts the whole bake safely
+   * inside the fight BEFORE the boss fight, not inside the boss fight itself.
    */
   _prewarmAhead() {
     const ctx = this.ctx;
     const mats = ctx?.mats;
     if (!mats) return this;
     const next = this.depth === 15 ? FINAL_BOSS_DEPTH : this.depth + 1;
-    const targets = [this.biomeFor(next), this.biomeFor(next + 1)];
+    const targets = [this.biomeFor(next), this.biomeFor(next + 1), this.biomeFor(next + 2)];
     for (const b of targets) {
       if (!b) continue;
       prewarmBiomeTextures(mats, b).then(() => {

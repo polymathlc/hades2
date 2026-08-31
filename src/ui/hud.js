@@ -19,7 +19,7 @@ import {
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
-import { upsertHudBoon, hudBoonSlotLabel, hudBoonGroups, HUD_ACTION_SLOTS } from './hud-boons.js';
+import { upsertHudBoon, hudBoonSlotLabel, hudBoonGroups } from './hud-boons.js';
 
 /** The binding for each ability category, so the tray doubles as a legend. */
 const HUD_SLOT_KEY = { attack: 'LMB', special: 'RMB', cast: 'Q', dash: 'SPACE', call: 'R' };
@@ -76,6 +76,10 @@ export class HUD {
     this.boonPop = new Map();
     this.boonRects = [];                  // tray hit targets, rebuilt each draw
     this.hoverBoonId = null;              // the row under the cursor, or null
+    // Before the first boon the tray is five empty sockets and nothing else,
+    // which is noise. Set this to show the empty loadout anyway (capture, or a
+    // tutorial that wants to point at the sockets).
+    this._trayAlwaysOn = false;
 
     this.alpha = new Spring(1, 120, 0.9);
     this.visible = true;
@@ -376,10 +380,24 @@ export class HUD {
     g.restore();
     plaqueRect(g, x, y, w, h, r);
     g.strokeStyle = goldGradient(g, x, y, x, y + h, 0.7); g.lineWidth = 1.2 * S; g.stroke();
-    tracked(g, 'MAGICK', x + 8 * S, y + h * 0.76, {
-      size: 8 * S, track: 0.32, weight: 600, align: 'left', color: rgba('#bfe8ff', 0.65), shadow: '#04060f', shadowDy: 1,
+    // The label sits on top of a lit fill, so it needs its own ground or it
+    // disappears exactly when the bar is full. A narrow ink plate does it
+    // without turning the bar into a two-tone stripe.
+    const lw = trackedWidth(g, 'MAGICK', { size: 8 * S, track: 0.32, weight: 600 });
+    g.save();
+    plaqueRect(g, x + 4 * S, y + h * 0.18, lw + 9 * S, h * 0.64, 2 * S);
+    g.fillStyle = 'rgba(4,8,18,0.62)'; g.fill();
+    g.restore();
+    tracked(g, 'MAGICK', x + 8.5 * S, y + h * 0.76, {
+      size: 8 * S, track: 0.32, weight: 600, align: 'left', color: rgba('#d8f2ff', 0.92), shadow: '#04060f', shadowDy: 1,
     });
-    tracked(g, String(Math.round(this.mana.cur)), x + w - 8 * S, y + h * 0.76, {
+    // current over maximum, the same grammar the life bar uses
+    const maxTxt = ' /' + Math.round(this.mana.max);
+    const maxW = trackedWidth(g, maxTxt, { size: 7.6 * S, track: 0.05, weight: 600 });
+    tracked(g, maxTxt, x + w - 8 * S, y + h * 0.76, {
+      size: 7.6 * S, track: 0.05, weight: 600, align: 'right', color: rgba('#bfe8ff', 0.7), shadow: '#04060f', shadowDy: 1,
+    });
+    tracked(g, String(Math.round(this.mana.cur)), x + w - 8 * S - maxW, y + h * 0.76, {
       size: 10.5 * S, track: 0.05, weight: 700, align: 'right', color: '#e6f6ff', shadow: '#04060f', shadowDy: 1,
     });
   }
@@ -408,7 +426,8 @@ export class HUD {
         g.fillStyle = rg; g.beginPath(); g.arc(cx, y, s * 2.6, 0, 6.2832); g.fill(); g.restore();
       }
     }
-    tracked(g, 'CAST', x - 5 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    // The binding rides with the meter, matching the boon tray's legend.
+    tracked(g, 'CAST · Q', x - 5 * S, y + 20 * S, { size: 7.6 * S, track: 0.26, weight: 600, color: rgba(PAL.parchDim, 0.72) });
   }
 
   _dashPips(g, x, y, S, t) {
@@ -433,7 +452,7 @@ export class HUD {
       g.strokeStyle = on ? rgba('#ffe9a8', 0.6) : 'rgba(90,70,120,0.5)'; g.lineWidth = 1 * S; g.stroke();
       g.restore();
     }
-    tracked(g, 'DASH', x - 6 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    tracked(g, 'DASH · SPACE', x - 6 * S, y + 20 * S, { size: 7.6 * S, track: 0.26, weight: 600, color: rgba(PAL.parchDim, 0.72) });
   }
 
   // ═══════════════════════════════════════════════ depth / biome plaque ═══

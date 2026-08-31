@@ -30,7 +30,7 @@ the rebuild starts asking for surfaces. Every one of them therefore fell through
 calling thread**.
 
 Measured cost of that fallback at the `high` profile (`proceduralScale 0.58`),
-`node .perf-tmp/bench3` style direct `bakeSet()` calls:
+timing `bakeSet()` directly per recipe:
 
 | biome | blocking bake | worst single recipe |
 |---|---|---|
@@ -115,6 +115,14 @@ longest single frame    1944 ms               16 ms     (119x)
 blocking texture bake   1803 / 2329 / 1827 ms  0 ms  (0 sets, every run)
 transition wall time    1944 / 2466 / 1994 ms  586 / 582 / 1668 ms
 transition frames       1 (the freeze)         12-15 frames of normal play
+```
+
+A fourth run, after the final round of edits:
+
+```
+longest frame        1614 ms -> 13 ms   (126x)
+blocking bake        1516 ms -> 0 ms    (0 sets)
+transition wall      1614 ms -> 206 ms  (14 live frames)
 ```
 
 * **The freeze is gone.** The worst frame in the whole transition is now inside
