@@ -288,11 +288,27 @@ export class Atmosphere {
 
   _rand(){ return this._rng ? this._rng.f() : 0.5; }
 
+  /**
+   * (Re)author the mote layers for the current biome.
+   *
+   * PERF: this used to dispose every layer's ShaderMaterial and mint new ones
+   * on every biome change. Disposing the last material referencing a program
+   * makes three.js delete the compiled program, so the next biome recompiled
+   * the mote shader from source — a synchronous driver stall on the first frame
+   * of the new chamber, which is the frame a transition can least afford.
+   * The materials are now PERSISTENT: a biome change re-stamps their uniforms.
+   * Geometry is reused too whenever the population size has not changed, which
+   * also spares three typed-array allocations per layer per transition.
+   */
   _buildLayers(ctx){
-    for(const l of this.layers){ this.root.remove(l.points); l.points.geometry.dispose(); l.points.material.dispose(); }
-    this.layers.length = 0;
     const air = AIR[this.biome] || AIR.tartarus;
     const R = ((ctx.world && ctx.world.bounds && ctx.world.bounds.r) || 16) * 1.5;
+    // retire any layer beyond the current count (a tier change can shrink it)
+    for(let li = this.layers.length - 1; li >= this.layerCount; li--){
+      const l = this.layers[li];
+      this.root.remove(l.points); l.points.geometry.dispose(); l.points.material.dispose();
+      this.layers.length = li;
+    }
 
     for(let li = 0; li < this.layerCount; li++){
       const def = air.motes[li] || air.motes[0];
@@ -318,6 +334,33 @@ export class Atmosphere {
         tint[i * 3 + 1] = c.g * j * (0.9 + this._rand() * 0.2);
         tint[i * 3 + 2] = c.b * j;
       }
+      const existing = this.layers[li];
+      if(existing){
+        // reuse the material (and therefore its compiled program) always, and
+        // the geometry whenever the population size is unchanged
+        const geo = existing.points.geometry;
+        const same = geo.getAttribute('position') && geo.getAttribute('position').count === n;
+        if(same){
+          geo.getAttribute('position').copyArray(pos); geo.getAttribute('position').needsUpdate = true;
+          geo.getAttribute('aSeed').copyArray(seed);   geo.getAttribute('aSeed').needsUpdate = true;
+          geo.getAttribute('aTint').copyArray(tint);   geo.getAttribute('aTint').needsUpdate = true;
+        } else {
+          geo.dispose();
+          const g2 = new THREE.BufferGeometry();
+          g2.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+          g2.setAttribute('aSeed', new THREE.BufferAttribute(seed, 3));
+          g2.setAttribute('aTint', new THREE.BufferAttribute(tint, 3));
+          existing.points.geometry = g2;
+        }
+        existing.points.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 3 + def.span);
+        const u = existing.points.material.uniforms;
+        u.uSize.value = def.size; u.uRise.value = def.rise; u.uSpanY.value = def.span;
+        u.uIntensity.value = def.intensity; u.uShape.value = def.shape ?? 0.0;
+        existing.def = def;
+        if(!existing.points.parent) this.root.add(existing.points);
+        continue;
+      }
+
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 3));
@@ -341,7 +384,7 @@ export class Atmosphere {
       pts.frustumCulled = false;
       pts.renderOrder = 10;
       this.root.add(pts);
-      this.layers.push({ points: pts, def });
+      this.layers[li] = { points: pts, def };
     }
   }
 

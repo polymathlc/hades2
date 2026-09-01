@@ -12,3 +12,11 @@ desktop/app/
 release/
 
 .standalone-build/
+
+# agent scratch
+.perf-tmp/
+.probe.mjs
+.shoot-tmp.mjs
+
+# regenerable texture previews (tools/texture-preview.mjs)
+docs/texture-preview/*.png

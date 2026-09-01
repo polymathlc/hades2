@@ -22,44 +22,140 @@ export const SLOTS = {
   cast:    { name: 'Cast',    glyph: 'bolt' },
   dash:    { name: 'Dash',    glyph: 'chevron' },
   call:    { name: 'Call',    glyph: 'horn' },
-  passive: { name: 'Boon',    glyph: 'laurel' },
+  passive: { name: 'Blessing', glyph: 'laurel' },   // the Codex's own word for the group
   forge:   { name: 'Weapon Forge', glyph: 'hammer' },
   gain:    { name: 'Magick Gain', glyph: 'moons' },
+  legendary: { name: 'Legendary', glyph: 'laurel' },
 };
 
+// ── RARITY ─────────────────────────────────────────────────────────────────
+// Hades separates two axes and so do we.
+//   * RARITIES is the *ladder*: the four tiers a normal boon can roll on and
+//     be promoted along. Every authored `base` table is written at Common and
+//     multiplied up, so one card covers all four tiers.
+//   * TIERS adds the two fixed grades that never roll and never promote —
+//     Duo (two gods) and Legendary (one god, deep investment). Giving them
+//     real multipliers is what makes the payoff cards feel like payoffs.
 export const RARITIES = ['common', 'rare', 'epic', 'heroic'];
-export const RARITY_MUL = { common: 1, rare: 1.5, epic: 2.0, heroic: 2.6 };
-export const RARITY_LABEL = { common: 'Common', rare: 'Rare', epic: 'Epic', heroic: 'Heroic' };
+export const FIXED_TIERS = ['duo', 'legendary'];
+export const TIERS = [...RARITIES, ...FIXED_TIERS];
+export const RARITY_MUL = { common: 1, rare: 1.5, epic: 2.0, heroic: 2.6, duo: 2.2, legendary: 3.0 };
+export const RARITY_LABEL = { common: 'Common', rare: 'Rare', epic: 'Epic', heroic: 'Heroic', duo: 'Duo', legendary: 'Legendary' };
+/** Canonical tier colours. src/ui/style.css mirrors these as CSS custom properties. */
+export const RARITY_COLOR = {
+  common: '#c9a476', rare: '#cfdcee', epic: '#f2c14e',
+  heroic: '#ffd6f0', duo: '#7ef2c8', legendary: '#ff9d5c',
+};
 /** Weights used when a boon is offered without a forced rarity. */
 export const RARITY_WEIGHT = { common: 62, rare: 26, epic: 9, heroic: 3 };
 
 const rarityRank = (rarity) => Math.max(0, RARITIES.indexOf(rarity));
 const nextRarity = (rarity) => RARITIES[Math.min(RARITIES.length - 1, rarityRank(rarity) + 1)];
+const isLadder = (rarity) => RARITIES.includes(rarity);
+export const isFixedTier = (rarity) => FIXED_TIERS.includes(rarity);
 const CORE_SLOTS = Object.freeze(['attack', 'special', 'cast', 'dash', 'call', 'gain']);
+/** The five categories a god's offer can occupy. Exactly one boon each. */
+export const ACTION_SLOTS = Object.freeze(['attack', 'special', 'cast', 'dash', 'call']);
 
+// ── STATUS CURSES ──────────────────────────────────────────────────────────
+// The combat authority implements five status primitives (burn / chill /
+// shock / doom / weak). Hades II speaks in *curses* instead, and a curse is
+// more than a rename: it carries its own name, colour, verb and the god who
+// deals it, so a card can promise "Scorch" and the HUD can show a scorch chip
+// while combat keeps ticking the one primitive it knows how to tick.
+//
+// `engine` is the only field combat ever sees. Everything else is identity.
+export const CURSES = Object.freeze({
+  scorch: { id: 'scorch', name: 'Scorch', engine: 'burn', color: '#ff8c1a', verb: 'Burns',
+    blurb: 'Sears foes for damage over time; stacks deepen the burn.' },
+  blitz: { id: 'blitz', name: 'Blitz', engine: 'shock', color: '#ffe14d', verb: 'Builds',
+    blurb: 'Static gathers on the foe and discharges through its guard.' },
+  freeze: { id: 'freeze', name: 'Freeze', engine: 'chill', color: '#3fb8ff', verb: 'Chills',
+    blurb: 'Slows foes and shatters them once fully frozen.' },
+  slow: { id: 'slow', name: 'Slow', engine: 'chill', color: '#8fd8ff', verb: 'Drags',
+    blurb: 'Weighs foes down so they close and swing sluggishly.' },
+  hitch: { id: 'hitch', name: 'Hitch', engine: 'weak', color: '#ff9bd6', verb: 'Binds',
+    blurb: 'Binds a foe: its blows come back blunted and its step drags.' },
+  weak: { id: 'weak', name: 'Weak', engine: 'weak', color: '#8ef0d0', verb: 'Saps',
+    blurb: 'Foes deal markedly less damage while afflicted.' },
+  blind: { id: 'blind', name: 'Blind', engine: 'weak', color: '#ffe9a8', verb: 'Dazzles',
+    blurb: 'Robs foes of their aim, and they never see your blow coming.' },
+  wither: { id: 'wither', name: 'Wither', engine: 'doom', color: '#a05fe0', verb: 'Dooms',
+    blurb: 'A knife hangs over the foe and falls for a delayed burst.' },
+  hangover: { id: 'hangover', name: 'Hangover', engine: 'burn', color: '#b884ff', verb: 'Sickens',
+    blurb: 'Dionysus\u2019 own rot: stacks that amplify everything else you land.' },
+});
+export const CURSE_KEYS = Object.keys(CURSES);
+/** Every display name a description or tooltip may highlight. */
+export const CURSE_NAMES = Object.freeze(CURSE_KEYS.map(k => CURSES[k].name));
+/** Engine status -> the curse used when a god declares no preference. */
+const DEFAULT_CURSE = { burn: 'scorch', chill: 'freeze', shock: 'blitz', doom: 'wither', weak: 'weak' };
+/** Look a curse up by curse id OR by engine status id. */
+export function curseInfo(key) {
+  if (!key) return null;
+  const id = String(key).toLowerCase();
+  return CURSES[id] || CURSES[DEFAULT_CURSE[id]] || null;
+}
+
+// `curse` is the god's signature affliction, `identity` the one-line promise
+// the boon screen prints under their name. Two gods who both apply `weak` are
+// still distinct because one Hitches and the other Blinds.
 export const GOD_INFO = {
-  zeus:      { name: 'Zeus',      title: 'God of Thunder',        color: GODS.zeus,      status: 'shock', emblem: 'bolt' },
-  poseidon:  { name: 'Poseidon',  title: 'God of the Sea',        color: GODS.poseidon,  status: null,    emblem: 'trident' },
-  athena:    { name: 'Athena',    title: 'Goddess of Wisdom',     color: GODS.athena,    status: null,    emblem: 'aegis' },
-  aphrodite: { name: 'Aphrodite', title: 'Goddess of Love',       color: GODS.aphrodite, status: 'weak',  emblem: 'rose' },
-  ares:      { name: 'Ares',      title: 'God of War',            color: GODS.ares,      status: 'doom',  emblem: 'blades' },
-  artemis:   { name: 'Artemis',   title: 'Goddess of the Hunt',   color: GODS.artemis,   status: null,    emblem: 'bow' },
-  dionysus:  { name: 'Dionysus',  title: 'God of Wine',           color: GODS.dionysus,  status: 'burn',  emblem: 'grapes' },
-  hermes:    { name: 'Hermes',    title: 'God of Swiftness',      color: GODS.hermes,    status: null,    emblem: 'wing' },
-  hecate:    { name: 'Hecate',    title: 'Witch of the Crossroads', color: GODS.hecate,  status: 'chill', emblem: 'moons' },
-  selene:    { name: 'Selene',    title: 'Goddess of the Moon',   color: GODS.selene,    status: 'chill', emblem: 'crescent' },
-  hephaestus:{ name: 'Hephaestus',title: 'God of the Forge',      color: GODS.hephaestus,status: 'burn',  emblem: 'hammer' },
-  demeter:   { name: 'Demeter',   title: 'Goddess of Seasons',    color: GODS.demeter,   status: 'chill', emblem: 'wheat' },
-  apollo:    { name: 'Apollo',    title: 'God of Light',           color: GODS.apollo,    status: 'weak',  emblem: 'sun' },
-  hera:      { name: 'Hera',      title: 'Queen of Olympus',       color: GODS.hera,      status: 'weak',  emblem: 'crown' },
-  hestia:    { name: 'Hestia',    title: 'Goddess of Flame',      color: GODS.hestia,    status: 'burn',  emblem: 'flame' },
-  chaos:     { name: 'Chaos',     title: 'Origin of All',          color: GODS.chaos,     status: null,    emblem: 'spiral' },
-  hades:     { name: 'Hades',     title: 'Lord of the Dead',       color: GODS.hades,     status: 'doom',  emblem: 'helm' },
+  zeus:      { name: 'Zeus',      title: 'God of Thunder',        color: GODS.zeus,      status: 'shock', emblem: 'bolt',
+    curse: 'blitz', identity: 'Lightning that forks between foes and builds until it breaks them.' },
+  poseidon:  { name: 'Poseidon',  title: 'God of the Sea',        color: GODS.poseidon,  status: null,    emblem: 'trident',
+    curse: 'slow', identity: 'Displacement. Hurl foes into walls and let the room finish them.' },
+  athena:    { name: 'Athena',    title: 'Goddess of Wisdom',     color: GODS.athena,    status: null,    emblem: 'aegis',
+    curse: 'weak', identity: 'Deflection and Exposure — turn incoming harm into an opening.' },
+  aphrodite: { name: 'Aphrodite', title: 'Goddess of Love',       color: GODS.aphrodite, status: 'weak',  emblem: 'rose',
+    curse: 'weak', identity: 'The heaviest single hits, paid for by making foes strike softly.' },
+  ares:      { name: 'Ares',      title: 'God of War',            color: GODS.ares,      status: 'doom',  emblem: 'blades',
+    curse: 'wither', identity: 'Delayed reckonings and blade rifts — damage banked, then collected.' },
+  artemis:   { name: 'Artemis',   title: 'Goddess of the Hunt',   color: GODS.artemis,   status: null,    emblem: 'bow',
+    curse: 'weak', identity: 'Critical chance and seeking shots. Every hit can be the big one.' },
+  dionysus:  { name: 'Dionysus',  title: 'God of Wine',           color: GODS.dionysus,  status: 'burn',  emblem: 'grapes',
+    curse: 'hangover', identity: 'Hangover stacks that amplify everything else you land.' },
+  hermes:    { name: 'Hermes',    title: 'God of Swiftness',      color: GODS.hermes,    status: null,    emblem: 'wing',
+    curse: null, identity: 'Speed as a stat: faster attacks, faster casts, faster escapes.' },
+  hecate:    { name: 'Hecate',    title: 'Witch of the Crossroads', color: GODS.hecate,  status: 'chill', emblem: 'moons',
+    curse: 'freeze', identity: 'Arcane mastery of the Cast, and Freeze that outlasts the fight.' },
+  selene:    { name: 'Selene',    title: 'Goddess of the Moon',   color: GODS.selene,    status: 'chill', emblem: 'crescent',
+    curse: 'freeze', identity: 'Moon magick: the Call, the sustained ray, and silver escapes.' },
+  hephaestus:{ name: 'Hephaestus',title: 'God of the Forge',      color: GODS.hephaestus,status: 'burn',  emblem: 'hammer',
+    curse: 'scorch', identity: 'Forged blasts that change what your weapon is, not just its numbers.' },
+  demeter:   { name: 'Demeter',   title: 'Goddess of Seasons',    color: GODS.demeter,   status: 'chill', emblem: 'wheat',
+    curse: 'freeze', identity: 'Freeze that piles up until the foe simply shatters.' },
+  apollo:    { name: 'Apollo',    title: 'God of Light',           color: GODS.apollo,    status: 'weak',  emblem: 'sun',
+    curse: 'blind', identity: 'Wide radiant areas that Blind — safety through sheer coverage.' },
+  hera:      { name: 'Hera',      title: 'Queen of Olympus',       color: GODS.hera,      status: 'weak',  emblem: 'crown',
+    curse: 'hitch', identity: 'Hitch binds foes together so one wound is shared by the room.' },
+  hestia:    { name: 'Hestia',    title: 'Goddess of Flame',      color: GODS.hestia,    status: 'burn',  emblem: 'flame',
+    curse: 'scorch', identity: 'Many small Scorch stacks rather than one large blow.' },
+  chaos:     { name: 'Chaos',     title: 'Origin of All',          color: GODS.chaos,     status: null,    emblem: 'spiral',
+    curse: null, identity: 'A curse now for a blessing later. Nothing here is free.' },
+  hades:     { name: 'Hades',     title: 'Lord of the Dead',       color: GODS.hades,     status: 'doom',  emblem: 'helm',
+    curse: 'wither', identity: 'The father’s own gifts: Wither, and dominion over the dead.' },
 };
 export const GOD_KEYS = Object.keys(GOD_INFO);
 
+/** The curse a given boon inflicts, or null. God preference wins over status. */
+export function curseForBoon(boon) {
+  if (!boon) return null;
+  if (boon.curse) return CURSES[boon.curse] || null;
+  const status = boon.status || null;
+  if (!status) return null;
+  const god = boon.god || (boon.gods && boon.gods[0]);
+  const preferred = god && GOD_INFO[god] && GOD_INFO[god].curse ? CURSES[GOD_INFO[god].curse] : null;
+  if (preferred && preferred.engine === status) return preferred;
+  return curseInfo(status);
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 const r1 = (n) => Math.round(n * 10) / 10;
+/** A bad text() must never take the offer screen down with it. */
+export function safeText(boon, values) {
+  try { const s = boon.text(values); return typeof s === 'string' ? s : ''; } catch (e) { return ''; }
+}
 const DISCRETE_VALUES = new Set(['stacks', 'ticks', 'arcs', 'forks', 'shots', 'bounces', 'pierce', 'weak', 'chill']);
 function scaleVal(base, mul, key) {
   if (typeof base !== 'number') return base;
@@ -99,7 +195,7 @@ const B = (id, god, slot, name, base, text, apply, extra) => ({ id, god, slot, n
 export const BOONS = [
   // ── ZEUS — chain lightning, shock ────────────────────────────────────────
   B('zeus.attack', 'zeus', 'attack', 'Lightning Strike', { dmg: 14, stacks: 1 },
-    v => `Your Attack deals ${v.dmg} bonus lightning damage and inflicts Shock.`,
+    v => `Your Attack deals ${v.dmg} bonus lightning damage and inflicts Blitz.`,
     (m, v) => rider(m, 'attack', { bonus: v.dmg, type: 'lightning', status: 'shock', stacks: v.stacks, color: GODS.zeus, god: 'zeus', name: 'Lightning Strike' }),
     { status: 'shock' }),
   B('zeus.special', 'zeus', 'special', 'Thunder Flourish', { dmg: 26 },
@@ -108,10 +204,12 @@ export const BOONS = [
     { status: 'shock' }),
   B('zeus.cast', 'zeus', 'cast', 'Electric Shot', { dmg: 20, arcs: 2 },
     v => `Your Cast forks to ${v.arcs} nearby foes for ${v.dmg} lightning damage.`,
-    (m, v) => { rider(m, 'cast', { bonus: v.dmg, type: 'lightning', status: 'shock', color: GODS.zeus, god: 'zeus', name: 'Electric Shot' }); m.castForks += v.arcs; }),
+    (m, v) => { rider(m, 'cast', { bonus: v.dmg, type: 'lightning', status: 'shock', color: GODS.zeus, god: 'zeus', name: 'Electric Shot' }); m.castForks += v.arcs; },
+    { status: 'shock' }),
   B('zeus.dash', 'zeus', 'dash', 'Thunder Dash', { dmg: 22 },
     v => `Your Dash blasts foes at the point of departure for ${v.dmg} lightning damage.`,
-    (m, v) => rider(m, 'dash', { bonus: v.dmg, type: 'lightning', status: 'shock', color: GODS.zeus, god: 'zeus', name: 'Thunder Dash' })),
+    (m, v) => rider(m, 'dash', { bonus: v.dmg, type: 'lightning', status: 'shock', color: GODS.zeus, god: 'zeus', name: 'Thunder Dash' }),
+    { status: 'shock' }),
   B('zeus.passive', 'zeus', 'passive', 'Heaven’s Vengeance', { chance: 8, dmg: 30 },
     v => `${v.chance}% chance that taking damage strikes the attacker for ${v.dmg}.`,
     (m, v) => { m.retaliate += v.chance / 100; m.retaliateDmg += v.dmg; }),
@@ -174,11 +272,11 @@ export const BOONS = [
 
   // ── ARES — doom, blade rifts, crits ──────────────────────────────────────
   B('ares.attack', 'ares', 'attack', 'Curse of Agony', { dmg: 30 },
-    v => `Your Attack inflicts Doom, dealing ${v.dmg} damage after a delay.`,
+    v => `Your Attack inflicts Wither, dealing ${v.dmg} damage after a delay.`,
     (m, v) => rider(m, 'attack', { bonus: 0, type: 'arcane', status: 'doom', statusPower: v.dmg, color: GODS.ares, god: 'ares', name: 'Curse of Agony' }),
     { status: 'doom' }),
   B('ares.special', 'ares', 'special', 'Curse of Pain', { dmg: 46 },
-    v => `Your Special inflicts Doom for ${v.dmg} delayed damage.`,
+    v => `Your Special inflicts Wither for ${v.dmg} delayed damage.`,
     (m, v) => rider(m, 'special', { status: 'doom', type: 'arcane', statusPower: v.dmg, color: GODS.ares, god: 'ares', name: 'Curse of Pain' }),
     { status: 'doom' }),
   B('ares.cast', 'ares', 'cast', 'Slicing Shot', { dmg: 24, ticks: 5 },
@@ -248,23 +346,23 @@ export const BOONS = [
 
   // ── HECATE — chill, arcane, cast mastery ─────────────────────────────────
   B('hecate.attack', 'hecate', 'attack', 'Crossroads Strike', { dmg: 16, chill: 2 },
-    v => `Your Attack deals ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    v => `Your Attack deals ${v.dmg} arcane damage and Freezes (${v.chill}).`,
     (m, v) => rider(m, 'attack', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Crossroads Strike' }),
     { status: 'chill' }),
   B('hecate.cast', 'hecate', 'cast', 'Witching Hour', { dmg: 34, chill: 3 },
-    v => `Your Cast rends for ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    v => `Your Cast rends for ${v.dmg} arcane damage and Freezes (${v.chill}).`,
     (m, v) => rider(m, 'cast', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Witching Hour' }),
     { status: 'chill' }),
   B('hecate.special', 'hecate', 'special', 'Hex Flourish', { dmg: 28, chill: 2 },
-    v => `Your Special hexes for ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    v => `Your Special hexes for ${v.dmg} arcane damage and Freezes (${v.chill}).`,
     (m, v) => rider(m, 'special', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Hex Flourish' }),
     { status: 'chill' }),
   B('hecate.dash', 'hecate', 'dash', 'Phase Dash', { dmg: 14, chill: 2 },
-    v => `Your Dash phases through foes, Chilling (${v.chill}) for ${v.dmg}.`,
+    v => `Your Dash phases through foes, Freezing (${v.chill}) for ${v.dmg}.`,
     (m, v) => rider(m, 'dash', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.hecate, god: 'hecate', name: 'Phase Dash' }),
     { status: 'chill' }),
   B('hecate.passive', 'hecate', 'passive', 'Arcane Reserve', { mana: 40 },
-    v => `Magick regenerates ${v.mana}% faster; Chill lasts longer.`,
+    v => `Magick regenerates ${v.mana}% faster; Freeze lasts longer.`,
     (m, v) => { m.manaRegenMul *= (1 + v.mana / 100); m.statusDuration.chill *= 1.25; }),
 
   // ── SELENE — moon magick, the Call ───────────────────────────────────────
@@ -281,7 +379,7 @@ export const BOONS = [
     v => `Your Dash leaves moonlight for ${v.dmg} and extends invulnerability ${v.iframes}s.`,
     (m, v) => { rider(m, 'dash', { bonus: v.dmg, type: 'arcane', color: GODS.selene, god: 'selene', name: 'Silver Step' }); m.iframeAdd += v.iframes; }),
   B('selene.special', 'selene', 'special', 'Moonlit Flourish', { dmg: 26, chill: 2 },
-    v => `Your Special deals ${v.dmg} arcane damage and Chills (${v.chill}).`,
+    v => `Your Special deals ${v.dmg} arcane damage and Freezes (${v.chill}).`,
     (m, v) => rider(m, 'special', { bonus: v.dmg, type: 'arcane', status: 'chill', stacks: v.chill, color: GODS.selene, god: 'selene', name: 'Moonlit Flourish' }),
     { status: 'chill' }),
 
@@ -398,33 +496,209 @@ for (const boon of CANON_BOONS) if (!BOONS.some(existing => existing.id === boon
 // A duo requires a boon from BOTH gods already granted. They are rare, always
 // offered at Epic or above, and read as the run's payoff.
 export const DUOS = [
+  // The eight authored duos name their own prerequisites: a duo is a promise
+  // about a specific pair of gifts, and the derived gate below is the fallback
+  // for the ~77 generated pairs, not the ideal.
   { id: 'duo.zeus.poseidon', gods: ['zeus', 'poseidon'], name: 'Sea Storm', slot: 'passive',
+    requires: {
+      zeus: ['zeus.attack', 'zeus.special', 'h2.zeus.attack'],
+      poseidon: ['poseidon.attack', 'poseidon.dash', 'h2.poseidon.dash'],
+    },
     base: { dmg: 40 }, text: v => `Foes knocked back are struck by lightning for ${v.dmg} damage.`,
     apply: (m, v) => { m.seaStormDmg += v.dmg; } },
   { id: 'duo.zeus.artemis', gods: ['zeus', 'artemis'], name: 'Fully Loaded', slot: 'passive',
+    requires: {
+      zeus: ['zeus.cast', 'zeus.special', 'h2.zeus.cast'],
+      artemis: ['artemis.attack', 'artemis.cast', 'artemis.special'],
+    },
     base: { crit: 10 }, text: v => `Lightning strikes can Critically hit for +${v.crit}%.`,
     apply: (m, v) => { m.lightningCrit += v.crit / 100; } },
   { id: 'duo.ares.aphrodite', gods: ['ares', 'aphrodite'], name: 'Curse of Longing', slot: 'passive',
+    requires: {
+      ares: ['ares.attack', 'ares.special', 'ares.cast'],
+      aphrodite: ['aphrodite.attack', 'aphrodite.special', 'aphrodite.cast'],
+    },
     base: { dmg: 55 }, text: v => `Doom on Weakened foes deals ${v.dmg} extra damage.`,
     apply: (m, v) => { m.doomVsWeak += v.dmg; } },
   { id: 'duo.ares.artemis', gods: ['ares', 'artemis'], name: 'Hunting Blades', slot: 'passive',
+    requires: {
+      ares: ['ares.attack', 'ares.dash', 'h2.ares.attack'],
+      artemis: ['artemis.attack', 'artemis.special', 'artemis.dash'],
+    },
     base: { dmg: 34 }, text: v => `Critical hits open a Blade Rift for ${v.dmg} damage.`,
     apply: (m, v) => { m.critRiftDmg += v.dmg; } },
   { id: 'duo.dionysus.aphrodite', gods: ['dionysus', 'aphrodite'], name: 'Low Tolerance', slot: 'passive',
+    requires: {
+      dionysus: ['dionysus.attack', 'dionysus.special', 'dionysus.cast'],
+      aphrodite: ['aphrodite.attack', 'aphrodite.special', 'aphrodite.dash'],
+    },
     base: { dmg: 6 }, text: v => `Weakened foes take +${v.dmg}% damage per Hangover stack.`,
     apply: (m, v) => { m.hangoverVsWeak += v.dmg / 100; } },
   { id: 'duo.hecate.selene', gods: ['hecate', 'selene'], name: 'Moonstruck', slot: 'passive',
-    base: { dmg: 28 }, text: v => `Chilled foes shatter under moonlight for ${v.dmg} arcane damage.`,
+    requires: {
+      hecate: ['hecate.cast', 'hecate.attack', 'hecate.special'],
+      selene: ['selene.cast', 'selene.call', 'selene.special'],
+    },
+    base: { dmg: 28 }, text: v => `Frozen foes shatter under moonlight for ${v.dmg} arcane damage.`,
     apply: (m, v) => { m.moonlightShatter += v.dmg; } },
   { id: 'duo.athena.hermes', gods: ['athena', 'hermes'], name: 'Sure Footing', slot: 'passive',
+    requires: {
+      athena: ['athena.dash', 'athena.special', 'athena.attack'],
+      hermes: ['hermes.dash', 'hermes.attack', 'hermes.dash.alternate'],
+    },
     base: { dodge: 12 }, text: v => `While deflecting, gain +${v.dodge}% dodge and move freely.`,
     apply: (m, v) => { m.deflectDodge += v.dodge / 100; } },
   { id: 'duo.poseidon.hermes', gods: ['poseidon', 'hermes'], name: 'Rip Current', slot: 'passive',
+    requires: {
+      poseidon: ['poseidon.dash', 'poseidon.attack', 'poseidon.special'],
+      hermes: ['hermes.dash', 'hermes.cast', 'hermes.dash.alternate'],
+    },
     base: { spd: 18 }, text: v => `Knockback carries you: move ${v.spd}% faster after a slam.`,
     apply: (m, v) => { m.slamSpeed += v.spd / 100; m.knockback += 1.5; } },
 ];
 DUOS.push(...EXPANDED_DUOS);
 for (const duo of CANON_DUOS) if (!DUOS.some(existing => existing.id === duo.id)) DUOS.push(duo);
+
+// ═════════════════════════════════════════════════ PREREQUISITE GATING ════
+// In Hades a Duo is not "you met both gods". It is "you hold one of *these*
+// boons from her AND one of *these* from him", which is what turns a Duo into
+// something you build toward instead of something that happens to you.
+//
+// Authoring 100+ hand-written requirement lists would rot instantly, so the
+// list is derived once, deterministically, from what each god actually offers:
+// their action-slot boons (Attack/Special/Cast/Dash/Call) are the prerequisite
+// pool, because those are the cards that define a build. Passives are excluded
+// — a passive is a stat, not a commitment. A duo may still override with its
+// own explicit `requires` map when a designer wants a tighter promise.
+const ACTION_SET = new Set(ACTION_SLOTS);
+const PREREQ_POOL = new Map();
+function prereqPool(god) {
+  let list = PREREQ_POOL.get(god);
+  if (!list) {
+    list = BOONS.filter(b => b.god === god && ACTION_SET.has(b.slot) && !b.weapon).map(b => b.id);
+    // A god with no action family at all (pure passives) still needs a gate.
+    if (!list.length) list = BOONS.filter(b => b.god === god).map(b => b.id);
+    PREREQ_POOL.set(god, list);
+  }
+  return list;
+}
+/**
+ * A duo's derived gate. "Hold any one of this god's thirteen action boons" is
+ * barely a gate at all; Hades names three or four specific gifts. `gatePool`
+ * takes a deterministic contiguous slice of the god's action family, keyed by
+ * the duo's own id, so every duo asks for a DIFFERENT short list, the list is
+ * identical in every run and on every machine, and it still cannot rot when
+ * content is added.
+ */
+const DUO_GATE_WIDTH = 5;
+function gatePool(key, god, width) {
+  const pool = prereqPool(god);
+  if (pool.length <= width) return pool.slice();
+  let h = 2166136261;
+  const s = `${key}:${god}`;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  const start = h % pool.length;
+  const out = [];
+  for (let i = 0; i < width; i++) out.push(pool[(start + i) % pool.length]);
+  return out;
+}
+for (const duo of DUOS) {
+  if (!duo.requires) {
+    duo.requires = {};
+    for (const god of duo.gods) duo.requires[god] = gatePool(duo.id, god, DUO_GATE_WIDTH);
+  }
+  duo.tier = 'duo';
+}
+
+// ══════════════════════════════════════════════════════ LEGENDARY BOONS ════
+// One god, deep investment. Hades gates a Legendary behind two specific boons
+// from that god; we gate behind `need` distinct action boons from their pool,
+// which is the same promise expressed against a generated catalog. Legendaries
+// never roll a rarity — they arrive at their own fixed tier.
+const L = (id, god, name, need, base, text, apply, extra = {}) => ({
+  id: `legendary.${id}`, god, slot: 'legendary', name, base, text, apply,
+  legendary: true, tier: 'legendary', need,
+  requires: { [god]: null },   // filled from prereqPool below
+  ...extra,
+});
+
+export const LEGENDARIES = [
+  L('splitting-bolt', 'zeus', 'Splitting Bolt', 2, { arcs: 1, dmg: 24 },
+    v => `Your lightning forks to ${v.arcs} more foes and every Blitz discharge deals ${v.dmg} extra damage.`,
+    (m, v) => { m.castForks += v.arcs; m.status.shock *= 1.35; m.chainBonus += v.dmg; }, { curse: 'blitz' }),
+  L('hydraulic-might', 'poseidon', 'Hydraulic Might', 2, { pct: 30, knock: 3 },
+    v => `Knockback gains ${v.knock}m and every wall slam deals ${v.pct}% more damage.`,
+    (m, v) => { m.knockback += v.knock; m.wallSlamDmg += 30; m.slamAmp += v.pct / 100; }, { curse: 'slow' }),
+  L('divine-protection', 'athena', 'Divine Protection', 2, { dr: 18, deflect: 0.5 },
+    v => `Take ${v.dr}% less damage, and each chamber begins with a ${v.deflect}s Deflect.`,
+    (m, v) => { m.damageTaken *= 1 - v.dr / 100; m.deflect += v.deflect; m.roomDeflect += v.deflect; }),
+  L('broken-resolve', 'aphrodite', 'Broken Resolve', 2, { pct: 40 },
+    v => `Weak foes take ${v.pct}% more damage from every source.`,
+    (m, v) => { m.vsWeakAmp += v.pct / 100; m.status.weak *= 1.4; }, { curse: 'weak' }),
+  L('vicious-cycle', 'ares', 'Vicious Cycle', 2, { dmg: 30 },
+    v => `Each Wither that resolves deals ${v.dmg} more damage than the last, up to five times.`,
+    (m, v) => { m.doomDmg += v.dmg; m.doomEscalate += v.dmg; m.status.doom *= 1.3; }, { curse: 'wither' }),
+  L('hunters-instinct', 'artemis', 'Hunter’s Instinct', 2, { crit: 15, mul: 1.0 },
+    v => `Gain ${v.crit}% Critical chance and +${v.mul}x Critical damage; your Critical marks never expire.`,
+    (m, v) => { m.critChance += v.crit / 100; m.critMul += v.mul; m.markPermanent = 1; }),
+  L('black-out', 'dionysus', 'Black Out', 2, { dmg: 6 },
+    v => `Hangover stacks amplify all damage by a further ${v.dmg}% each and never fall off early.`,
+    (m, v) => { m.hangoverAmp += v.dmg / 100; m.statusDuration.burn *= 1.6; }, { curse: 'scorch' }),
+  L('greatest-reflex', 'hermes', 'Greatest Reflex', 2, { dash: 1, dodge: 12 },
+    v => `Gain ${v.dash} additional Dash and ${v.dodge}% dodge.`,
+    (m, v) => { m.dashCharges += v.dash; m.dodge += v.dodge / 100; m.moveMul *= 1.08; }),
+  L('winter-harvest', 'demeter', 'Winter Harvest', 2, { dmg: 60 },
+    v => `Frozen foes shatter when struck, dealing ${v.dmg} area damage.`,
+    (m, v) => { m.shatterDmg += v.dmg; m.moonlightShatter += v.dmg * 0.4; m.status.chill *= 1.3; }, { curse: 'freeze' }),
+  L('perfect-image', 'apollo', 'Perfect Image', 2, { pct: 25 },
+    v => `Blind lingers 50% longer, and Blinded foes take ${v.pct}% more damage.`,
+    (m, v) => { m.vsWeakAmp += v.pct / 100; m.statusDuration.weak *= 1.5; }, { curse: 'blind' }),
+  L('nexus-sting', 'hera', 'Nexus Sting', 2, { pct: 35 },
+    v => `Hitched foes share ${v.pct}% of all damage you deal to any of them.`,
+    (m, v) => { m.hitchShare += v.pct / 100; m.status.weak *= 1.3; }, { curse: 'hitch' }),
+  L('soot-sprite', 'hestia', 'Soot Sprite', 2, { stacks: 3 },
+    v => `Scorch stacks ${v.stacks} higher than its cap, and every stack burns.`,
+    (m, v) => { m.scorchCap += v.stacks; m.status.burn *= 1.45; }, { curse: 'scorch' }),
+  L('volcanic-ash', 'hephaestus', 'Volcanic Ash', 2, { dmg: 55 },
+    v => `Every forged Blast leaves cinders that deal ${v.dmg} damage over time.`,
+    (m, v) => { m.forgeMul *= 1.25; m.blastCinder += v.dmg; }, { curse: 'scorch' }),
+  L('crossroads-crown', 'hecate', 'Crossroads Crown', 2, { pct: 35, mana: 40 },
+    v => `Cast damage gains ${v.pct}% and Magick returns ${v.mana}% faster.`,
+    (m, v) => { m.castMul *= 1 + v.pct / 100; m.manaRegenMul *= 1 + v.mana / 100; }, { curse: 'freeze' }),
+  L('moons-favour', 'selene', 'Moon’s Favour', 2, { pct: 45, cdr: 30 },
+    v => `Your Call deals ${v.pct}% more damage and charges ${v.cdr}% faster.`,
+    (m, v) => { m.callMul *= 1 + v.pct / 100; m.callCharge *= 1 + v.cdr / 100; }),
+];
+for (const leg of LEGENDARIES) leg.requires = { [leg.god]: prereqPool(leg.god) };
+BOONS.push(...LEGENDARIES);
+
+/**
+ * Does `held` (a Set/Map of owned boon ids) satisfy this boon's requirement?
+ * Returns a structured report so the card can *show* what is still missing —
+ * a locked duo the player can read is a goal; one they cannot is noise.
+ */
+export function prerequisiteStatus(boon, held) {
+  const req = boon && boon.requires;
+  if (!req) return { gated: false, met: true, need: 0, gods: [] };
+  const has = (id) => (held && (held.has ? held.has(id) : !!held[id]));
+  const need = boon.need || 1;
+  const gods = [];
+  let met = true;
+  for (const god of Object.keys(req)) {
+    const pool = req[god] || [];
+    const owned = pool.filter(has);
+    const short = Math.max(0, need - owned.length);
+    if (short > 0) met = false;
+    gods.push({
+      god,
+      need,
+      have: owned.length,
+      met: short === 0,
+      ownedNames: owned.map(id => BOONS.find(b => b.id === id)?.name).filter(Boolean),
+    });
+  }
+  return { gated: true, met, need, gods };
+}
 
 // ═══════════════════════════════════════════════════════ MODIFIER STATE ════
 export function emptyMods() {
@@ -441,6 +715,11 @@ export function emptyMods() {
     hangoverAmp: 0, retaliate: 0, retaliateDmg: 0, callRefund: 0,
     seaStormDmg: 0, lightningCrit: 0, doomVsWeak: 0, critRiftDmg: 0,
     hangoverVsWeak: 0, moonlightShatter: 0, deflectDodge: 0, slamSpeed: 0,
+    // Legendary payoffs. Each is read by exactly one place at runtime; the
+    // ones combat does not yet consume still change the loadout report and the
+    // Codex, so no Legendary is ever a card with no consequence.
+    chainBonus: 0, slamAmp: 0, roomDeflect: 0, vsWeakAmp: 0, doomEscalate: 0,
+    markPermanent: 0, dashCharges: 0, hitchShare: 0, scorchCap: 0, blastCinder: 0,
     // per-slot riders
     rider: { attack: null, special: null, cast: null, dash: null, call: null },
     // status potency multipliers, keyed to the combat system's own statuses
@@ -474,9 +753,19 @@ export class BoonState {
     this.byId = new Map();
     this.mods = emptyMods();
     this.godCount = {};
+    // Fated Persuasion: a run-scoped currency that lets the player refuse the
+    // hand they were dealt. Seeded from the Mirror so meta progression is felt
+    // on the very first offer of a descent.
+    this.rerolls = 0;
+    this.rerollsSpent = 0;
+    this._seen = new Set();          // ids already shown this offer, for rerolls
+    // Poms of Power. Held as a run resource so a chamber reward, a shop or a
+    // boss drop can all hand one over through the same door.
+    this.poms = 0;
   }
 
   has(id) { return this.byId.has(id); }
+  get(id) { return this.byId.get(id) || null; }
   /** Gods with at least one boon — the duo requirement and the HUD tray. */
   gods() { return Object.keys(this.godCount); }
   list() { return this.granted; }
@@ -567,14 +856,22 @@ export class BoonState {
     for (const rec of this.granted) {
       try { rec.boon.apply(m, rec.values, this.ctx); } catch (e) { /* a bad boon must never kill the run */ }
     }
-    // Status potency folds into rider stacks so combat needs no extra query.
-    for (const k in m.rider) {
-      const r = m.rider[k];
-      if (r && r.status && m.status[r.status] > 1) r.stacks = Math.max(1, Math.round(r.stacks * m.status[r.status]));
-    }
+    // Curse potency is NOT folded in here. It used to be multiplied into the
+    // rider's stack count, which meant it reached exactly one of the many ways
+    // a status is applied (the rider) and silently missed blasts, forks, calls
+    // and pulses. combat.applyStatus() reads mods.status[kind] directly now, so
+    // every path scales once and by the same number.
     for (const rec of this.granted) {
       const r = m.rider[rec.slot];
-      if (r && (!r.god || r.god === rec.god)) r.tier = Math.max(r.tier || 1, rarityRank(rec.rarity) + 1);
+      if (!r || (r.god && r.god !== rec.god)) continue;
+      r.tier = Math.max(r.tier || 1, rarityRank(rec.rarity) + 1);
+      // The rider carries the CURSE the card promised, not just the engine
+      // primitive underneath it. Combat reads this to colour the affliction
+      // and to bend it: a Hera Hitch and an Apollo Blind are both `weak`, and
+      // without this they would be the same pink-teal wisp doing the same
+      // thing under two different names.
+      const curse = curseForBoon(rec.boon);
+      if (curse && r.status && curse.engine === r.status) { r.curse = curse.id; r.curseColor = curse.color; }
     }
     this.mods = m;
     return m;
@@ -606,12 +903,156 @@ export class BoonState {
     this.godCount = {};
     this.rebuild();
     this._syncPlayer();
+    this.seedRun();
   }
 
-  /** Which duos are currently unlockable given the gods already met. */
-  availableDuos() {
-    return DUOS.filter(d => !this.byId.has(d.id) && d.gods.every(g => this.godCount[g]));
+  /**
+   * Start-of-descent resources. Called by clear() so a new run always begins
+   * with whatever the Mirror has earned — no run system change required.
+   */
+  seedRun() {
+    this.rerolls = Math.max(0, this.ctx?.meta?.startingRerolls?.() || 0);
+    this.rerollsSpent = 0;
+    this.poms = 0;
+    this._seen = new Set();
+    this.ctx?.events?.emit?.('boon.rerolls', { total: this.rerolls });
+    return this;
   }
+
+  // ── slots ────────────────────────────────────────────────────────────────
+  /**
+   * The five action categories and what currently occupies each. This is the
+   * contract the offer engine, the HUD ability icons and the Codex all read,
+   * so "which slot is free" has exactly one answer in the codebase.
+   */
+  slotState() {
+    const out = {};
+    for (const slot of ACTION_SLOTS) {
+      const rec = this.granted.find(r => !r.duo && !r.boon.legendary && r.slot === slot) || null;
+      out[slot] = {
+        slot,
+        filled: !!rec,
+        record: rec,
+        name: rec ? rec.boon.name : null,
+        god: rec ? rec.god : null,
+        rarity: rec ? rec.rarity : null,
+        level: rec ? (rec.level || 1) : 0,
+        upgradable: !!rec && isLadder(rec.rarity) && rarityRank(rec.rarity) < RARITIES.length - 1,
+      };
+    }
+    return out;
+  }
+  /** Categories with nothing in them yet — what a god should offer first. */
+  freeSlots() { const s = this.slotState(); return ACTION_SLOTS.filter(k => !s[k].filled); }
+  /** The boon occupying a category, or null. */
+  slotBoon(slot) { return this.slotState()[slot]?.record || null; }
+
+  // ── duo & legendary gating ───────────────────────────────────────────────
+  /** Structured "what do I still need" for any gated card. */
+  prerequisites(boon) { return prerequisiteStatus(boon, this.byId); }
+
+  /** Which duos are currently unlockable — prerequisite boons actually held. */
+  availableDuos() {
+    return DUOS.filter(d => !this.byId.has(d.id) && prerequisiteStatus(d, this.byId).met);
+  }
+  /** Duos one prerequisite away, for the "you are close" callout. */
+  pendingDuos() {
+    return DUOS
+      .filter(d => !this.byId.has(d.id))
+      .map(d => ({ duo: d, status: prerequisiteStatus(d, this.byId) }))
+      .filter(x => !x.status.met && x.status.gods.some(g => g.met));
+  }
+  /** Legendaries whose single-god investment requirement is satisfied. */
+  availableLegendaries(god) {
+    return LEGENDARIES.filter(l => !this.byId.has(l.id) && (!god || l.god === god)
+      && prerequisiteStatus(l, this.byId).met);
+  }
+
+  // ── Pom of Power ─────────────────────────────────────────────────────────
+  /** Every boon a Pom could deepen: anything with numbers that can grow. */
+  pomTargets() {
+    return this.granted.filter(r => r.boon && r.boon.base && Object.keys(r.boon.base).length);
+  }
+  /**
+   * Raise one boon's level. Levels are the Pom axis (potency) and rarity is
+   * the quality axis; keeping them orthogonal is what lets a Common boon you
+   * have fed five Poms out-damage a fresh Epic, exactly as in Hades.
+   */
+  applyPom(id, levels = 1) {
+    const rec = this.byId.get(id);
+    if (!rec) return null;
+    const before = rec.values;
+    rec.level = Math.max(1, (rec.level || 1) + Math.max(1, levels | 0));
+    rec.values = this.values(rec.boon, rec.rarity, rec.level);
+    this.rebuild();
+    this._syncPlayer();
+    this.ctx?.events?.emit?.('boon.levelled', { boon: rec.boon, level: rec.level, values: rec.values, before, record: rec });
+    return rec;
+  }
+  /** Pom offers, shaped like boon offers so one card renderer serves both. */
+  pomOffers(rng, count = 3) {
+    const targets = this.pomTargets();
+    if (!targets.length) return [];
+    const picked = [];
+    const pool = targets.slice();
+    while (picked.length < Math.min(count, pool.length)) {
+      const i = rng && rng.f ? Math.floor(rng.f() * pool.length) % pool.length : 0;
+      picked.push(pool.splice(i, 1)[0]);
+    }
+    return picked.map(rec => {
+      const next = this.values(rec.boon, rec.rarity, (rec.level || 1) + 1);
+      return {
+        id: rec.boon.id, boon: rec.boon, rarity: rec.rarity, values: next,
+        god: rec.god, gods: rec.boon.gods || [rec.god], slot: rec.slot,
+        level: (rec.level || 1) + 1, name: rec.boon.name,
+        text: safeText(rec.boon, next),
+        color: GOD_INFO[rec.god] ? GOD_INFO[rec.god].color : '#f2c14e',
+        kind: 'pom', pom: true, duo: !!rec.boon.gods,
+        curse: curseForBoon(rec.boon),
+        tier: rec.rarity,
+        fromLevel: rec.level || 1,
+        fromValues: rec.values,
+      };
+    });
+  }
+
+  // ── Poms as a currency ───────────────────────────────────────────────────
+  /** Bank Poms of Power (boss drop, shop, Chaos gate). */
+  grantPoms(n = 1) {
+    this.poms = Math.max(0, this.poms + (n | 0));
+    this.ctx?.events?.emit?.('boon.poms', { total: this.poms });
+    return this.poms;
+  }
+  /** Spend one; the caller has already applied the level. */
+  spendPom(n = 1) {
+    this.poms = Math.max(0, this.poms - Math.max(1, n | 0));
+    this.ctx?.events?.emit?.('boon.poms', { total: this.poms });
+    return this.poms;
+  }
+
+  // ── rerolls ──────────────────────────────────────────────────────────────
+  grantRerolls(n = 1) {
+    this.rerolls = Math.max(0, this.rerolls + (n | 0));
+    this.ctx?.events?.emit?.('boon.rerolls', { total: this.rerolls });
+    return this.rerolls;
+  }
+  canReroll() { return this.rerolls > 0; }
+  /**
+   * Spend one token and deal a different hand. Everything already shown is
+   * remembered for the life of the offer, so a reroll can never hand back the
+   * same three cards — the single most important property of the feature.
+   */
+  reroll(rng, options = {}, shown = []) {
+    if (!this.canReroll()) return null;
+    this.rerolls--;
+    this.rerollsSpent++;
+    for (const o of shown) if (o && o.id) this._seen.add(o.id);
+    const next = this.roll(rng, { ...options, exclude: this._seen });
+    this.ctx?.events?.emit?.('boon.rerolled', { remaining: this.rerolls, offers: next });
+    return next;
+  }
+  /** Called by whoever opens a fresh offer so reroll memory does not leak. */
+  beginOffer() { this._seen = new Set(); return this; }
 
   // ── offering ─────────────────────────────────────────────────────────────
   /**
@@ -655,17 +1096,28 @@ export class BoonState {
       if (offers.length === count) return offers;
     }
     const out = [];
+    const excluded = o.exclude instanceof Set ? o.exclude : new Set(o.exclude || []);
+    // A Legendary outranks everything: it is the reward for having committed
+    // to one god all descent, and it can only appear at that god's own gate.
+    const legendaries = this.availableLegendaries(o.god).filter(l => !excluded.has(l.id));
+    if (legendaries.length && o.allowLegendary !== false
+      && (rng ? rng.f() : 0) < (o.legendaryChance != null ? o.legendaryChance : 0.30)) {
+      out.push(this.offer(rng ? rng.pick(legendaries) : legendaries[0]));
+    }
     // a duo, if earned, always takes the first slot — it is the run's reward
-    const duos = this.availableDuos().filter(d => !o.god || d.gods.includes(o.god));
+    const duos = this.availableDuos()
+      .filter(d => (!o.god || d.gods.includes(o.god)) && !excluded.has(d.id));
     if (duos.length && (o.allowDuo !== false) && (rng ? rng.f() : 1) < (o.duoChance != null ? o.duoChance : 0.18)) {
       const d = rng ? rng.pick(duos) : duos[0];
-      out.push(this.offer(d, (rng ? rng.f() : 0) < 0.5 ? 'epic' : 'heroic'));
+      out.push(this.offer(d));
     }
     // Once a god has blessed the run, boon doors can improve that exact gift.
     // The card keeps its identity but moves one rarity tier, so the changed
     // numbers and effect intensity are easy to understand.
-    const upgradeable = this.granted.filter(rec => rarityRank(rec.rarity) < RARITIES.length - 1
+    const upgradeable = this.granted.filter(rec => isLadder(rec.rarity)
+      && rarityRank(rec.rarity) < RARITIES.length - 1
       && (!o.god || rec.god === o.god)
+      && !excluded.has(rec.boon.id)
       && (!rec.boon.weapon || !o.weapon || rec.boon.weapon === o.weapon));
     const upgradeChance = o.upgradeChance != null ? o.upgradeChance : 0.48;
     if (out.length < count && upgradeable.length && (o.preferUpgrade || (rng ? rng.f() : 0) < upgradeChance)) {
@@ -687,15 +1139,29 @@ export class BoonState {
       && (!b.hero || !hero || b.hero === hero)
       && !(hero === 'melinoe' && MELINOE_CORE_GODS.has(b.god) && CORE_SLOTS.includes(b.slot) && b.hero !== 'melinoe')
       && (!b.weapon || !o.weapon || b.weapon === o.weapon)
+      && !excluded.has(b.id)
+      // Legendaries are never part of the ordinary draw: they enter above,
+      // through their own gate, or not at all.
+      && !b.legendary
       && !(CORE_SLOTS.includes(b.slot) && protectedSlots.has(b.slot) && !this.byId.has(b.id));
     const pool = BOONS.filter(b => eligible(b) && !this.byId.has(b.id));
+    // Hades hands you a card for a category you have not filled far more often
+    // than a sidegrade for one you have. Splitting the pool and drawing from
+    // the "open category" half first is what stops a run from being five
+    // Attack boons in a row while the Cast slot stays empty all descent.
+    const open = new Set(this.freeSlots());
+    const fresh = pool.filter(b => open.has(b.slot));
+    const rest = pool.filter(b => !open.has(b.slot));
     const src = pool;
     const used = new Set(out.map(x => x.boon.id));
     let guard = 0, seq = 0;
     while (out.length < count && src.length && guard++ < 400) {
       // random draw first; after a few misses walk the pool so a small or
       // degenerate rng stream can never return fewer cards than asked for
-      const b = (rng && guard < 40) ? rng.pick(src) : src[seq++ % src.length];
+      const openBias = o.slotBias != null ? o.slotBias : 0.72;
+      const preferFresh = fresh.length && (rng ? rng.f() : 0) < openBias;
+      const bag = preferFresh ? fresh : (rest.length ? rest : src);
+      const b = (rng && guard < 40) ? rng.pick(bag) : src[seq++ % src.length];
       if (!b || used.has(b.id)) continue;
       used.add(b.id);
       out.push(this.offer(b, pickR(b.god)));
@@ -715,14 +1181,18 @@ export class BoonState {
   /** Package a boon + rarity into the object the UI renders and grant() takes. */
   offer(boon, rarity = 'common') {
     const slot = boon.slot || 'passive';
+    // Duos and Legendaries do not roll. They arrive at their own fixed grade,
+    // which is the whole reason those cards read as an event.
+    if (boon.gods) rarity = 'duo';
+    else if (boon.legendary) rarity = 'legendary';
     const owned = this.byId.get(boon.id);
-    if (owned && rarityRank(owned.rarity) > rarityRank(rarity)) rarity = owned.rarity;
+    if (owned && isLadder(rarity) && rarityRank(owned.rarity) > rarityRank(rarity)) rarity = owned.rarity;
     let replacement = null;
     let replacementBoosted = false;
     // Preview replacement transmutation on the card itself. This keeps the
     // rarity label, description numbers and eventual runtime modifier in lock
     // step instead of surprising the player only after they choose it.
-    if (CORE_SLOTS.includes(slot) && !this.byId.has(boon.id)) {
+    if (CORE_SLOTS.includes(slot) && !boon.gods && !boon.legendary && !this.byId.has(boon.id)) {
       replacement = this.granted.find(r => !r.duo && r.slot === slot) || null;
       if (replacement) {
         const inherited = rarityRank(replacement.rarity) > rarityRank(rarity) ? replacement.rarity : rarity;
@@ -733,22 +1203,67 @@ export class BoonState {
     const level = owned ? (owned.level || 1) + 1 : replacement ? (replacement.level || 1) : 1;
     const values = this.values(boon, rarity, level);
     const god = boon.god || (boon.gods && boon.gods[0]);
+    const prereq = boon.requires ? prerequisiteStatus(boon, this.byId) : null;
     return {
       id: boon.id, boon, rarity, values,
       god, gods: boon.gods || [god],
       slot,
       level,
       name: boon.name,
-      text: (() => { try { return boon.text(values); } catch (e) { return ''; } })(),
+      text: safeText(boon, values),
       color: GOD_INFO[god] ? GOD_INFO[god].color : '#f2c14e',
       duo: !!boon.gods,
+      legendary: !!boon.legendary,
+      tier: boon.gods ? 'duo' : boon.legendary ? 'legendary' : rarity,
+      curse: curseForBoon(boon),
+      prereq,
+      locked: !!(prereq && !prereq.met),
       status: boon.status || null,
       upgrade: replacementBoosted,
       replacementBoosted,
       replaces: replacement?.boon?.id || null,
     };
   }
+
+  /**
+   * Everything the loadout screen needs about one owned boon, including the
+   * live description at its current rarity *and* level — a Codex that shows
+   * authored text instead of the numbers actually in play is a lie.
+   */
+  describe(rec) {
+    if (!rec || !rec.boon) return null;
+    const boon = rec.boon;
+    const god = rec.god || boon.god || (boon.gods && boon.gods[0]);
+    return {
+      id: boon.id,
+      name: boon.name,
+      god,
+      gods: boon.gods || [god],
+      slot: rec.slot || boon.slot || 'passive',
+      rarity: rec.rarity || 'common',
+      tier: boon.gods ? 'duo' : boon.legendary ? 'legendary' : (rec.rarity || 'common'),
+      level: rec.level || 1,
+      values: rec.values,
+      text: safeText(boon, rec.values),
+      curse: curseForBoon(boon),
+      duo: !!boon.gods,
+      legendary: !!boon.legendary,
+      color: GOD_INFO[god] ? GOD_INFO[god].color : '#f2c14e',
+    };
+  }
+  /** The whole build, ordered the way the HUD and Codex read it. */
+  loadout() {
+    const order = { attack: 0, special: 1, cast: 2, dash: 3, call: 4, gain: 5, legendary: 6, passive: 7, forge: 8 };
+    return this.granted
+      .map(r => this.describe(r))
+      .filter(Boolean)
+      .sort((a, b) => (order[a.slot] ?? 9) - (order[b.slot] ?? 9) || a.name.localeCompare(b.name));
+  }
 }
 
 export const ALL_BOONS = BOONS;
-export default { BOONS, DUOS, BoonState, GOD_INFO, SLOTS, RARITIES, valuesFor };
+export default {
+  BOONS, DUOS, LEGENDARIES, BoonState, GOD_INFO, SLOTS, ACTION_SLOTS,
+  RARITIES, TIERS, RARITY_LABEL, RARITY_COLOR, CURSES, curseInfo, curseForBoon,
+  prerequisiteStatus, valuesFor,
+};

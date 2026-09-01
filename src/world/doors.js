@@ -338,6 +338,12 @@ function archedQuad(w, springY, seg = 28) {
   return g;
 }
 
+/** Colours must be copied, not aliased, or two doorways share one Color. */
+function cloneUniformValue(v) {
+  if (v && typeof v.clone === 'function') return v.clone();
+  return v;
+}
+
 export class Doors {
   constructor() {
     this.root = new THREE.Group();
@@ -349,6 +355,43 @@ export class Doors {
     this._mats = [];
     this._geo = [];
     this._entered = -1;
+    // ── WHY THE SHADER MATERIALS ARE POOLED ──────────────────────────────
+    // Every doorway owns two ShaderMaterials (the god sigil and the threshold
+    // plane). They were built fresh per chamber and disposed on teardown,
+    // which drops three.js' refcount on their PROGRAMS to zero — so the GPU
+    // driver throws the compiled shaders away and the very next chamber
+    // recompiles both of them from source. Shader compilation is a synchronous
+    // driver stall on the first frame the new chamber renders, and it lands on
+    // exactly the frame a room transition can least afford it.
+    // The uniforms differ per door; the programs do not. So the materials are
+    // recycled across chambers and only their uniform VALUES are re-stamped.
+    this._shaderPool = { sigil: [], thresh: [] };
+    this._shaderLive = [];
+  }
+
+  /**
+   * Take a door shader material out of the pool (or mint one), stamped with
+   * this doorway's uniform values. See the constructor note.
+   */
+  _shaderMat(kind, vertexShader, fragmentShader, params, values) {
+    const pool = this._shaderPool[kind] || (this._shaderPool[kind] = []);
+    let m = pool.pop();
+    if (!m) {
+      const uniforms = {};
+      for (const k in values) uniforms[k] = { value: cloneUniformValue(values[k]) };
+      m = new THREE.ShaderMaterial({ uniforms, vertexShader, fragmentShader, ...params });
+      m.userData.poolKind = kind;
+    } else {
+      for (const k in values) {
+        const u = m.uniforms[k];
+        const v = values[k];
+        if (!u) { m.uniforms[k] = { value: cloneUniformValue(v) }; continue; }
+        if (u.value && u.value.isColor && v && v.isColor) u.value.copy(v);
+        else u.value = v;
+      }
+    }
+    this._shaderLive.push(m);
+    return m;
   }
 
   // -------------------------------------------------------------------------
@@ -463,17 +506,13 @@ export class Doors {
     stat.add(tym);
 
     // ---- the sigil --------------------------------------------------------
-    const sigilMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uColor: { value: new THREE.Color(G.color) },
-        uCore: { value: new THREE.Color(R.core) },
-        uTime: { value: 0 }, uOpen: { value: 0 }, uGlyph: { value: GOD_GLYPH[god] ?? 0 }, uSeed: { value: o.seed },
-      },
-      vertexShader: SIGIL_VERT, fragmentShader: SIGIL_FRAG,
+    const sigilMat = this._shaderMat('sigil', SIGIL_VERT, SIGIL_FRAG, {
       transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
       toneMapped: false, side: THREE.FrontSide,
+    }, {
+      uColor: new THREE.Color(G.color), uCore: new THREE.Color(R.core),
+      uTime: 0, uOpen: 0, uGlyph: GOD_GLYPH[god] ?? 0, uSeed: o.seed,
     });
-    this._mats.push(sigilMat);
     const sigGeo = kit.geo('door.sigilquad', () => new THREE.PlaneGeometry(2.5, 2.5));
     const sig = new THREE.Mesh(sigGeo, sigilMat);
     sig.name = 'door.sigil';
@@ -502,17 +541,12 @@ export class Doors {
     // ---- the threshold plane ---------------------------------------------
     const rimC = (ctx.lighting && ctx.lighting.rim && ctx.lighting.rim.color)
       ? ctx.lighting.rim.color.clone() : new THREE.Color('#5fd0ff');
-    const threshMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uBody: { value: rimC },
-        uCore: { value: new THREE.Color(G.color) },
-        uInk: { value: new THREE.Color('#05040b') },
-        uTime: { value: 0 }, uOpen: { value: 0 }, uSeed: { value: o.seed },
-      },
-      vertexShader: SIGIL_VERT, fragmentShader: THRESH_FRAG,
+    const threshMat = this._shaderMat('thresh', SIGIL_VERT, THRESH_FRAG, {
       toneMapped: false, side: THREE.FrontSide, depthWrite: true,
+    }, {
+      uBody: rimC, uCore: new THREE.Color(G.color), uInk: new THREE.Color('#05040b'),
+      uTime: 0, uOpen: 0, uSeed: o.seed,
     });
-    this._mats.push(threshMat);
     // ── ROUND-2 §7 HARD BAN FIX ───────────────────────────────────────────
     // This was a bare `PlaneGeometry(W, H + (W+JW)*0.42)` sitting only
     // JD*0.45 behind the door plane, so its RECTANGLE was the silhouette: the
@@ -731,12 +765,32 @@ export class Doors {
     }
   }
 
+  /**
+   * Tear the doorways down between chambers. The shader materials are RECYCLED
+   * rather than disposed so their compiled programs survive the transition —
+   * see the constructor note. `destroy()` is the real teardown.
+   */
   dispose() {
+    for (const m of this._shaderLive) {
+      const kind = m.userData.poolKind;
+      (this._shaderPool[kind] || (this._shaderPool[kind] = [])).push(m);
+    }
+    this._shaderLive.length = 0;
     for (const m of this._mats) m.dispose?.();
     this._mats.length = 0;
     this.list.length = 0;
     this._cbs.length = 0;
     this.root.clear();
+  }
+
+  /** Final teardown (page unload / world dispose): free the pooled programs. */
+  destroy() {
+    this.dispose();
+    for (const kind in this._shaderPool) {
+      for (const m of this._shaderPool[kind]) m.dispose?.();
+      this._shaderPool[kind].length = 0;
+    }
+    return this;
   }
 }
 

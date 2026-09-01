@@ -133,7 +133,10 @@ export class Player {
     this.tune = TUNING;
     this.state = 'move';
     this.act = { name: null, t: 0, dur: 0, index: 0, hit: false, fired: false };
-    this.dash = { t: 0, dir: new THREE.Vector2(0, 1), travelled: 0, cd: 0, ready: true, readyPulse: 0 };
+    // `charges`/`max` are the Dash budget. One charge is the baseline; a boon
+    // that grants "an additional Dash" raises `max`, and the cooldown then
+    // refills one charge at a time instead of gating a single binary flag.
+    this.dash = { t: 0, dir: new THREE.Vector2(0, 1), travelled: 0, cd: 0, ready: true, readyPulse: 0, charges: 1, max: 1 };
     this.buf = { dash: 0, cast: 0, summon: 0 };
     this.weapon = null;          // the live WeaponRuntime (combat.js owns it)
     this.blocking = null;        // set by WeaponRuntime while the guard is up
@@ -383,11 +386,23 @@ export class Player {
     this._boonSlamT = Math.max(0, (this._boonSlamT || 0) - dt);
     this._animLock = Math.max(0, (this._animLock || 0) - dt);
     if (this._retuneIn > 0) { this._retuneIn -= dt; if (this._retuneIn <= 0) this.rig.retune?.(); }
-    this.dash.cd = Math.max(0, this.dash.cd - dt);
-    if (!this.dash.ready && this.dash.cd <= 0) {
-      this.dash.ready = true; this.dash.readyPulse = 1;
-      ctx.events.emit('player.dashReady', { pos: this.position.clone() });
+    // ── the dash budget ───────────────────────────────────────────────────
+    // Greatest Reflex ("gain 1 additional Dash") is read here: it is the only
+    // thing that decides how many charges the hero may hold.
+    const dashMax = 1 + Math.max(0, Math.round(ctx.boons?.mods?.dashCharges || 0));
+    if (dashMax !== this.dash.max) {
+      const gained = dashMax - this.dash.max;
+      this.dash.max = dashMax;
+      this.dash.charges = Math.max(0, Math.min(dashMax, this.dash.charges + Math.max(0, gained)));
     }
+    this.dash.cd = Math.max(0, this.dash.cd - dt);
+    if (this.dash.cd <= 0 && this.dash.charges < this.dash.max) {
+      this.dash.charges++;
+      this.dash.readyPulse = 1;
+      if (this.dash.charges < this.dash.max) this.dash.cd = T.dashCooldown;
+      ctx.events.emit('player.dashReady', { pos: this.position.clone(), charges: this.dash.charges, max: this.dash.max });
+    }
+    this.dash.ready = this.dash.charges > 0;
     for (const k in this.buf) this.buf[k] = Math.max(0, this.buf[k] - dt);
     const inp = ctx.input;
     // THE ATTACK BUTTON GOES STRAIGHT TO THE ARM. press/release both matter:
@@ -517,14 +532,17 @@ export class Player {
     if (w > 0.15) this.dash.dir.set(_v.x, _v.z).normalize();
     else this.dash.dir.copy(this.facing);
     this.facing.copy(this.dash.dir);
-    this.dash.t = 0; this.dash.travelled = 0; this.dash.ready = false;
+    this.dash.t = 0; this.dash.travelled = 0;
+    this.dash.charges = Math.max(0, this.dash.charges - 1);
+    this.dash.ready = this.dash.charges > 0;
     this.dash.cd = T.dashTime + T.dashCooldown;
     this.state = 'dash';
     this.act = { name: 'dash', t: 0, dur: T.dashTime, index: 0, hit: false, fired: false, queued: false, dashQueued: false };
     this.animator.play('dash', { fade: 0.04, restart: true });
     this.velocity.multiplyScalar(0.25);
     this.iframes = Math.max(this.iframes, T.dashIFrames[1] + (mods?.iframeAdd || 0));
-    if (rider?.deflect) ctx.combat?.activateDeflect?.(this, rider.deflect, boonColor);
+    // mods.deflect is the additive Deflect window every source contributes to.
+    if (rider?.deflect || mods?.deflect) ctx.combat?.activateDeflect?.(this, (rider?.deflect || 0) + (mods?.deflect || 0), boonColor);
     const attackRider = mods?.rider?.attack;
     if (attackRider?.postDashBonus) this._boonPostDash = true;
     this.squash = -0.085;
@@ -967,6 +985,7 @@ export class Player {
     this.alive = true; this.dead = false; this.state = 'move';
     this.weapon?.cancel?.(); this.blocking = null; this._animKey = null;
     this.iframes = 1.0; this.knock.set(0, 0, 0); this.velocity.set(0, 0, 0);
+    this.dash.charges = this.dash.max; this.dash.cd = 0; this.dash.ready = true;
     if (pos) this.position.copy(pos);
     this.animator.ikEnabled = true;
     this.animator.play('idle', { fade: 0.2, restart: true });

@@ -17,6 +17,7 @@ import {
   GRAPHICS_STORAGE_KEY, chooseGraphicsTier, graphicsChoiceSource,
   graphicsDprCap, isGraphicsTier,
 } from './core/quality.js';
+import { profiler } from './core/profiler.js';
 import { LoadingScreen } from './core/loading.js';
 import { preloadSurfaces, preloadAll } from './core/preload.js';
 
@@ -62,6 +63,20 @@ async function boot(){
   const engine = new Engine({ seed: SEED, quality: detectQuality() });
   const ctx = engine.ctx;
   ctx.CAPTURE = CAPTURE;
+
+  // ── FRAME-TIME INSTRUMENTATION ──────────────────────────────────────────
+  // "It feels laggy" is not actionable. Every simulated+rendered frame is timed
+  // here and reported into the shared profiler, which also carries the named
+  // spans (a boss-death -> next-chamber transition) and sections (each chamber
+  // build slice, each GPU upload batch). `EREBUS.perf.report()` in the console
+  // and scripts/test-perf.mjs read the exact same counters.
+  ctx.profiler = profiler;
+  const _step = engine.step.bind(engine);
+  engine.step = (dt) => {
+    const t0 = performance.now();
+    _step(dt);
+    profiler.frame(performance.now() - t0);
+  };
 
   // Order matters: renderer -> materials -> lighting/post -> world -> entities -> fx -> ui
   const render   = engine.add(new RenderSystem(), 'renderSystem');
@@ -148,7 +163,7 @@ async function boot(){
     if(ctx.run) ctx.run.biome = name;
     return name;
   };
-  window.EREBUS = { engine, ctx, THREE, setBiome, preload: window.EREBUS_PRELOAD };
+  window.EREBUS = { engine, ctx, THREE, setBiome, perf: profiler, preload: window.EREBUS_PRELOAD };
 
   if(CAPTURE){
     setupCapture(engine, ctx, setBiome);

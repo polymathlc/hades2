@@ -42,11 +42,17 @@ export const PAL = {
   parchDim:  '#a2937a',
 };
 
+// Six grades, not four. Common..Heroic is the ladder a boon can be promoted
+// along; Duo and Legendary are fixed grades that never roll, so they get
+// treatments the ladder never reaches — Duo a cold jade, Legendary a moving
+// molten gold. The same six keys exist as CSS custom properties in style.css.
 export const RARITY = {
-  common:  { name: 'Common',  ring: ['#8a6a44', '#c9a476', '#5a4028'], text: '#c9a476' },
-  rare:    { name: 'Rare',    ring: ['#8fa3bd', '#e6f0ff', '#4d5b70'], text: '#cfdcee' },
-  epic:    { name: 'Epic',    ring: ['#c98f2b', '#ffe9a8', '#6d4416'], text: '#f2c14e' },
-  heroic:  { name: 'Heroic',  ring: ['#ff8ad2', '#a8f0ff', '#ffe08a'], text: '#ffd6f0', prismatic: true },
+  common:  { name: 'Common',  ring: ['#8a6a44', '#c9a476', '#5a4028'], text: '#c9a476', pips: 1 },
+  rare:    { name: 'Rare',    ring: ['#8fa3bd', '#e6f0ff', '#4d5b70'], text: '#cfdcee', pips: 2 },
+  epic:    { name: 'Epic',    ring: ['#c98f2b', '#ffe9a8', '#6d4416'], text: '#f2c14e', pips: 3 },
+  heroic:  { name: 'Heroic',  ring: ['#ff8ad2', '#a8f0ff', '#ffe08a'], text: '#ffd6f0', pips: 4, prismatic: true },
+  duo:     { name: 'Duo',     ring: ['#2f7f68', '#7ef2c8', '#e8fff6'], text: '#7ef2c8', pips: 4, fixed: true },
+  legendary: { name: 'Legendary', ring: ['#ff9d5c', '#ffe9a8', '#c2521a'], text: '#ffb877', pips: 4, fixed: true, prismatic: true },
 };
 
 // ── type ───────────────────────────────────────────────────────────────────
@@ -68,6 +74,69 @@ export function bodyFont() {
   if (_body === null) _body = cssVar('--ui-body', 'Optima,"Palatino Linotype",Georgia,"Bitstream Charter","DejaVu Serif",serif');
   return _body;
 }
+
+// The rarity palette is authored once, in style.css, and read back here for
+// the same reason the type stack is: canvas ornament and any DOM chrome must
+// never disagree about what "Heroic" looks like. Falls back to the literals
+// above when the sheet has not applied yet (headless tests, first frame).
+let _rarityBound = false;
+export function bindRarityPalette(curses = null) {
+  // The curse palette is authored beside the rarity palette and bound the same
+  // way; combat reads the same objects through the rider, so a colour named in
+  // the sheet is the colour the wisps come out.
+  if (curses) {
+    for (const key of Object.keys(curses)) {
+      const c = cssVar(`--curse-${key}`, '');
+      if (/^#[0-9a-f]{3,8}$/i.test(c)) curses[key].color = c;
+    }
+  }
+  if (_rarityBound) return RARITY;
+  _rarityBound = true;
+  for (const key of Object.keys(RARITY)) {
+    const text = cssVar(`--rarity-${key}`, '');
+    if (text) RARITY[key].text = text;
+    const ring = cssVar(`--rarity-${key}-ring`, '');
+    if (ring) {
+      const parts = ring.split(/\s+/).filter(Boolean);
+      if (parts.length === 3) RARITY[key].ring = parts;
+    }
+  }
+  return RARITY;
+}
+
+// ── the tokens the canvas actually reads back ─────────────────────────────
+// Only bind what is used. A custom property nothing reads is not a design
+// system, it is a comment that lies — which is what the --type-* ladder and
+// the frozen TYPE literal beside it were, so both were deleted rather than
+// left as decoration. What remains here is bound and consumed.
+let _cardBound = null;
+/**
+ * Card geometry, in reference pixels, from style.css — including the
+ * small-viewport block, which is why this is re-read whenever the UI resizes
+ * rather than captured once at boot.
+ */
+export function cardMetrics() {
+  if (_cardBound) return _cardBound;
+  const px = (name, fallback) => {
+    const v = parseFloat(cssVar(name, ''));
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  };
+  _cardBound = { w: px('--card-w', 292), h: px('--card-h', 452), gap: px('--card-gap', 30) };
+  return _cardBound;
+}
+let _motion = null;
+/**
+ * 1 normally, 0 for a viewer who asked for reduced motion. Multiplies every
+ * travelling specular, deal-in stagger and spin the interface animates.
+ */
+export function uiMotion() {
+  if (_motion !== null) return _motion;
+  const v = parseFloat(cssVar('--ui-motion', ''));
+  _motion = Number.isFinite(v) ? clamp01(v) : 1;
+  return _motion;
+}
+/** Called by the UI on resize: the media queries above may have flipped. */
+export function invalidateCssCache() { _cardBound = null; _motion = null; }
 
 /** Draw text with real letter-spacing (canvas has none we can rely on). */
 export function tracked(g, text, x, y, o = {}) {

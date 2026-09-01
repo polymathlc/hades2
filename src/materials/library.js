@@ -64,9 +64,14 @@ const BIOME_SETS = {
   tartarus: ['floor.tartarus', 'stone.tartarus', 'stone.tartarus.bay',
     'stone.tartarus.column', 'stone.tartarus.arch', 'rubble.tartarus',
     'stone.tartarus.rim', 'bone.tartarus', 'bronze.tartarus', 'iron.tartarus', 'ceramic.tartarus', 'wood.tartarus'],
-  asphodel: ['floor.asphodel', 'stone.asphodel', 'obsidian.asphodel',
-    'lava.asphodel', 'rubble.asphodel', 'bone.asphodel', 'bronze.asphodel', 'iron.asphodel'],
-  elysium: ['floor.elysium', 'marble.elysium'],
+  // Asphodel and Elysium used to bake ONE stone each and hand it to the wall,
+  // the rim, the bays, the columns and the arches alike — five architectural
+  // roles wearing one texture, which is the exact "same texture recoloured"
+  // read the biome brief bans. Each now has a shaft (columnar basalt / fluted
+  // marble) and a voussoir stone of its own, the way Tartarus always did.
+  asphodel: ['floor.asphodel', 'stone.asphodel', 'stone.asphodel.column', 'stone.asphodel.arch',
+    'obsidian.asphodel', 'lava.asphodel', 'rubble.asphodel', 'bone.asphodel', 'bronze.asphodel', 'iron.asphodel'],
+  elysium: ['floor.elysium', 'marble.elysium', 'marble.elysium.column', 'marble.elysium.arch'],
 };
 
 // ---------------------------------------------------------------------------

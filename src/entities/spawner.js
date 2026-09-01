@@ -93,6 +93,13 @@ export class Spawner {
     this.pending = [];      // staged arrivals inside the current wave
     this.cleared = true;
     this.roomId = 0;
+    // Kinds this room will use whose pooled instance does not exist yet. An
+    // Enemy's first construction builds a whole rig (skinned mesh, materials,
+    // and for a boss a merged crown and greatsword), which used to land on the
+    // exact frame that enemy popped into the fight. One kind per frame, during
+    // the room's opening beat, spends the same milliseconds where nobody is
+    // looking at anything yet.
+    this._warmKinds = [];
   }
 
   init(ctx, mgr) {
@@ -170,8 +177,36 @@ export class Spawner {
     this.active = true;
     this.cleared = false;
     this.spawnedTotal = 0;
+    this._queueWarm();
     ctx.events.emit('encounter.begin', { biome: this.biome, depth: this.depth, waves: this.waves.length, boss: this.boss });
     return this;
+  }
+
+  /** Every distinct kind this room's waves will ask for, deduplicated. */
+  _queueWarm() {
+    this._warmKinds.length = 0;
+    if (!this.mgr || typeof this.mgr.acquire !== 'function') return this;
+    const seen = new Set();
+    for (const w of this.waves) for (const kind of (w.list || [])) {
+      if (!seen.has(kind)) { seen.add(kind); this._warmKinds.push(kind); }
+    }
+    return this;
+  }
+
+  /**
+   * Build ONE not-yet-pooled rig per frame. `acquire()` is idempotent: a kind
+   * that already has a free instance in the pool costs nothing here.
+   */
+  _pumpWarm() {
+    while (this._warmKinds.length) {
+      const kind = this._warmKinds.shift();
+      try {
+        const pool = this.mgr.pools && this.mgr.pools.get(kind);
+        if (pool && pool.some((e) => e.dead && !e.root.visible)) continue;   // already warm
+        this.mgr.acquire(kind);
+      } catch (e) { /* an unknown kind is the roster's problem, not a stall */ }
+      return;                                    // strictly one build per frame
+    }
   }
 
   _bossWaves() {
@@ -194,6 +229,8 @@ export class Spawner {
   // ═══════════════════════════════════════════════════════════════ frame ═══
   update(dt, ctx) {
     if (!this.active) return;
+    // Rig pre-construction never competes with a chamber still assembling.
+    if (this._warmKinds.length && !(ctx.world && ctx.world.building)) this._pumpWarm();
     this.timer += dt;
 
     // staged arrivals inside the current wave

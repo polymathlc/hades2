@@ -131,25 +131,38 @@ export const WARDEN = {
     },
     glowIntensity: 0.8,
   },
+  /**
+   * The crown and the greatsword are permanent parts of this body: two merged
+   * geometries and three materials, built ONCE when the pooled instance is
+   * constructed. They used to be built in onSpawn() behind an `a.mem.built`
+   * guard — but Enemy.spawn() wipes `mem`, so the guard never held: every
+   * appearance of the Warden re-merged both assets on the frame it materialised
+   * AND parented a second copy onto the same bones. Rig dressing goes here.
+   */
+  onBuild(a, ctx) {
+    if (a._wardenDressed) return;
+    a._wardenDressed = true;
+    const rig = a.visual?.rig;
+    if (rig?.bones?.head) { const c = buildCrown(ctx); c.position.set(0, 0.22, 0.01); rig.bones.head.add(c); }
+    if (rig?.bones?.handR) {
+      const s = buildGreatsword(ctx);
+      s.position.set(0.02, -0.02, 0.05);
+      s.rotation.set(-0.25, 0, 0.10);
+      s.scale.setScalar(0.92);
+      rig.bones.handR.add(s);
+      a._wardenSword = s;
+    }
+  },
   onSpawn(a, ctx) {
     a.mem.phase = 0;
     a.mem.combo = 0;
     a.mem.calledAdds = false;
     a.vulnerable = false;
     a.resist = null;
-    if (!a.mem.built) {
-      const rig = a.visual.rig;
-      if (rig?.bones?.head) { const c = buildCrown(ctx); c.position.set(0, 0.22, 0.01); rig.bones.head.add(c); }
-      if (rig?.bones?.handR) {
-        const s = buildGreatsword(ctx);
-        s.position.set(0.02, -0.02, 0.05);
-        s.rotation.set(-0.25, 0, 0.10);
-        s.scale.setScalar(0.92);
-        rig.bones.handR.add(s);
-        a.mem.sword = s;
-      }
-      a.mem.built = true;
-    }
+    // Safety net for a rig that reached spawn without going through init()'s
+    // onBuild hook (a stubbed manager, a hot-reloaded roster).
+    if (!a._wardenDressed) WARDEN.onBuild(a, ctx);
+    a.mem.sword = a._wardenSword;
     ctx.events.emit('boss.spawned', { entity: a, name: WARDEN.label, maxHealth: a.maxHealth });
     ctx.ui?.toast?.(WARDEN.label, { color: '#ff5a3c' });
   },

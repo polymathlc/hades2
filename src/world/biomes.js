@@ -121,8 +121,12 @@ export const BIOMES = {
       shrine: 'shrine.divine',
       divine: 'gold.divine',
       bay: 'stone.asphodel',
-      column: 'stone.asphodel',
-      arch: 'stone.asphodel',
+      // A basalt SHAFT is a columnar joint, not a wall plate on its side, and a
+      // cast arch is separated by ember hairlines rather than by mortar. Both
+      // are their own recipes now (see materials/recipes.js) so Asphodel's
+      // architecture stops being one material in five roles.
+      column: 'stone.asphodel.column',
+      arch: 'stone.asphodel.arch',
       trim: 'gold.filigree',
       leaf: 'gold.leaf',
       metal: 'bronze.asphodel',
@@ -187,15 +191,23 @@ export const BIOMES = {
       shrine: 'shrine.divine',
       divine: 'gold.divine',
       bay: 'marble.elysium',
-      column: 'marble.elysium',
-      arch: 'marble.elysium',
+      // FLUTED marble for the shafts — SEVEN painted channels shading the
+      // fourteen that world/kit.js flutedShaft() actually carves, with moss in
+      // the hollows — and laurel-banded voussoirs for the arch. (The recipe
+      // painted twenty until it was measured in frame: at the play lens twenty
+      // is ~4 px a flute and it beat against the carved fourteen. See the
+      // comment above 'marble.elysium.column' in materials/recipes.js.)
+      // Elysium's ornament family (laurel + bead) is deliberately different
+      // from Tartarus's meander and Asphodel's plain bronze bead.
+      column: 'marble.elysium.column',
+      arch: 'marble.elysium.arch',
       trim: 'gold.filigree',
       leaf: 'gold.leaf',
       metal: 'bronze.verdigris',
       iron: 'iron.dark',
       rock: 'obsidian',
       rubble: 'marble.elysium',
-      ceramic: 'marble.elysium',
+      ceramic: 'marble.elysium.arch',
       bone: 'bone',
       cloth: 'banner.crimson',
       crystal: 'crystal.violet',

@@ -39,6 +39,8 @@ import { Kit, Parts, Batcher, lathe, faceted, mergeGeos, meanderPeriod, meanderR
 import { BIOMES, ARCHETYPES, ARCHETYPE_IDS, getBiome, getArchetype, DEFAULT_BIOME } from './biomes.js';
 import { Doors } from './doors.js';
 import { Props } from './props.js';
+import { FrameScheduler } from '../core/scheduler.js';
+import { profiler } from '../core/profiler.js';
 
 const NA = 256;                    // profile angular resolution
 
@@ -287,6 +289,13 @@ export class World {
     this._geo = [];
     this._mats = [];
     this._built = false;
+    // Chamber assembly is sliced across frames; see beginBuild().
+    this.sched = new FrameScheduler({ budgetMs: 5 });
+    this._task = null;
+    this._clearedPending = false;
+    // Adaptive: if the last few frames were already slow (a big fight, a
+    // saturated particle pool) the build gives ground rather than piling on.
+    this._buildBudgetMs = 5;
   }
 
   // ------------------------------------------------------------------ init
@@ -316,11 +325,61 @@ export class World {
   /**
    * build(biome, archetype, seed) — fully re-runnable. Disposes everything the
    * previous chamber owned first, so a room transition leaks nothing.
+   *
+   * Runs to completion in ONE call, which is what boot, the capture harness and
+   * the Crossroads want. A live room transition does NOT want it: see
+   * beginBuild() below, which is the same generator pumped across frames.
    */
-  build(biomeName, archetypeName, seed) {
+  build(biomeName, archetypeName, seed, opts = {}) {
+    const task = this.beginBuild(biomeName, archetypeName, seed);
+    if (!task) return this;
+    if (opts.sliced) return this;               // caller drives it (see update)
+    task.finish();
+    return this;
+  }
+
+  /**
+   * beginBuild() — start a chamber and hand back a suspendable task.
+   *
+   * WHY: measured on this machine a chamber costs 70-275ms of pure geometry
+   * synthesis, spread fairly evenly across its sections. Executed in one call
+   * that is a guaranteed multi-frame freeze on the exact frame the player walks
+   * through a door. Sliced into ~25 yield points it is a run of ~5-19ms steps,
+   * pumped a few milliseconds per frame by lateUpdate(). `npm run test:perf`
+   * measures both paths.
+   *
+   * The PLAN step (teardown, profile, door angles, archetype) runs
+   * synchronously before we return, because the caller places the hero and
+   * snaps the camera against `bounds` immediately afterwards and those numbers
+   * have to be the NEW room's.
+   */
+  beginBuild(biomeName, archetypeName, seed) {
+    const ctx = this.ctx;
+    if (!ctx) return null;
+    if (this._task && !this._task.done) this._task.cancel();
+    const task = this.sched.add(this._buildGen(biomeName, archetypeName, seed), {
+      label: 'world.build',
+      onStep: (t, name, ms) => profiler.section('world.build:' + (typeof name === 'string' ? name : 'final'), ms),
+    });
+    this._task = task;
+    task.step();                                 // the plan step, synchronously
+    return task;
+  }
+
+  /** True while a sliced chamber build is still assembling. */
+  get building() { return !!(this._task && !this._task.done); }
+
+  /** Finish any in-flight sliced build right now (capture / teardown paths). */
+  flushBuild() { if (this._task && !this._task.done) this._task.finish(); return this; }
+
+  *_buildGen(biomeName, archetypeName, seed) {
     const ctx = this.ctx;
     if (!ctx) return this;
     this.clear();
+    // A fresh chamber is sealed until it is won. setCleared() may be called
+    // while the sliced build is still assembling (the doors do not exist yet),
+    // so the intent is recorded here and re-applied on the final step.
+    this._clearedPending = false;
 
     this.biome = BIOMES[biomeName] ? biomeName : this.biome;
     const B = getBiome(this.biome);
@@ -482,20 +541,28 @@ export class World {
     G.flamePoints = [];
     G.slots = [];
 
-    this._buildVoid(ctx, G);
-    this._buildFloor(ctx, G);
-    this._buildRim(ctx, G);
-    this._buildBackWall(ctx, G);
-    this._buildColonnade(ctx, G);
-    this._buildFocal(ctx, G);
-    this._buildBraziers(ctx, G);
-    this._buildHangings(ctx, G);
-    this._buildDoors(ctx, G);
+    // ── the assembly steps ────────────────────────────────────────────────
+    // Each `yield` is a legal suspension point: the chamber is renderable (if
+    // incomplete) at every one of them, so a sliced build reads as the room
+    // assembling itself over ~15 frames instead of as a hard stall. The four
+    // most expensive sections (void, floor, back wall, colonnade) are
+    // generators of their own so they can suspend mid-section.
+    yield 'plan';
+    yield* this._buildVoid(ctx, G);
+    yield* this._buildFloor(ctx, G);
+    this._buildRim(ctx, G);         yield 'rim';
+    yield* this._buildBackWall(ctx, G);
+    yield* this._buildColonnade(ctx, G);
+    this._buildFocal(ctx, G);       yield 'focal';
+    this._buildBraziers(ctx, G);    yield 'braziers';
+    this._buildHangings(ctx, G);    yield 'hangings';
+    this._buildDoors(ctx, G);       yield 'doors';
     this._buildScatter(ctx, G);
     this._finishColliders(ctx, G);
 
     this.root.add(this.props.root);
     this.root.add(this.doors.root);
+    yield 'scatter';
 
     // flames + their pooled practicals, and the void ember field
     if (G.flamePoints.length) {
@@ -504,6 +571,7 @@ export class World {
         scale: 1.0,
       });
     }
+    yield 'flames';
     // Water weeping out of the vault and falling through the chamber. It is
     // the only genuinely COOL moving element in a room full of fire, and it
     // occupies the upper band of the frame where §9.6 wants the complement.
@@ -517,6 +585,7 @@ export class World {
       color: B.accent, accent: B.accent, rise: false,
       rIn: maxR * 0.30, rOut: maxR * 0.96, yBase: (G.wallTop || 13) - 1.2, spread: 3.0, span: 12,
     });
+    yield 'drips';
     this.props.emberField(ctx, {
       rng, count: Math.round(B.ember.count * (ctx.quality?.render?.motes ? 1 : 0.5)),
       color: B.ember.color, accent: B.ember.accent, rise: B.ember.rise,
@@ -528,8 +597,12 @@ export class World {
       rIn: maxR * 1.12, rOut: maxR * 2.2, yBase: -1.0, spread: 13, span: 18,
     });
     this.props.ctx = ctx;
+    yield 'embers';
 
     this._built = true;
+    // The doors were rebuilt by this pass, so re-apply whatever seal state the
+    // run asked for while they did not exist yet.
+    this.doors.setSealed(!this._clearedPending, !!(ctx.CAPTURE || ctx.capture));
     ctx.events?.emit?.('room.built', { biome: this.biome, archetype: this.archetype, seed: this.seed });
     ctx.lighting?.fitShadows?.(ctx);
     return this;
@@ -538,7 +611,7 @@ export class World {
   // =========================================================================
   // VOID — the island framing (§1.8). Built FIRST so everything else sits on it.
   // =========================================================================
-  _buildVoid(ctx, G) {
+  *_buildVoid(ctx, G) {
     const { kit, B, f } = G;
     const R = this.bounds.r;
 
@@ -584,6 +657,8 @@ export class World {
     abyss.frustumCulled = false;
     this.root.add(abyss);
 
+    yield 'void.abyss';
+
     // ---- the island's underside: a mass falling into the dark ------------
     const skirtShade = (x, z, t) => {
       // dark at the top (contact ink under the curb), a touch of bounce in the
@@ -601,6 +676,8 @@ export class World {
     skirt.name = 'void.skirt';
     skirt.castShadow = false; skirt.receiveShadow = true;
     this.root.add(skirt);
+
+    yield 'void.underside';
 
     // ---- broken masonry adrift around the island -------------------------
     const S = B.shards;
@@ -623,7 +700,7 @@ export class World {
   // =========================================================================
   // FLOOR — the dark stage (§9.1)
   // =========================================================================
-  _buildFloor(ctx, G) {
+  *_buildFloor(ctx, G) {
     const { B, A, kit, f } = G;
     const R = this.bounds.r;
     const gz = B.floorGlaze;
@@ -785,6 +862,7 @@ export class World {
     floor.name = 'floor';
     floor.receiveShadow = true;
     this.root.add(floor);
+    yield 'floor.plate';
 
     // ---- the central inlay -----------------------------------------------
     // A rosette, but a DARK one. The previous chamber put a high-chroma, high-
@@ -927,6 +1005,8 @@ export class World {
       ib.build();
     }
 
+    yield 'floor.inlay';
+
     // ---- THE OUTER MEANDER BAND (§9.7 / §1.5) ------------------------------
     // The play framing measured the LEAST detailed shot in the package
     // (detailDensity 0.024-0.027 against 0.048 at close range): everything
@@ -977,6 +1057,8 @@ export class World {
       if (fret.count) { fret.userData.finish(); this.root.add(fret); }
       if (bed.count) { bed.userData.finish(); this.root.add(bed); }
     }
+
+    yield 'floor.meander';
 
     // ---- COLD SIGILS IN THE PLAY AREA (§9.6 two hues, §9.3 highlight band) --
     // Measured cyan occupancy across the whole shot sheet was 3.8-6.5% against
@@ -1150,6 +1232,8 @@ export class World {
       }
       sb.build();
     }
+
+    yield 'floor.sigils';
 
     // ---- raised dais -----------------------------------------------------
     if (this.dais) {
@@ -1370,7 +1454,7 @@ export class World {
   // =========================================================================
   // BACK WALL — the two-storey mass that gives the frame its mid value band
   // =========================================================================
-  _buildBackWall(ctx, G) {
+  *_buildBackWall(ctx, G) {
     const { A, B, kit, f } = G;
     if (A.wall.arcs === 'none') return;
     const R = this.bounds.r;
@@ -1484,6 +1568,8 @@ export class World {
       this.root.add(im);
     }
 
+    yield 'wall.ashlar';
+
     // ---- solid backing so no light leaks through the joints --------------
     // Cut into runs between the doorways: a continuous shell would brick the
     // exits up, and the exits are the whole point of the room.
@@ -1515,6 +1601,8 @@ export class World {
     }
     G.wallRuns = runsW;
 
+    yield 'wall.backing';
+
     // ---- pilasters: hard verticals every bay ------------------------------
     const nBays = 11;
     const pilGeo = kit.geo('wall.pilaster', () => {
@@ -1544,6 +1632,8 @@ export class World {
     }
     if (pilIM.count) { pilIM.userData.finish(); this.root.add(pilIM); }
 
+    yield 'wall.pilasters';
+
     // ---- carved panels in every bay ---------------------------------------
     // Flat ashlar between pilasters is a brick wall; a recessed, moulded field
     // is architecture. Only the bays around the room's focal axis carry the
@@ -1567,6 +1657,8 @@ export class World {
       pb.build();
       rich.clear(); plainP.clear();
     }
+
+    yield 'wall.panels';
 
     // ---- GREEK KEY BAND, real extruded geometry, capping the lower storey --
     {
@@ -1602,8 +1694,12 @@ export class World {
       if (brIM.count) { brIM.userData.finish(); this.root.add(brIM); }
     }
 
+    yield 'wall.key';
+
     // ---- mid cornice ------------------------------------------------------
     this._corniceRun(ctx, G, { a0, a1, y: H1 + 1.42, h: 0.95, dOut: 0.55, mat: wallMat, trim: leaf, openings });
+
+    yield 'wall.cornice';
 
     // ---- upper storey: a blind arcade ------------------------------------
     if (storeys >= 2) {
@@ -1797,7 +1893,7 @@ export class World {
   // =========================================================================
   // COLONNADE — the mid-ground value band
   // =========================================================================
-  _buildColonnade(ctx, G) {
+  *_buildColonnade(ctx, G) {
     const { A, B, kit, f } = G;
     const R = this.bounds.r;
     const per = A.peristyle || { count: 12, order: 'doric', h: 7.5 };
@@ -1836,10 +1932,16 @@ export class World {
       column: { litGain: 0.20, ambGain: 0.34, specGain: 0.70, tint: '#43315a' },
       leaf:   { litGain: 0.24, ambGain: 0.26, specGain: 0.90, tint: '#5f5470' },
     };
+    // Four full column templates is the single most expensive allocation in a
+    // chamber (~19ms). One per slice.
     const plain = kit.column({ h: per.h, r: per.h * 0.075, order: per.order, ornate: true });
+    yield 'colonnade.tmpl.plain';
     const ornate = kit.column({ h: per.h * 1.05, r: per.h * 0.079, order: per.order, ornate: true });
+    yield 'colonnade.tmpl.ornate';
     const plainFar = withRole(FAR, () => kit.column({ h: per.h, r: per.h * 0.0751, order: per.order, ornate: true }));
+    yield 'colonnade.tmpl.plainFar';
     const ornateFar = withRole(FAR, () => kit.column({ h: per.h * 1.05, r: per.h * 0.0791, order: per.order, ornate: true }));
+    yield 'colonnade.tmpl.ornateFar';
     // depth 0 = the far rim, 1 = the near rim. Everything past the room's
     // mid-line takes the recession.
     const depthOf = (x, z) => clamp01(0.5 + 0.5 * ((x + z) * 0.70711 / (R + 1.5)));
@@ -1910,6 +2012,8 @@ export class World {
       c.x = Math.cos(a) * rr;
       c.z = Math.sin(a) * rr;
     }
+
+    yield 'colonnade.columns';
 
     // ---- ONE BAY IN FOUR HAS FALLEN (§1.5, §1.8) --------------------------
     // A rotationally symmetric colonnade gives the chamber no FRONT: every
@@ -1993,6 +2097,8 @@ export class World {
     rubBatch.build();
     G.columns = cols;
     G.colH = per.h;
+
+    yield 'colonnade.ruin';
 
     // ---- an ARCHITRAVE tying the wall columns together --------------------
     // Free-standing posts read as a fence. A beam across their capitals is what
@@ -2668,19 +2774,19 @@ export class World {
   // =========================================================================
   // BIOME / LIFECYCLE
   // =========================================================================
-  setBiome(name, ctx = this.ctx) {
+  setBiome(name, ctx = this.ctx, opts = {}) {
     if (!BIOMES[name] || name === this.biome) return this;
     // Announce FIRST: the light rig retunes, publishes a new rim constant and
     // a new prefiltered sky, and re-authors its practicals — all of which
     // build() then reads while laying out the chamber.
     ctx?.events?.emit?.('biome.changed', { name });
-    this.build(name, null, this.seed);
+    this.build(name, null, this.seed, opts);
     return this;
   }
 
   /** Swap to a fresh room of the same biome (chamber transition). */
-  nextRoom(seed, archetype) {
-    return this.build(this.biome, archetype || null, seed ?? (this.seed + 1));
+  nextRoom(seed, archetype, opts = {}) {
+    return this.build(this.biome, archetype || null, seed ?? (this.seed + 1), opts);
   }
 
   /**
@@ -2732,9 +2838,22 @@ export class World {
     this.doors.update(dt, ctx);
   }
 
-  lateUpdate(alpha, ctx) { /* flames billboard in the vertex shader */ }
+  /**
+   * ONE pump per rendered frame (update() runs per fixed sub-step, lateUpdate
+   * does not). The budget breathes with the measured frame time: a frame that
+   * is already over 20ms gets the minimum slice, a comfortable frame gets more,
+   * so the build finishes fast on a fast machine without ever being the thing
+   * that drops a frame on a slow one.
+   */
+  lateUpdate(alpha, ctx) {
+    if (!this._task || this._task.done) return;
+    const renderDt = (ctx && ctx.time && ctx.time.renderDt) ? ctx.time.renderDt * 1000 : 16.7;
+    const slack = 16.7 - Math.min(16.7, renderDt);
+    this._buildBudgetMs = Math.max(3, Math.min(6, 3 + slack * 0.35));
+    this.sched.run(this._buildBudgetMs);
+  }
 
-  dispose() { this.clear(); }
+  dispose() { this.sched.cancelAll(); this._task = null; this.clear(); this.doors.destroy?.(); }
 }
 
 const EMPTY = [];

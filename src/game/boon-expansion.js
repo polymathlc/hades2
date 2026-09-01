@@ -21,11 +21,20 @@ function rider(m, slot, o) {
 const ACTIONS = ['attack', 'special', 'cast', 'dash', 'call'];
 const ACTION_LABEL = { attack: 'Attack', special: 'Special', cast: 'Cast', dash: 'Dash', call: 'Call' };
 
+// The curse each god's affliction is named after. Duplicated as a literal
+// because boons.js imports this module; boons.js owns the CURSES semantics.
+const GOD_CURSE = {
+  zeus: 'blitz', hestia: 'scorch', hephaestus: 'scorch', dionysus: 'hangover',
+  demeter: 'freeze', hecate: 'freeze', selene: 'freeze', poseidon: 'slow',
+  hera: 'hitch', apollo: 'blind', ares: 'wither', hades: 'wither',
+  aphrodite: 'weak', athena: 'weak', artemis: 'weak',
+};
+
 const FAMILIES = {
   zeus: {
     names: ['Chain Strike', 'Overload Flourish', 'Storm Shot', 'Static Passage', 'Zeus Aid'],
     damage: [9, 18, 16, 14, 48], status: 'shock', type: 'lightning', stacks: [2, 2, 2, 2, 3],
-    text: (slot, v) => `Your ${ACTION_LABEL[slot]} deals ${v.dmg} lightning damage and inflicts ${v.stacks} Shock.`,
+    text: (slot, v) => `Your ${ACTION_LABEL[slot]} deals ${v.dmg} lightning damage and inflicts ${v.stacks} Blitz.`,
     passive: B('zeus.passive.voltage', 'zeus', 'passive', 'High Voltage', { pct: 12 },
       v => `Shock is ${v.pct}% stronger and Calls deal more damage.`,
       (m, v) => { m.status.shock *= 1 + v.pct / 100; m.callMul *= 1 + v.pct / 200; }),
@@ -59,7 +68,7 @@ const FAMILIES = {
   ares: {
     names: ['Blood Oath', 'War Flourish', 'Vortex Shot', 'Warpath Dash', 'Ares Aid'],
     damage: [24, 36, 28, 22, 50], status: 'doom', type: 'arcane', stacks: [1, 1, 1, 1, 1], doom: true,
-    text: (slot, v) => `Your ${ACTION_LABEL[slot]} inflicts Doom for ${v.dmg} delayed damage.`,
+    text: (slot, v) => `Your ${ACTION_LABEL[slot]} inflicts Wither for ${v.dmg} delayed damage.`,
     after: (slot, m) => { if (slot === 'cast') m.castTicks += 6; },
     passive: B('ares.passive.violence', 'ares', 'passive', 'Urge to Kill', { dmg: 8, crit: 3 },
       v => `Deal ${v.dmg}% more damage and gain ${v.crit}% Critical chance.`,
@@ -93,14 +102,14 @@ const FAMILIES = {
       else if (slot === 'call') m.callCharge *= 1 + v.speed / 100;
       else m.moveMul *= 1 + v.speed / 100;
     },
-    passive: B('hermes.passive.greatest', 'hermes', 'passive', 'Greatest Reflex', { spd: 9, dodge: 4 },
+    passive: B('hermes.passive.greatest', 'hermes', 'passive', 'Quickened Reflex', { spd: 9, dodge: 4 },
       v => `Move ${v.spd}% faster and gain ${v.dodge}% dodge.`,
       (m, v) => { m.moveMul *= 1 + v.spd / 100; m.dodge += v.dodge / 100; }),
   },
   hecate: {
     names: ['Hexed Strike', 'Twin-Torch Flourish', 'Witch Circle', 'Shadow Step', 'Hecate Aid'],
     damage: [11, 21, 25, 10, 42], status: 'chill', type: 'arcane', stacks: [3, 3, 2, 3, 4],
-    text: (slot, v) => `Your ${ACTION_LABEL[slot]} deals ${v.dmg} arcane damage and inflicts ${v.stacks} Chill.`,
+    text: (slot, v) => `Your ${ACTION_LABEL[slot]} deals ${v.dmg} arcane damage and inflicts ${v.stacks} Freeze.`,
     after: (slot, m) => { if (slot === 'cast') m.castRadius += 2; },
     passive: B('hecate.passive.cauldron', 'hecate', 'passive', 'Cauldron Soul', { mana: 30, regen: 22 },
       v => `Gain ${v.mana} maximum Magick and ${v.regen}% faster regeneration.`,
@@ -109,7 +118,7 @@ const FAMILIES = {
   selene: {
     names: ['Moonlit Strike', 'Eclipse Flourish', 'Orbital Shot', 'Crescent Dash', 'Eclipse Call'],
     damage: [15, 20, 22, 13, 36], status: 'chill', type: 'arcane', stacks: [2, 3, 2, 2, 4],
-    text: (slot, v) => `Your ${ACTION_LABEL[slot]} deals ${v.dmg} moon damage and inflicts ${v.stacks} Chill.`,
+    text: (slot, v) => `Your ${ACTION_LABEL[slot]} deals ${v.dmg} moon damage and inflicts ${v.stacks} Freeze.`,
     after: (slot, m) => { if (slot === 'cast') m.castRadius += 1.8; if (slot === 'dash') m.iframeAdd += 0.14; },
     passive: B('selene.passive.fullmoon', 'selene', 'passive', 'Full Moon', { cast: 12, mana: 18 },
       v => `Cast damage gains ${v.cast}% and maximum Magick gains ${v.mana}.`,
@@ -139,7 +148,7 @@ for (const [god, family] of Object.entries(FAMILIES)) {
           color: GODS[god], god, name: family.names[i],
         });
         family.after?.(slot, m, v);
-      }, family.status ? { status: family.status } : undefined));
+      }, family.status ? { status: family.status, curse: family.curse || GOD_CURSE[god] } : undefined));
   });
   EXPANDED_BOONS.push(family.passive);
 }

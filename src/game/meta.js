@@ -61,6 +61,14 @@ export const MIRROR_TALENTS = Object.freeze({
     text: r => `Begin each descent with ${r * 15} Charon’s Obols.`,
     apply: () => {},
   },
+  // The Fated List in one talent: the right to refuse the hand you were dealt.
+  // Rerolls are a run resource, so this only seeds the descent — spending is
+  // handled by BoonState.reroll().
+  fatedPersuasion: {
+    name: 'Fated Persuasion', max: 4, baseCost: 3, step: 3,
+    text: r => `Begin each descent with ${r} boon Reroll${r === 1 ? '' : 's'}.`,
+    apply: () => {},
+  },
 });
 export const MIRROR_TRACKS = Object.freeze(Object.keys(MIRROR_TALENTS));
 
@@ -195,6 +203,8 @@ export class MetaProgression {
     return rank >= def.max ? 0 : def.baseCost + rank * def.step;
   }
   startingObols() { return this.mirrorRank('deepPockets') * 15; }
+  /** Boon rerolls a descent begins with. Read by BoonState via seedRun(). */
+  startingRerolls() { return this.mirrorRank('fatedPersuasion'); }
 
   awardNectar(amount = 1, o = {}) {
     const gained = Math.max(0, Math.floor(Number(amount) || 0));

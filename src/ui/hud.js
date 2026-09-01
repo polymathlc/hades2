@@ -14,12 +14,33 @@
 
 import {
   PAL, RARITY, frame, panelBody, plaqueRect, roundRect, goldGradient, meander,
-  beadRule, palmette, tracked, trackedWidth, rgba, mix, shade, lift,
-  displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
+  beadRule, palmette, tracked, trackedWidth, wrap, rgba, mix, shade, lift,
+  displayFont, bodyFont, ease, clamp01, lerp, LayerCache, uiMotion,
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
-import { upsertHudBoon, hudBoonSlotLabel } from './hud-boons.js';
+import { upsertHudBoon, hudBoonSlotLabel, hudBoonGroups } from './hud-boons.js';
+
+/**
+ * The ground the loadout tray stands on. Fades out to the right and down so it
+ * never reads as a window, only as a darkening of the floor behind the text.
+ */
+function trayScrim(g, x, y, w, h, S) {
+  g.save();
+  roundRect(g, x - 14 * S, y - 17 * S, w + 42 * S, h + 27 * S, 9 * S);
+  const sg = g.createLinearGradient(x - 14 * S, 0, x + w + 28 * S, 0);
+  sg.addColorStop(0, 'rgba(6,4,13,0.70)');
+  sg.addColorStop(0.66, 'rgba(6,4,13,0.52)');
+  sg.addColorStop(1, 'rgba(6,4,13,0.02)');
+  g.fillStyle = sg; g.fill();
+  const eg = g.createLinearGradient(x - 14 * S, 0, x + w * 0.5, 0);
+  eg.addColorStop(0, 'rgba(109,68,22,0.40)'); eg.addColorStop(1, 'rgba(0,0,0,0)');
+  g.strokeStyle = eg; g.lineWidth = Math.max(1, 1 * S); g.stroke();
+  g.restore();
+}
+
+/** The binding for each ability category, so the tray doubles as a legend. */
+const HUD_SLOT_KEY = { attack: 'LMB', special: 'RMB', cast: 'Q', dash: 'SPACE', call: 'R' };
 
 /** A value that eases toward its target with a small, controlled overshoot. */
 class Spring {
@@ -69,8 +90,14 @@ export class HUD {
     this.roomT = -9;
 
     this.obols = 0; this.nectar = 0; this.titanBlood = 0; this.darkness = 0;
-    this.boons = [];                      // [{god, rarity, slot, name}]
+    this.boons = [];                      // [{god, rarity, slot, name, text, ...}]
     this.boonPop = new Map();
+    this.boonRects = [];                  // tray hit targets, rebuilt each draw
+    this.hoverBoonId = null;              // the row under the cursor, or null
+    // Before the first boon the tray is five empty sockets and nothing else,
+    // which is noise. Set this to show the empty loadout anyway (capture, or a
+    // tutorial that wants to point at the sockets).
+    this._trayAlwaysOn = false;
 
     this.alpha = new Spring(1, 120, 0.9);
     this.visible = true;
@@ -152,13 +179,17 @@ export class HUD {
   draw(g, W, H, S, t) {
     const a = this.alpha.v;
     if (a <= 0.01) return;
+    // Reduced motion parks the travelling speculars: the readouts are all
+    // still here, they simply stop sliding.
+    t *= uiMotion();
     g.save();
     g.globalAlpha *= a;
     this._cluster(g, W, H, S, t);
     this._depthPlaque(g, W, H, S, t);
-    this._boonRail(g, W, H, S, t);
+    this._boonTray(g, W, H, S, t);
     this._resources(g, W, H, S, t);
     this._roomBanner(g, W, H, S, t);
+    this._boonTooltip(g, W, H, S, t);
     g.restore();
   }
 
@@ -239,8 +270,17 @@ export class HUD {
     const loading = this.reloadRemaining > 0;
     const railState = loading ? `RELOADING ${this.reloadRemaining.toFixed(1)}S` : `AMMO ${ammoCur}/${ammoMax}`;
     const weaponLine = `${this.character.name} · ${this.weapon.name}${isRail ? ` · ${railState}` : ''}`.toUpperCase();
-    tracked(g, weaponLine, Math.max(8 * S, cx - r * 0.9), cy + r * 1.62, {
-      size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.85),
+    // BELOW the Magick bar, not through it. The caption used to be laid across
+    // the bar's own row; the bar's ink plate then made the collision opaque.
+    const capY = cy + r * 2.10;
+    const capX = Math.max(8 * S, cx - r * 0.9);
+    const capW = trackedWidth(g, weaponLine, { size: 8.4 * S, track: 0.20, weight: 600 });
+    g.save();
+    plaqueRect(g, capX - 5 * S, capY - 9 * S, capW + 12 * S, 13.5 * S, 2.5 * S);
+    g.fillStyle = 'rgba(6,4,13,0.55)'; g.fill();
+    g.restore();
+    tracked(g, weaponLine, capX, capY, {
+      size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parch, 0.88),
       shadow: '#05030b', shadowDy: 1,
     });
   }
@@ -370,10 +410,24 @@ export class HUD {
     g.restore();
     plaqueRect(g, x, y, w, h, r);
     g.strokeStyle = goldGradient(g, x, y, x, y + h, 0.7); g.lineWidth = 1.2 * S; g.stroke();
-    tracked(g, 'MAGICK', x + 8 * S, y + h * 0.76, {
-      size: 8 * S, track: 0.32, weight: 600, align: 'left', color: rgba('#bfe8ff', 0.65), shadow: '#04060f', shadowDy: 1,
+    // The label sits on top of a lit fill, so it needs its own ground or it
+    // disappears exactly when the bar is full. A narrow ink plate does it
+    // without turning the bar into a two-tone stripe.
+    const lw = trackedWidth(g, 'MAGICK', { size: 8 * S, track: 0.32, weight: 600 });
+    g.save();
+    plaqueRect(g, x + 4 * S, y + h * 0.18, lw + 9 * S, h * 0.64, 2 * S);
+    g.fillStyle = 'rgba(4,8,18,0.62)'; g.fill();
+    g.restore();
+    tracked(g, 'MAGICK', x + 8.5 * S, y + h * 0.76, {
+      size: 8 * S, track: 0.32, weight: 600, align: 'left', color: rgba('#d8f2ff', 0.92), shadow: '#04060f', shadowDy: 1,
     });
-    tracked(g, String(Math.round(this.mana.cur)), x + w - 8 * S, y + h * 0.76, {
+    // current over maximum, the same grammar the life bar uses
+    const maxTxt = ' /' + Math.round(this.mana.max);
+    const maxW = trackedWidth(g, maxTxt, { size: 7.6 * S, track: 0.05, weight: 600 });
+    tracked(g, maxTxt, x + w - 8 * S, y + h * 0.76, {
+      size: 7.6 * S, track: 0.05, weight: 600, align: 'right', color: rgba('#bfe8ff', 0.7), shadow: '#04060f', shadowDy: 1,
+    });
+    tracked(g, String(Math.round(this.mana.cur)), x + w - 8 * S - maxW, y + h * 0.76, {
       size: 10.5 * S, track: 0.05, weight: 700, align: 'right', color: '#e6f6ff', shadow: '#04060f', shadowDy: 1,
     });
   }
@@ -402,7 +456,8 @@ export class HUD {
         g.fillStyle = rg; g.beginPath(); g.arc(cx, y, s * 2.6, 0, 6.2832); g.fill(); g.restore();
       }
     }
-    tracked(g, 'CAST', x - 5 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    // The binding rides with the meter, matching the boon tray's legend.
+    tracked(g, 'CAST · Q', x - 5 * S, y + 20 * S, { size: 7.6 * S, track: 0.26, weight: 600, color: rgba(PAL.parchDim, 0.72) });
   }
 
   _dashPips(g, x, y, S, t) {
@@ -427,7 +482,7 @@ export class HUD {
       g.strokeStyle = on ? rgba('#ffe9a8', 0.6) : 'rgba(90,70,120,0.5)'; g.lineWidth = 1 * S; g.stroke();
       g.restore();
     }
-    tracked(g, 'DASH', x - 6 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    tracked(g, 'DASH · SPACE', x - 6 * S, y + 20 * S, { size: 7.6 * S, track: 0.26, weight: 600, color: rgba(PAL.parchDim, 0.72) });
   }
 
   // ═══════════════════════════════════════════════ depth / biome plaque ═══
@@ -453,74 +508,243 @@ export class HUD {
     });
   }
 
-  // ═════════════════════════════════════════════════════════ boon rail ════
-  _boonRail(g, W, H, S, t) {
-    if (!this.boons.length) return;
-    // Preserve a readable minimum for the information-dense rail. Eight rows
-    // at this scale still clear the bottom-left combat cluster at 1024x576.
+  // ═════════════════════════════════════════════════════════ boon tray ════
+  // Not a row of unexplained god portraits: a loadout. The five ability
+  // categories are always present, in play order, whether or not a boon is in
+  // them — an empty Cast socket is information, and it is the information a
+  // Hades player uses to decide what to take at the next gate. Anything else
+  // the run has picked up (passives, Duos, Legendaries) follows underneath.
+  _boonTray(g, W, H, S, t) {
+    // Preserve a readable minimum for the information-dense tray.
     S = Math.max(S, 0.82);
-    const x = 54 * S, y0 = 112 * S, step = 56 * S, r = 22 * S;
-    // rail
-    const railH = (this.boons.length - 1) * step + r * 2.4;
-    const rg = g.createLinearGradient(x, y0 - r, x, y0 + railH);
-    rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(0.12, rgba(PAL.bronze, 0.55));
-    rg.addColorStop(0.88, rgba(PAL.bronze, 0.55)); rg.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = rg; g.fillRect(x - 1 * S, y0 - r, 2 * S, railH);
-
-    for (let i = 0; i < this.boons.length; i++) {
-      const b = this.boons[i];
-      const cy = y0 + i * step;
-      const info = GOD_INFO[b.god]; if (!info) continue;
-      const pop = this.boonPop.get(b.id);
-      const pa = pop != null ? clamp01((t - pop) / 0.45) : 1;
-      const sc = pop != null && pa < 1 ? ease.overshoot(pa, 1.6) : 1;
-      g.save();
-
-      // The compact label turns the old row of unexplained god portraits into
-      // a live loadout. Its restrained backing preserves the left-edge glance
-      // path without covering combat, even at the 1024x576 minimum viewport.
-      const labelX = x + 15 * S, labelY = cy - 16 * S;
-      const labelW = 126 * S, labelH = 32 * S;
-      plaqueRect(g, labelX, labelY, labelW, labelH, 5 * S);
-      const pg = g.createLinearGradient(labelX, labelY, labelX + labelW, labelY);
-      pg.addColorStop(0, rgba('#0b0714', 0.94));
-      pg.addColorStop(0.72, rgba(mix('#120a1c', info.color, 0.12), 0.82));
-      pg.addColorStop(1, 'rgba(10,6,18,0.08)');
-      g.fillStyle = pg; g.fill();
-      const R = RARITY[b.rarity] || RARITY.common;
-      g.strokeStyle = rgba(R.text, 0.52); g.lineWidth = Math.max(0.75, 0.9 * S); g.stroke();
-      tracked(g, hudBoonSlotLabel(b), labelX + 21 * S, labelY + 12 * S, {
-        size: 8 * S, track: 0.24, weight: 700, align: 'left', color: rgba(info.color, 0.96),
-        shadow: '#05030b', shadowDy: 1 * S,
+    this.boonRects.length = 0;
+    const { abilities, extras } = hudBoonGroups(this.boons, { extraLimit: H < 640 ? 2 : 4 });
+    if (!this.boons.length && !this._trayAlwaysOn) {
+      // Before the first boon the tray would be five empty sockets and nothing
+      // else, which is noise. Show a single quiet prompt instead.
+      const x0 = 30 * S, y0 = 108 * S;
+      trayScrim(g, x0, y0, 176 * S, 32 * S, S);
+      tracked(g, 'LOADOUT', x0, y0, {
+        size: 8.6 * S, track: 0.36, weight: 700, align: 'left', color: rgba(PAL.goldMid, 0.62),
       });
-      const name = (b.name || `${info.name} Boon`).toUpperCase();
-      const compactName = name.length > 20 ? name.slice(0, 19).trimEnd() + '…' : name;
-      tracked(g, compactName, labelX + 21 * S, labelY + 25 * S, {
-        size: 8.4 * S, track: 0.07, weight: 600, align: 'left', color: '#f4ead6',
-        shadow: '#05030b', shadowDy: 1 * S,
+      tracked(g, 'NO BOONS YET', x0, y0 + 15 * S, {
+        size: 8 * S, track: 0.18, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.42), font: bodyFont(),
       });
-
-      g.translate(x, cy); g.scale(sc, sc);
-      // hex setting
-      g.beginPath();
-      for (let k = 0; k < 6; k++) { const a = k * 1.0472 + 0.5236; const px = Math.cos(a) * r, py = Math.sin(a) * r; k ? g.lineTo(px, py) : g.moveTo(px, py); }
-      g.closePath();
-      const bg = g.createRadialGradient(-r * 0.3, -r * 0.4, r * 0.05, 0, 0, r);
-      bg.addColorStop(0, mix('#241238', info.color, 0.18)); bg.addColorStop(1, '#0b0714');
-      g.fillStyle = bg; g.fill();
-      g.strokeStyle = goldGradient(g, -r, -r, r, r, (t * 0.2 + i * 0.2) % 1); g.lineWidth = 2.2 * S; g.stroke();
-      // god-colour bloom so the rail reads in colour, not as grey chips
-      g.save(); g.globalCompositeOperation = 'lighter';
-      const bl = g.createRadialGradient(0, 0, r * 0.15, 0, 0, r * 1.9);
-      bl.addColorStop(0, rgba(info.color, 0.30)); bl.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = bl; g.beginPath(); g.arc(0, 0, r * 1.9, 0, 6.2832); g.fill(); g.restore();
-      g.strokeStyle = rgba(R.text, 0.75); g.lineWidth = 0.9 * S;
-      g.beginPath();
-      for (let k = 0; k < 6; k++) { const a = k * 1.0472 + 0.5236; const px = Math.cos(a) * r * 0.72, py = Math.sin(a) * r * 0.72; k ? g.lineTo(px, py) : g.moveTo(px, py); }
-      g.closePath(); g.stroke();
-      godEmblem(g, 0, 0, r * 0.52, b.god, { glowA: 0.40, glowR: 1.7 });
-      g.restore();
+      return;
     }
+
+    const x = 30 * S;
+    const y0 = 104 * S;
+    const trayW = 196 * S;
+    // The tray must never reach down into the combat cluster. Measure the room
+    // it actually has and compress the rows to fit rather than overlapping.
+    const room = Math.max(180 * S, (H - 250 * S) - y0);
+    const wanted = 16 * S + abilities.length * 40 * S + (extras.length ? 14 * S + extras.length * 30 * S : 0);
+    const k = Math.min(1, room / wanted);
+    const rowH = 40 * S * k, extraH = 30 * S * k;
+
+    // A SCRIM UNDER THE WHOLE COLUMN. Empty sockets are dashed bronze on a 2%
+    // fill: over the lit floor of Tartarus they simply vanished, and with them
+    // the bindings — which is the one thing the tray is for.
+    const totalH = 16 * S + abilities.length * rowH + (extras.length ? 14 * S + extras.length * extraH : 0);
+    trayScrim(g, x, y0, trayW, totalH, S);
+
+    let y = y0;
+    tracked(g, 'LOADOUT', x, y, {
+      size: 8.6 * S, track: 0.36, weight: 700, align: 'left', color: rgba(PAL.goldMid, 0.72),
+    });
+    // a hairline under the section head, fading out to the right
+    const hg = g.createLinearGradient(x, 0, x + trayW, 0);
+    hg.addColorStop(0, rgba(PAL.bronze, 0.8)); hg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = hg; g.fillRect(x, y + 5 * S, trayW, Math.max(1, 1 * S));
+    y += 16 * S;
+
+    for (const a of abilities) { this._trayRow(g, x, y, trayW, rowH, S, t, a.boon, a.slot); y += rowH; }
+
+    if (extras.length) {
+      const dg = g.createLinearGradient(x, 0, x + trayW, 0);
+      dg.addColorStop(0, rgba(PAL.bronze, 0.55)); dg.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = dg; g.fillRect(x, y + 6 * S, trayW, Math.max(1, 1 * S));
+      y += 14 * S;
+      for (const b of extras) { this._trayRow(g, x, y, trayW, extraH, S, t, b, b.slot, true); y += extraH; }
+    }
+  }
+
+  /** One tray row: hex sigil, category, boon name, grade. Empty is a state. */
+  _trayRow(g, x, y, w, h, S, t, boon, slot, compact = false) {
+    const r = Math.min(h * 0.42, (compact ? 12 : 15) * S);
+    const cy = y + h / 2;
+    const info = boon ? GOD_INFO[boon.god] : null;
+    const R = boon ? (RARITY[boon.rarity] || RARITY.common) : RARITY.common;
+    const hot = boon && this.hoverBoonId === boon.id;
+    const pop = boon ? this.boonPop.get(boon.id) : null;
+    const pa = pop != null ? clamp01((t - pop) / 0.45) : 1;
+    const sc = pop != null && pa < 1 ? ease.overshoot(pa, 1.6) : 1;
+
+    // plaque
+    g.save();
+    plaqueRect(g, x, y, w, h - 3 * S, 4 * S);
+    const pg = g.createLinearGradient(x, y, x + w, y);
+    if (boon) {
+      pg.addColorStop(0, rgba(mix('#0b0714', info ? info.color : PAL.gold, hot ? 0.26 : 0.13), 0.94));
+      pg.addColorStop(1, 'rgba(10,6,18,0.10)');
+    } else {
+      pg.addColorStop(0, 'rgba(9,6,16,0.62)');
+      pg.addColorStop(1, 'rgba(9,6,16,0.02)');
+    }
+    g.fillStyle = pg; g.fill();
+    g.strokeStyle = boon ? rgba(R.text, hot ? 0.95 : 0.52) : rgba(PAL.bronze, 0.28);
+    g.lineWidth = Math.max(0.75, (hot ? 1.4 : 0.9) * S); g.stroke();
+    g.restore();
+
+    // hex sigil
+    const hx = x + r + 5 * S;
+    g.save(); g.translate(hx, cy); g.scale(sc, sc);
+    g.beginPath();
+    for (let k = 0; k < 6; k++) { const a = k * 1.0472 + 0.5236; const px = Math.cos(a) * r, py = Math.sin(a) * r; k ? g.lineTo(px, py) : g.moveTo(px, py); }
+    g.closePath();
+    if (boon) {
+      const bg = g.createRadialGradient(-r * 0.3, -r * 0.4, r * 0.05, 0, 0, r);
+      bg.addColorStop(0, mix('#241238', info ? info.color : PAL.gold, 0.20)); bg.addColorStop(1, '#0b0714');
+      g.fillStyle = bg; g.fill();
+      g.strokeStyle = rgba(R.text, 0.9); g.lineWidth = 1.6 * S; g.stroke();
+      g.save(); g.globalCompositeOperation = 'lighter';
+      const bl = g.createRadialGradient(0, 0, r * 0.15, 0, 0, r * 1.8);
+      bl.addColorStop(0, rgba(info ? info.color : PAL.gold, 0.28)); bl.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = bl; g.beginPath(); g.arc(0, 0, r * 1.8, 0, 6.2832); g.fill(); g.restore();
+      godEmblem(g, 0, 0, r * 0.54, boon.god, { glowA: 0.36, glowR: 1.6 });
+    } else {
+      g.fillStyle = 'rgba(8,5,14,0.85)'; g.fill();
+      g.setLineDash([2.5 * S, 2.5 * S]);
+      g.strokeStyle = rgba(PAL.bronze, 0.55); g.lineWidth = 1 * S; g.stroke();
+      g.setLineDash([]);
+    }
+    g.restore();
+
+    const tx = hx + r + 7 * S;
+    const label = boon ? hudBoonSlotLabel(boon) : String(slot || 'boon').toUpperCase();
+    const key = HUD_SLOT_KEY[slot];
+    tracked(g, label, tx, cy - (compact ? 1 : 4) * S, {
+      size: (compact ? 7 : 7.6) * S, track: 0.24, weight: 700, align: 'left',
+      color: boon ? rgba(info ? info.color : PAL.gold, 0.98) : rgba(PAL.parchDim, 0.5),
+      shadow: '#05030b', shadowDy: 1 * S,
+    });
+    if (key && !compact) {
+      // the binding, so the tray doubles as the ability legend
+      tracked(g, key, x + w - 6 * S, cy - 4 * S, {
+        size: 6.8 * S, track: 0.14, weight: 700, align: 'right',
+        color: rgba(PAL.parchDim, boon ? 0.62 : 0.36), font: bodyFont(),
+      });
+    }
+    if (boon) {
+      const name = String(boon.name || '').toUpperCase();
+      // the grade pips and the LV tag own the right edge of both lines, so the
+      // name is measured against what is actually left rather than the plaque
+      const room = w - (tx - x) - (compact ? 12 : 40) * S;
+      let size = (compact ? 7.6 : 8.4) * S;
+      // SHRINK BEFORE YOU CHOP. "LIGHTNING STRI…" tells the player nothing the
+      // full name at 88% would not have told them better.
+      const full = trackedWidth(g, name, { size, track: 0.06, weight: 600 });
+      if (full > room) size *= Math.max(0.72, room / full);
+      let shown = name;
+      while (shown.length > 4 && trackedWidth(g, shown, { size, track: 0.06, weight: 600 }) > room) shown = shown.slice(0, -1);
+      if (shown !== name) shown = shown.trimEnd() + '…';
+      tracked(g, shown, tx, cy + (compact ? 9 : 9) * S, {
+        size, track: 0.06, weight: 600, align: 'left', color: hot ? '#fff3c7' : '#f4ead6',
+        shadow: '#05030b', shadowDy: 1 * S,
+      });
+      // grade pips on the right edge — rarity without relying on colour alone
+      if (!compact) {
+        const pips = R.pips || 1;
+        for (let k = 0; k < 4; k++) {
+          const px = x + w - 8 * S - k * 5.4 * S, py = cy + 8 * S;
+          g.beginPath(); g.arc(px, py, 1.7 * S, 0, 6.2832);
+          if (k < pips) { g.fillStyle = rgba(R.text, 0.95); g.fill(); }
+          else { g.strokeStyle = rgba(PAL.bronze, 0.55); g.lineWidth = 0.8 * S; g.stroke(); }
+        }
+      }
+      if ((boon.level || 1) > 1) {
+        tracked(g, `LV${boon.level}`, x + w - 8 * S, cy - (compact ? 1 : 4) * S, {
+          size: 6.6 * S, track: 0.1, weight: 700, align: 'right', color: rgba(PAL.goldHi, 0.9), font: bodyFont(),
+        });
+      }
+      this.boonRects.push({ x, y, w, h: h - 3 * S, boon });
+    } else {
+      tracked(g, 'EMPTY', tx, cy + 9 * S, {
+        size: 7.6 * S, track: 0.18, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.38), font: bodyFont(),
+      });
+    }
+  }
+
+  /** Which tray row the cursor is over, by id. Returns true when it changed. */
+  hitTray(px, py) {
+    let id = null;
+    for (const r of this.boonRects) {
+      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) { id = r.boon.id; break; }
+    }
+    if (id === this.hoverBoonId) return false;
+    this.hoverBoonId = id;
+    return true;
+  }
+
+  /**
+   * The tray tooltip. Drawn last, over everything, because a tooltip that is
+   * occluded by the thing it explains is worse than no tooltip.
+   */
+  _boonTooltip(g, W, H, S, t) {
+    if (!this.hoverBoonId) return;
+    S = Math.max(S, 0.82);
+    const hit = this.boonRects.find(r => r.boon.id === this.hoverBoonId);
+    if (!hit) return;
+    const b = hit.boon;
+    const info = GOD_INFO[b.god] || GOD_INFO.zeus;
+    const R = RARITY[b.rarity] || RARITY.common;
+    const w = 268 * S;
+    const lines = wrap(g, b.text || '', w - 26 * S, { size: 11 * S, weight: 400, font: bodyFont() }).slice(0, 5);
+    const h = 62 * S + lines.length * 15 * S + (b.curse ? 18 * S : 0);
+    const x = Math.min(hit.x + hit.w + 12 * S, W - w - 12 * S);
+    const y = Math.max(10 * S, Math.min(hit.y - 6 * S, H - h - 12 * S));
+
+    g.save();
+    plaqueRect(g, x, y, w, h, 6 * S);
+    g.fillStyle = 'rgba(7,4,13,0.96)'; g.fill();
+    g.strokeStyle = rgba(R.text, 0.8); g.lineWidth = 1.2 * S; g.stroke();
+    // god wash so the panel is unmistakably that god's
+    g.save();
+    plaqueRect(g, x, y, w, h, 6 * S); g.clip();
+    const wash = g.createLinearGradient(x, y, x, y + h);
+    wash.addColorStop(0, rgba(info.color, 0.20)); wash.addColorStop(0.5, 'rgba(0,0,0,0)');
+    g.fillStyle = wash; g.fillRect(x, y, w, h);
+    g.restore();
+    g.restore();
+
+    godEmblem(g, x + 20 * S, y + 20 * S, 9 * S, b.god, { glowA: 0.3, glowR: 1.6 });
+    tracked(g, String(b.name || '').toUpperCase(), x + 34 * S, y + 17 * S, {
+      size: 10.6 * S, track: 0.08, weight: 700, align: 'left', color: '#fff0c6',
+    });
+    const meta = `${(info.name || '').toUpperCase()} · ${hudBoonSlotLabel(b)} · ${String(b.rarity || '').toUpperCase()}${(b.level || 1) > 1 ? ` · LV ${b.level}` : ''}`;
+    tracked(g, meta, x + 34 * S, y + 30 * S, {
+      size: 7.4 * S, track: 0.14, weight: 700, align: 'left', color: rgba(R.text, 0.92),
+    });
+
+    let ty = y + 50 * S;
+    if (b.curse) {
+      const cw = trackedWidth(g, b.curse.name.toUpperCase(), { size: 7.6 * S, track: 0.2, weight: 700 }) + 24 * S;
+      plaqueRect(g, x + 14 * S, ty - 10 * S, cw, 15 * S, 3 * S);
+      g.fillStyle = rgba(shade(b.curse.color, 0.66), 0.95); g.fill();
+      g.strokeStyle = rgba(b.curse.color, 0.85); g.lineWidth = 1 * S; g.stroke();
+      g.beginPath(); g.arc(x + 22 * S, ty - 2.5 * S, 3 * S, 0, 6.2832);
+      g.fillStyle = rgba(b.curse.color, 0.95); g.fill();
+      tracked(g, b.curse.name.toUpperCase(), x + 29 * S, ty, {
+        size: 7.6 * S, track: 0.2, weight: 700, align: 'left', color: lift(b.curse.color, 0.45),
+      });
+      ty += 18 * S;
+    }
+    g.font = `400 ${11 * S}px ${bodyFont()}`;
+    g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+    g.fillStyle = rgba(PAL.parch, 0.86);
+    for (const ln of lines) { g.fillText(ln, x + 14 * S, ty + 4 * S); ty += 15 * S; }
+    g.textAlign = 'left';
   }
 
   // ═══════════════════════ obols / Nectar / Titan Blood / Darkness ═══════

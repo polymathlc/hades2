@@ -1197,12 +1197,34 @@ export function ashlar(n, o = {}) {
   const rows = Math.max(1, Math.round(o.rows ?? 5));
   const cols = Math.max(1, Math.round(o.cols ?? 3));
   const rng = o.rng || makeRng(4242);
-  const mortar = (o.mortar ?? 0.022) * n;
+  const mortarPx = (o.mortar ?? 0.022) * n;
   const bevel = (o.bevel ?? 0.05) * (n / rows);
+  // A mason does not lay two identical blocks. Every one of these was zero
+  // before: the bed was a perfect lattice of axis-aligned rectangles, which is
+  // the single loudest periodic signal a wall can carry.
+  const rotMax = o.rot ?? 0.030;          // radians, ~1.7 deg of per-block tilt
+  const brokenFrac = o.broken ?? 0.14;    // blocks split by an old fracture
+  const replaceFrac = o.replace ?? 0.10;  // pale blocks laid later
+  // light direction for the hand-placed arris highlight, in texture space
+  const LDX = o.lightX ?? 0.52, LDY = o.lightY ?? -0.85;
+  const LDL = Math.hypot(LDX, LDY), LX0 = LDX / LDL, LY0 = LDY / LDL;
+
+  const wrapX = cols === 1;
+  const wrapY = rows === 1;
   const height = new Float32Array(n * n);
   const id = new Float32Array(n * n);
   const seam = new Float32Array(n * n);
   const lobe = new Float32Array(n * n);
+  // the mortar GAP alone, chamfer excluded — what wants the ink tint
+  const joint = new Float32Array(n * n);
+  // signed chamfer: + where the bevel faces the key, - where it faces away
+  const arris = new Float32Array(n * n);
+  // per-block -1..1 proudness, so the bed has relief instead of being a plane
+  const rise = new Float32Array(n * n);
+  // cell-local coordinates: what cellVariant() needs to give every block its
+  // own rotated patch of grain
+  const cu = new Float32Array(n * n);
+  const cv = new Float32Array(n * n);
   // per-block light/shade axis — see tileGrid
   const LX = new Float32Array(256), LY = new Float32Array(256);
   for (let k = 0; k < 256; k++) { const a = (k / 256) * TAU; LX[k] = Math.cos(a); LY[k] = Math.sin(a); }
@@ -1218,7 +1240,25 @@ export function ashlar(n, o = {}) {
     for (let i = 0; i < c; i++) wts.push(0.6 + rng() * 0.9);
     const tot = wts.reduce((a, b) => a + b, 0);
     for (let i = 0; i < c; i++) { acc += wts[i] / tot; edges.push(acc); }
-    layout.push({ edges, offset: rng(), tone: Array.from({ length: c }, () => rng()) });
+    const tone = [], rot = [], ris = [], brk = [], brkAt = [], inset = [];
+    for (let i = 0; i < c; i++) {
+      // A full value step from one block to the next is what Jen Zee paints;
+      // a gentle per-tile tint is what reads as procedural speckle.
+      tone.push(rng() < replaceFrac ? 0.80 + rng() * 0.20 : rng() * 0.88);
+      rot.push((rng() * 2 - 1) * rotMax);
+      ris.push(rng() * 2 - 1);
+      brk.push(rng() < brokenFrac ? 1 : 0);
+      brkAt.push(0.36 + rng() * 0.28);
+      inset.push(rng() * mortarPx * 0.8);
+    }
+    // A row with ONE block spans the whole texture, so its cell-local fx wraps
+    // from 1 back to 0 inside the same block: rotating it would tear the torus
+    // open along that wrap. Same for a single course in Y. Both are legitimate
+    // configurations (a column drum is rows=6, cols=1), so they simply do not
+    // get the tilt.
+    const single = (c === 1) || rows === 1;
+    if (single) for (let i = 0; i < c; i++) rot[i] = 0;
+    layout.push({ edges, offset: rng(), tone, rot, rise: ris, brk, brkAt, inset, single, sx: c === 1 });
   }
 
   // wobble the seams so they are chiselled, not CAD
@@ -1233,28 +1273,271 @@ export function ashlar(n, o = {}) {
       const wy = y + (wob[(wrapi(y + 37, n) * n + wrapi(x + 91, n))] - 0.5) * 2 * wobA;
       const ry = wy / rh;
       const r = wrapi(Math.floor(ry), rows);
-      const fy = ry - Math.floor(ry);
+      let fy = ry - Math.floor(ry);
       const L = layout[r];
       const u = (((wx / n) + L.offset) % 1 + 1) % 1;
       let c = 0;
       while (c < L.edges.length - 2 && u > L.edges[c + 1]) c++;
       const u0 = L.edges[c], u1 = L.edges[c + 1];
-      const bw = (u1 - u0) * n;
-      const fx = (u - u0) / (u1 - u0);
-      // distance to nearest seam, in px
-      const dEdgeX = Math.min(fx, 1 - fx) * bw;
-      const dEdgeY = Math.min(fy, 1 - fy) * rh;
-      const d = Math.min(dEdgeX, dEdgeY);
-      const m = 1 - smoothstep(mortar * 0.5, mortar * 0.5 + bevel, d);
+      let fx = (u - u0) / (u1 - u0);
+      let bw = (u1 - u0) * n, bh = rh;
+      let toneV = L.tone[c], rotV = L.rot[c], riseV = L.rise[c], inV = L.inset[c];
+      let axisK = (ihash(c, r, 4409) & 255);
+
+      // BROKEN BLOCK: an old fracture across the face. The two halves then
+      // drift apart in tone, tilt and rise, because a split block is never
+      // re-bedded flush.
+      if (L.brk[c] > 0) {
+        const at = L.brkAt[c];
+        let sub = 0;
+        if (bw >= bh) {
+          if (fx < at) { bw *= at; fx /= at; }
+          else { bw *= (1 - at); fx = (fx - at) / (1 - at); sub = 1; }
+        } else if (fy < at) { bh *= at; fy /= at; }
+        else { bh *= (1 - at); fy = (fy - at) / (1 - at); sub = 1; }
+        const kh = ihashf(c * 3 + sub, r, 90211);
+        toneV = clamp01(toneV + (kh - 0.5) * 0.42);
+        if (!L.single) rotV += (kh - 0.5) * rotMax * 1.6;
+        riseV = riseV * 0.6 + (kh - 0.5) * 1.3;
+        inV += kh * mortarPx * 0.5;
+        axisK = (axisK + ((kh * 256) | 0)) & 255;
+      }
+
+      const halfW = bw * 0.5, halfH = bh * 0.5;
+      const px = (fx - 0.5) * bw, py = (fy - 0.5) * bh;
+      const ca = Math.cos(rotV), sa = Math.sin(rotV);
+      const rx = px * ca + py * sa;
+      const ryy = -px * sa + py * ca;
+      // inset far enough that the rotated corners never leave the cell, so the
+      // whole bed still wraps
+      const pad = mortarPx * 0.5 + Math.abs(sa) * (halfW + halfH) * 0.5;
+      const shw = Math.max(1, halfW - pad - inV);
+      const shh = Math.max(1, halfH - pad - inV * 0.6);
+      // see tileGrid: an axis whose cell spans the whole texture has no cell
+      // boundary on it, so it must not draw one
+      const dX = L.sx ? 1e9 : shw - Math.abs(rx);
+      const dY = wrapY ? 1e9 : shh - Math.abs(ryy);
+      const d = dX < dY ? dX : dY;
+
+      const m = d > 1e8 ? 0 : d <= 0 ? 1 : 1 - smoothstep(0, bevel, d);
       seam[i] = m;
-      height[i] = 1 - m;
-      id[i] = L.tone[c % L.tone.length];
-      // see tileGrid: the block's own light/shade axis, hand-painted per block
-      const lk = ihash(c, r, 4409) & 255;
-      lobe[i] = (fx - 0.5) * LX[lk] + (fy - 0.5) * LY[lk];
+      joint[i] = d > 1e8 ? 0 : d <= 0 ? 1 : 1 - smoothstep(0, bevel * 0.30, d);
+      height[i] = (1 - m) * (1 + riseV * 0.11);
+      id[i] = toneV;
+      rise[i] = riseV;
+      cu[i] = fx; cv[i] = fy;
+      // see tileGrid: an axis whose cell spans the whole texture wraps inside
+      // its own cell, so a signed cell-local term tears there
+      lobe[i] = (L.sx ? 0 : (fx - 0.5) * LX[axisK]) + (wrapY ? 0 : (fy - 0.5) * LY[axisK]);
+      if (d > 0 && d < 1e8) {
+        let nx = 0, ny = 0;
+        if (dX < dY) { if (!L.sx) nx = rx < 0 ? -1 : 1; } else if (!wrapY) ny = ryy < 0 ? -1 : 1;
+        const tx = nx * ca - ny * sa, ty = nx * sa + ny * ca;
+        arris[i] = m * (tx * LX0 + ty * LY0);
+      }
     }
   }
-  return { height, id, mortar: seam, lobe };
+  return { height, id, mortar: seam, seam, joint, lobe, arris, rise, cu, cv, wrapX, wrapY, cols, rows };
+}
+
+// ---------------------------------------------------------------------------
+// PER-CELL VARIANT SAMPLING — "every block came out of a different bed"
+// ---------------------------------------------------------------------------
+/**
+ * Give every cell of a layout its OWN rotated, offset patch of a source field.
+ *
+ * A tiled surface reads as tiled for two reasons: the LATTICE repeats, and the
+ * grain inside every cell is the same grain, continuous across the joints as
+ * if the mason had quarried one enormous stone and scored lines into it. The
+ * lattice is what the stochastic de-tiler in painterly.js attacks; this
+ * attacks the second one, at bake time and for free at run time. Each cell
+ * reads `src` at a coordinate rotated by a per-cell quarter/eighth turn and
+ * displaced by a per-cell offset, so the chisel marks, pitting and mineral
+ * bedding change direction at every joint — which is what actually happens
+ * when blocks are cut from a quarry and laid by hand.
+ *
+ * ── ZOOM, AND THE BUG THAT `span` ALONE HID ──────────────────────────────────
+ * `span` is "what fraction of the WHOLE TEXTURE does one cell read", which
+ * means the magnification it applies is `span x cellsPerAxis`, not `span`. On a
+ * 4x4 marble floor, span 0.8 is a mild 3.2x zoom-out and the grain stays in the
+ * band it was authored in. On a flagstone bed 15 stones wide, the same-looking
+ * span 0.75 is an ELEVEN-fold zoom-out: every feature of the source — mineral
+ * flecks, chisel scores, bedding — is squeezed to a ninth of its authored size
+ * and lands in the finest band of the spectrum as speckle. That is measurable
+ * and it was measured: floor.tartarus's per-flag aggregate contributed nothing
+ * whatever to the mid or coarse bands, and a control that simply dithered the
+ * old albedo with white noise reproduced the whole of its supposed gain.
+ *
+ * `zoom` states the thing the caller actually means: "one cell reads a window
+ * `zoom` times its own size". zoom 1 preserves scale exactly; 1.5 gives a
+ * little slack so neighbouring cells cannot read the same patch. It needs the
+ * layout's cell counts, which tileGrid/ashlar/flagBond now return.
+ *
+ * @param {Float32Array} src   source field (n*n), wrapped-sampled
+ * @param {object} L           a layout result: needs { cu, cv, id } (+ cols/rows for zoom)
+ * @param {object} o           zoom: window size in CELLS (preferred), or
+ *                             span: fraction of src one cell covers (legacy)
+ */
+export function cellVariant(src, n, L, o = {}) {
+  const zoom = o.zoom;
+  const spanX = (zoom != null ? zoom / Math.max(1, L.cols || 1) : (o.span ?? 0.55)) * n;
+  const spanY = (zoom != null ? zoom / Math.max(1, L.rows || 1) : (o.span ?? 0.55)) * n;
+  const out = new Float32Array(n * n);
+  const cu = L.cu, cv = L.cv, id = L.id;
+  // An axis whose cell spans the whole texture wraps inside its own cell, so a
+  // signed cell-local coordinate tears there. On such an axis the RAW texture
+  // coordinate is used instead — continuous by construction on the torus — and
+  // the rotation is dropped, since rotating would mix the torn axis back in.
+  // The per-cell offset still applies, so the other axis keeps its variation.
+  const wx = !!L.wrapX, wy = !!L.wrapY;
+  const flat = wx || wy;
+  const STEPS = o.steps ?? 8;                 // quantised rotations
+  const CA = new Float32Array(STEPS), SA = new Float32Array(STEPS);
+  for (let k = 0; k < STEPS; k++) { const a = (k / STEPS) * TAU; CA[k] = Math.cos(a); SA[k] = Math.sin(a); }
+  for (let y = 0; y < n; y++) {
+    const row = y * n;
+    for (let x = 0; x < n; x++) {
+      const i = row + x;
+      const t = id[i];
+      const k = ((t * STEPS * 7.13) | 0) % STEPS;
+      const ca = flat ? 1 : CA[k], sa = flat ? 0 : SA[k];
+      const px = wx ? x : (cu[i] - 0.5) * spanX;
+      const py = wy ? y : (cv[i] - 0.5) * spanY;
+      const ox = (t * 1103.0) % n, oy = (t * 617.7 + 311.0) % n;
+      out[i] = sampleWrap(src, n, px * ca - py * sa + ox, px * sa + py * ca + oy);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// ACCUMULATION — moss, lichen, nitre, soot, dried ichor
+// ---------------------------------------------------------------------------
+/**
+ * ORGANIC COLONY GROWTH.
+ *
+ * A thresholded fBm is a cloud, and a cloud is what every procedural "moss"
+ * looks like. Real growth starts from scattered spores, spreads outward until
+ * it runs out of vigour, and has a RAGGED front with a denser centre. Worley
+ * supplies the colonies, a domain warp ragged-edges the front, a per-colony
+ * vigour makes some patches large and some barely taken, and the optional
+ * `bias` field (cavity, joint, wetness) decides where a spore could land at
+ * all — which is why this reads as growth and a noise threshold does not.
+ *
+ * Cheap by construction: everything below is computed at half resolution,
+ * because a colony 40 px across has nothing to say at 1 px.
+ */
+export function lichen(n, o = {}) {
+  const seed = (o.seed ?? 404) | 0;
+  const freq = Math.max(2, Math.round(o.freq ?? 9));
+  const cover = o.cover ?? 0.35;
+  const res = Math.max(96, Math.min(n, o.res || (n >> 1)));
+  let d = worleyField(res, { freq, mode: 'f1', seed, jitter: 1 });
+  d = warp(d, res, { amp: o.ragged ?? 0.055, freq: 4, octaves: 4, seed: seed + 17, warpRes: Math.max(64, res >> 2) });
+  const vig = worleyField(res, { freq, mode: 'cell', seed });
+  const fine = fbm(res, { freq: Math.min(res >> 2, freq * 3), octaves: 3, seed: seed + 5 });
+  const out = new Float32Array(res * res);
+  const hard = o.hard ?? 4.0;
+  for (let i = 0; i < out.length; i++) {
+    const r = cover * (0.30 + 1.55 * vig[i]);
+    out[i] = clamp01((r - d[i]) * hard) * (0.50 + 0.80 * fine[i]);
+  }
+  const up = res === n ? out : resampleTo(out, res, n);
+  if (o.bias) {
+    const k = o.biasAmount ?? 1.4, fl = o.biasFloor ?? 0.10, b = o.bias;
+    for (let i = 0; i < up.length; i++) up[i] = clamp01(up[i]) * clamp01(fl + b[i] * k);
+  }
+  return up;
+}
+
+/**
+ * MINERAL AGGREGATE — hard-edged grains of a second mineral suspended in a
+ * matrix. This is the frequency band that separates granite, basalt and
+ * conglomerate from "a rock-coloured noise field": crisp, sparse, size-varied
+ * flecks with their own value, not a smooth grain octave.
+ */
+export function aggregate(n, o = {}) {
+  const freq = Math.max(2, Math.round(o.freq ?? 34));
+  const seed = (o.seed ?? 77) | 0;
+  // ── RESOLUTION CAP, AND WHY IT IS FREE ────────────────────────────────────
+  // A fused Worley pass walks a 3x3 cell neighbourhood per texel, so it is the
+  // most expensive operator any of these recipes runs at full resolution, and
+  // it was running at full resolution on every 448-1024 surface in the game.
+  // What it draws is a field of `freq` x `freq` grains, so the resolution it
+  // needs is set by the GRAIN, not by the texture: fourteen texels across one
+  // grain resolves a ragged crystal boundary with room to spare, and every
+  // texel past that is spent describing an edge the resample, the grain octave
+  // over it and the mip chain all soften anyway. On a 448 wall whose flecks are
+  // freq 18 that is 252 instead of 448 — a third of the work for a difference
+  // no frame contains. Callers that genuinely need a sharper grain still pass
+  // an explicit `res`.
+  // The 256 floor is not slack: below it the saving is a millisecond and the
+  // cost is real — dropping iron.dark's flake field from 256 to 224 measured
+  // -0.05 bits of entropy and a third of its fine band, for 2 ms.
+  const res = Math.max(128, Math.min(n, o.res || Math.max(256, Math.round(freq * 14))));
+  const size = o.size ?? 0.30;
+  const hard = o.hard ?? 6;
+  // RAGGED GRAIN BOUNDARIES. A plain thresholded Worley distance is a field of
+  // perfect circles, and a field of perfect circles reads as bubble wrap, not
+  // as mineral. Modulating the per-grain radius with a fine noise breaks the
+  // boundary into the angular, fractured outline a crystal actually has, for
+  // one cheap two-octave field.
+  const ragged = o.ragged ?? 0.42;
+  const rg = ragged > 0 ? fbm(res, { freq: Math.min(res >> 2, freq * 3), octaves: 2, seed: seed + 991, ppc: 2 }) : null;
+  // ONE fused Worley pass. Calling worleyField twice (once for f1, once for the
+  // cell id) walks the same 3x3 neighbourhood twice for a field that is pure
+  // fine detail and therefore has to run at full resolution; fusing it is the
+  // difference between an affordable grain layer and one that doubles the bake.
+  const out = new Float32Array(res * res);
+  const px = new Float32Array(freq * freq), py = new Float32Array(freq * freq);
+  const cid = new Float32Array(freq * freq);
+  for (let cy = 0; cy < freq; cy++) for (let cx = 0; cx < freq; cx++) {
+    const h = ihash(cx, cy, seed), k = cy * freq + cx;
+    px[k] = cx + 0.5 + (((h & 1023) / 1023) - 0.5);
+    py[k] = cy + 0.5 + ((((h >>> 10) & 1023) / 1023) - 0.5);
+    cid[k] = ((h >>> 20) & 1023) / 1023;
+  }
+  const s = freq / res;
+  for (let y = 0; y < res; y++) {
+    const gy = (y + 0.5) * s, row = y * res, cy0 = Math.floor(gy);
+    for (let x = 0; x < res; x++) {
+      const gx = (x + 0.5) * s, cx0 = Math.floor(gx);
+      let f1 = 64, id = 0;
+      for (let j = -1; j <= 1; j++) {
+        let wy = (cy0 + j) % freq; if (wy < 0) wy += freq;
+        const offy = (cy0 + j) - wy;
+        for (let i = -1; i <= 1; i++) {
+          let wx = (cx0 + i) % freq; if (wx < 0) wx += freq;
+          const offx = (cx0 + i) - wx;
+          const k = wy * freq + wx;
+          const dx = (px[k] + offx) - gx, dy = (py[k] + offy) - gy;
+          const d = dx * dx + dy * dy;
+          if (d < f1) { f1 = d; id = cid[k]; }
+        }
+      }
+      const i = row + x;
+      const g = size * (0.35 + 1.45 * id) * (rg ? (1 - ragged + ragged * 2 * rg[i]) : 1);
+      out[i] = clamp01((g - Math.sqrt(f1)) * hard) * (0.30 + 0.95 * id);
+    }
+  }
+  return res === n ? out : resampleTo(out, res, n);
+}
+
+/** Wrapped Sobel gradient magnitude — the "where would an artist draw a line" field. */
+export function gradMag(f, n, scale = 1) {
+  const out = new Float32Array(n * n);
+  const xm = new Int32Array(n), xp = new Int32Array(n);
+  for (let x = 0; x < n; x++) { xm[x] = x === 0 ? n - 1 : x - 1; xp[x] = x === n - 1 ? 0 : x + 1; }
+  for (let y = 0; y < n; y++) {
+    const row = y * n, up = (y === 0 ? n - 1 : y - 1) * n, dn = (y === n - 1 ? 0 : y + 1) * n;
+    for (let x = 0; x < n; x++) {
+      const a = xm[x], b = xp[x];
+      const dx = (f[up + b] + 2 * f[row + b] + f[dn + b]) - (f[up + a] + 2 * f[row + a] + f[dn + a]);
+      const dy = (f[dn + a] + 2 * f[dn + x] + f[dn + b]) - (f[up + a] + 2 * f[up + x] + f[up + b]);
+      out[row + x] = Math.sqrt(dx * dx + dy * dy) * 0.25 * scale;
+    }
+  }
+  return out;
 }
 
 /**
@@ -1268,11 +1551,21 @@ export function tileGrid(n, o = {}) {
   const gap = (o.gap ?? 0.012) * n;
   const bevel = (o.bevel ?? 0.02) * n;
   const rng = o.rng || makeRng(777);
+  const LDX = o.lightX ?? 0.52, LDY = o.lightY ?? -0.85;
+  const LDL = Math.hypot(LDX, LDY), LX0 = LDX / LDL, LY0 = LDY / LDL;
   const tone = [];
   for (let i = 0; i < cols * rows * 2 + 8; i++) tone.push(rng());
   const height = new Float32Array(n * n);
   const id = new Float32Array(n * n);
   const seam = new Float32Array(n * n);
+  // gap alone (chamfer excluded) — the field the ink tint wants, so a carved
+  // edge does not collapse back into a drawn line
+  const joint = new Float32Array(n * n);
+  // signed chamfer: + facing the key, - facing away
+  const arris = new Float32Array(n * n);
+  // cell-local coordinates, for cellVariant()
+  const cu = new Float32Array(n * n);
+  const cv = new Float32Array(n * n);
   // Per-cell directional VALUE LOBE. A painter does not fill a flagstone with
   // one tone and add noise: they lay a loaded stroke across it and the stone
   // ends up light on one side and shaded on the other, with a different axis
@@ -1289,6 +1582,14 @@ export function tileGrid(n, o = {}) {
   const wob = resampleTo(fbm(wr, { freq: 8, octaves: 3, seed: 5150, type: 'grad' }), wr, n);
   const wobA = (o.wobble ?? 0.004) * n;
   const cw = n / cols, ch = n / rows;
+  // A single column (or row) means the cell spans the whole texture and its
+  // cell-local coordinate wraps from 1 back to 0 INSIDE that cell. Anything
+  // built on the signed cell-local coordinate — the value lobe, the signed
+  // arris, the per-cell variant offset — then flips sign across the wrap and
+  // draws a hard line down the middle of one continuous cell. That axis simply
+  // has no cell structure to express, so it contributes nothing.
+  const wrapX = cols === 1 && pattern !== 'diamond';
+  const wrapY = rows === 1 && pattern !== 'diamond';
 
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
@@ -1307,16 +1608,43 @@ export function tileGrid(n, o = {}) {
       }
       const ix = Math.floor(cx), iy = Math.floor(cy);
       dx = cx - ix; dy = cy - iy;
-      key = wrapi(ix * 7 + iy * 13, tone.length);
-      const dEdge = Math.min(Math.min(dx, 1 - dx) * cw, Math.min(dy, 1 - dy) * ch);
-      const m = 1 - smoothstep(gap * 0.5, gap * 0.5 + bevel, dEdge);
+      // WRAP THE CELL INDEX BEFORE HASHING IT.
+      // The seam wobble displaces the sampling coordinate by a few texels, so
+      // on the last column `wx` can exceed n and `ix` comes out as `cols` — a
+      // cell index that does not exist. It then hashed to a DIFFERENT tone,
+      // lobe axis and arris than the cell at ix=0, which is the same physical
+      // cell on the torus: a genuine, measurable wrap seam that the tiling
+      // metric found at 1.6x the local gradient on every tileGrid surface.
+      // (The 'diamond' pattern lives in a rotated lattice whose period is not
+      // cols/rows, so it keeps the raw index.)
+      key = pattern === 'diamond'
+        ? wrapi(ix * 7 + iy * 13, tone.length)
+        : wrapi(wrapi(ix, cols) * 7 + wrapi(iy, rows) * 13, tone.length);
+      const dxp = wrapX ? 1e9 : Math.min(dx, 1 - dx) * cw;
+      const dyp = wrapY ? 1e9 : Math.min(dy, 1 - dy) * ch;
+      // A self-wrapping axis has no cell boundary on it — the "joint" it used
+      // to draw was the texture's own wrap, i.e. a mortar band ruled across the
+      // top and bottom of every 1-row band (the gate arch) or down both sides
+      // of every 1-column strip. Worse, that band's width is decided by the
+      // sub-pixel seam wobble, so its two halves disagreed and it read as a
+      // torn edge in the tiling metric as well as a black line in the frame.
+      const dEdge = Math.min(dxp, dyp);
+      const m = dEdge > 1e8 ? 0 : 1 - smoothstep(gap * 0.5, gap * 0.5 + bevel, dEdge);
       seam[i] = m;
+      joint[i] = dEdge > 1e8 ? 0 : 1 - smoothstep(0, gap * 0.6, dEdge);
       height[i] = 1 - m;
       id[i] = tone[key];
-      lobe[i] = (dx - 0.5) * lx[key] + (dy - 0.5) * ly[key];
+      cu[i] = dx; cv[i] = dy;
+      lobe[i] = (wrapX ? 0 : (dx - 0.5) * lx[key]) + (wrapY ? 0 : (dy - 0.5) * ly[key]);
+      if (m > 0.001) {
+        const useX = dxp < dyp;
+        const nx = (useX && !wrapX) ? (dx < 0.5 ? -1 : 1) : 0;
+        const ny = (!useX && !wrapY) ? (dy < 0.5 ? -1 : 1) : 0;
+        arris[i] = m * (nx * LX0 + ny * LY0);
+      }
     }
   }
-  return { height, id, seam, lobe };
+  return { height, id, seam, joint, arris, lobe, cu, cv, wrapX, wrapY, cols, rows };
 }
 
 /** Woven cloth weave (warp/weft) height field. */
