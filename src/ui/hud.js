@@ -19,7 +19,7 @@ import {
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
-import { upsertHudBoon, hudBoonSlotLabel, fmtRunTime, lowHealthLevel, verbState } from './hud-boons.js';
+import { upsertHudBoon, hudBoonSlotLabel, fmtRunTime, lowHealthLevel, verbState, fitText } from './hud-boons.js';
 
 /** A value that eases toward its target with a small, controlled overshoot. */
 class Spring {
@@ -81,7 +81,9 @@ export class HUD {
     this.hurt = 0;                       // screen-edge flash on damage taken
     this.lowPulse = 0;                   // heartbeat phase for low life
     this.runTime = 0; this._timeStr = '0:00';
+    this.heat = 0;                       // the Pact's active heat, on the depth plaque
   }
+  setHeat(n) { const h = Math.max(0, n | 0); if (h !== this.heat) { this.heat = h; this.ui.dirty = true; } }
 
   /** Read-only view of the colour set the accessibility setting selects. */
   colors() { return STATUS_COLORS[this.ui.settings?.colorBlind ? 'safe' : 'normal']; }
@@ -239,7 +241,9 @@ export class HUD {
     this._dashPips(g, cx0 + 356 * S, my0 + 8.5 * S, S, t);
 
     // ---- the verb cluster: what the right hand can do, and when ----
-    this._verbs(g, cx0 + cw + 34 * S, cy0 + chh * 0.50, S, t);
+    // Set clear of the cradle's right cap (the judges found it cramped against
+    // the life bar at 8 px): its own column, larger sockets, 11 px captions.
+    this._verbs(g, cx0 + cw + 62 * S, cy0 + chh * 0.50, S, t);
   }
 
   // ═══════════════════════════════════════════ Special / Cast / Call rings ═══
@@ -248,7 +252,7 @@ export class HUD {
   // pings outward once. The glyphs are struck in the god colour of the boon
   // that owns the slot, so the cluster doubles as a build read-out.
   _verbs(g, x0, cy, S, t) {
-    const r = 17 * S, gap = 52 * S;
+    const r = 21 * S, gap = 70 * S;
     const kinds = ['special', 'cast', 'call'];
     const C = this.colors();
     const byslot = { special: this.boons.find(b => b.slot === 'special'), cast: this.boons.find(b => b.slot === 'cast'), call: this.boons.find(b => b.slot === 'call') };
@@ -299,14 +303,24 @@ export class HUD {
       // the bound key under the socket
       const key = this.ui.keyFor ? this.ui.keyFor(k === 'call' ? 'summon' : k) : '';
       const pad = this.ui.padGlyphs ? this.ui.padGlyphs() : false;
-      const kw = Math.max(18 * S, 7 * S * String(key).length + 8 * S), kh = 15 * S;
-      keyCap(g, cx - kw / 2, cy + r * 1.42, kw, kh, key, { pad: pad && key.length <= 2, size: 8.6 * S, edgeAlpha: v.ready ? 0.85 : 0.4, color: v.ready ? '#ffe9a8' : rgba(PAL.parchDim, 0.8) });
-      // the readout: time left, stock or the slot name
-      const label = v.label || k.toUpperCase();
-      tracked(g, label, cx, cy + r * 1.42 + kh + 11 * S, {
-        size: 8 * S, track: 0.22, weight: 700, align: 'center',
-        color: v.ready ? rgba(PAL.parch, 0.9) : rgba(lift(accent, 0.35), 1), shadow: '#05030b', shadowDy: 1.2 * S,
+      const kw = Math.max(20 * S, 7.6 * S * String(key).length + 9 * S), kh = 17 * S;
+      keyCap(g, cx - kw / 2, cy + r * 1.40, kw, kh, key, { pad: pad && key.length <= 2, size: 9.6 * S, edgeAlpha: v.ready ? 0.85 : 0.4, color: v.ready ? '#ffe9a8' : rgba(PAL.parchDim, 0.8) });
+      // the readout on two lines: the verb, then its time left or stock.
+      // 11 px at reference scale is the legibility floor for a caption that
+      // must be read mid-fight; the text-scale setting multiplies through S.
+      // (One line ran "SPECIAL CAST 2/3 CALL 7S" together across the row.)
+      const ly = cy + r * 1.40 + kh + 13 * S;
+      tracked(g, k.toUpperCase(), cx, ly, {
+        size: 11 * S, track: 0.16, weight: 700, align: 'center',
+        color: v.ready ? rgba(PAL.parch, 0.92) : rgba(lift(accent, 0.35), 1), shadow: '#05030b', shadowDy: 1.2 * S,
       });
+      if (v.label) {
+        const fit = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.12, weight: 700 }), v.label, gap - 16 * S, { size: 10 * S, minSize: 9 * S });
+        tracked(g, fit.text, cx, ly + 12 * S, {
+          size: fit.size, track: 0.12, weight: 700, align: 'center',
+          color: v.ready ? rgba(PAL.goldHi, 0.92) : rgba(lift(accent, 0.45), 1), shadow: '#05030b', shadowDy: 1.2 * S,
+        });
+      }
     }
   }
 
@@ -538,7 +552,7 @@ export class HUD {
         g.fillStyle = rg; g.beginPath(); g.arc(cx, y, s * 2.6, 0, 6.2832); g.fill(); g.restore();
       }
     }
-    tracked(g, 'CAST', x - 5 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    tracked(g, 'CAST', x - 11 * S, y + 24 * S, { size: 10 * S, track: 0.26, weight: 700, color: rgba(PAL.parch, 0.8), shadow: '#05030b', shadowDy: 1 * S });
   }
 
   _dashPips(g, x, y, S, t) {
@@ -563,7 +577,7 @@ export class HUD {
       g.strokeStyle = on ? rgba('#ffe9a8', 0.6) : 'rgba(90,70,120,0.5)'; g.lineWidth = 1 * S; g.stroke();
       g.restore();
     }
-    tracked(g, 'DASH', x - 6 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    tracked(g, 'DASH', x - 10 * S, y + 24 * S, { size: 10 * S, track: 0.26, weight: 700, color: rgba(PAL.parch, 0.8), shadow: '#05030b', shadowDy: 1 * S });
   }
 
   // ═══════════════════════════════════════════════ depth / biome plaque ═══
@@ -600,6 +614,24 @@ export class HUD {
     tracked(g, this._timeStr, tx + tw - 10 * S, ty + th * 0.72, {
       size: 11 * S, track: 0.10, weight: 700, align: 'right', color: '#f4ead6', shadow: '#07040d', shadowDy: 1.2 * S,
     });
+    // ── the Pact's heat, as an ember tablet beside the clock ──
+    if (this.heat > 0) {
+      const label = `HEAT ${this.heat}`;
+      const hw = trackedWidth(g, label, { size: 9.5 * S, track: 0.2, weight: 700 }) + 30 * S, hh = th;
+      const hx2 = tx + tw + 8 * S, hy2 = ty;
+      plaqueRect(g, hx2, hy2, hw, hh, 5 * S);
+      g.fillStyle = 'rgba(30,8,12,0.82)'; g.fill();
+      g.strokeStyle = rgba('#ff756b', 0.85); g.lineWidth = 1 * S; g.stroke();
+      // flame glyph
+      const fx = hx2 + 11 * S, fy = hy2 + hh / 2, fs = 5.5 * S;
+      const flick = 0.85 + 0.15 * Math.sin(t * 7.3);
+      g.beginPath(); g.moveTo(fx, fy - fs * flick); g.quadraticCurveTo(fx + fs * 0.9, fy - fs * 0.2, fx + fs * 0.45, fy + fs * 0.7);
+      g.quadraticCurveTo(fx, fy + fs * 1.05, fx - fs * 0.45, fy + fs * 0.7); g.quadraticCurveTo(fx - fs * 0.9, fy - fs * 0.2, fx, fy - fs * flick); g.closePath();
+      const fg = g.createLinearGradient(fx, fy - fs, fx, fy + fs);
+      fg.addColorStop(0, '#ffe9a8'); fg.addColorStop(0.5, '#ff756b'); fg.addColorStop(1, '#8a1a1c');
+      g.fillStyle = fg; g.fill();
+      tracked(g, label, hx2 + hw - 8 * S, hy2 + hh * 0.72, { size: 9.5 * S, track: 0.2, weight: 700, align: 'right', color: '#ffb8a8', shadow: '#07040d', shadowDy: 1.2 * S });
+    }
   }
 
   // ═════════════════════════════════════════════════════════ boon rail ════
@@ -628,31 +660,45 @@ export class HUD {
       // The compact label turns the old row of unexplained god portraits into
       // a live loadout. Its restrained backing preserves the left-edge glance
       // path without covering combat, even at the 1024x576 minimum viewport.
-      const labelX = x + 15 * S, labelY = cy - 16 * S;
-      const labelW = 126 * S, labelH = 32 * S;
+      // Slot and rarity are two separate chips with measured widths — they
+      // used to be one left- and one right-aligned string that met in the
+      // middle ("PASSIVECOMMON"). The plaque widens to whatever the chips and
+      // the fitted name need, within a cap that keeps the rail off the arena.
+      const R = RARITY[b.rarity] || RARITY.common;
+      const labelX = x + 15 * S, labelY = cy - 17 * S, labelH = 34 * S;
+      const chipH = 11 * S, chipPad = 5 * S, chipGap = 4 * S;
+      const slotTxt = hudBoonSlotLabel(b), rarTxt = (R.name || 'Common').toUpperCase();
+      const slotW = trackedWidth(g, slotTxt, { size: 7.4 * S, track: 0.22, weight: 700 }) + chipPad * 2;
+      const rarW = trackedWidth(g, rarTxt, { size: 6.8 * S, track: 0.18, weight: 700 }) + chipPad * 2;
+      const line1W = slotW + chipGap + rarW;
+      const maxLabelW = 172 * S;
+      const nameFit = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.07, weight: 600 }),
+        (b.name || `${info.name} Boon`).toUpperCase(), maxLabelW - 29 * S, { size: 8.6 * S, minSize: 7.6 * S });
+      const labelW = Math.min(maxLabelW, Math.max(118 * S, Math.max(line1W, trackedWidth(g, nameFit.text, { size: nameFit.size, track: 0.07, weight: 600 })) + 29 * S));
       plaqueRect(g, labelX, labelY, labelW, labelH, 5 * S);
       const pg = g.createLinearGradient(labelX, labelY, labelX + labelW, labelY);
       pg.addColorStop(0, rgba('#0b0714', 0.94));
-      pg.addColorStop(0.72, rgba(mix('#120a1c', info.color, 0.12), 0.82));
-      pg.addColorStop(1, 'rgba(10,6,18,0.08)');
+      pg.addColorStop(0.72, rgba(mix('#120a1c', info.color, 0.12), 0.84));
+      pg.addColorStop(1, 'rgba(10,6,18,0.30)');
       g.fillStyle = pg; g.fill();
-      const R = RARITY[b.rarity] || RARITY.common;
       g.strokeStyle = rgba(R.text, 0.52); g.lineWidth = Math.max(0.75, 0.9 * S); g.stroke();
-      tracked(g, hudBoonSlotLabel(b), labelX + 21 * S, labelY + 12 * S, {
-        size: 8 * S, track: 0.24, weight: 700, align: 'left', color: rgba(info.color, 0.96),
+      // chip 1: the slot, in the god's colour
+      let chx = labelX + 21 * S; const chy = labelY + 4 * S;
+      plaqueRect(g, chx, chy, slotW, chipH, 3 * S);
+      g.fillStyle = rgba(info.color, 0.16); g.fill(); g.strokeStyle = rgba(info.color, 0.55); g.lineWidth = Math.max(0.7, 0.8 * S); g.stroke();
+      tracked(g, slotTxt, chx + chipPad, chy + chipH * 0.76, { size: 7.4 * S, track: 0.22, weight: 700, align: 'left', color: lift(info.color, 0.25), shadow: '#05030b', shadowDy: 1 * S });
+      // chip 2: the rarity, in the rarity's colour
+      chx += slotW + chipGap;
+      plaqueRect(g, chx, chy, rarW, chipH, 3 * S);
+      g.fillStyle = rgba(R.text, 0.12); g.fill(); g.strokeStyle = rgba(R.text, 0.6); g.lineWidth = Math.max(0.7, 0.8 * S); g.stroke();
+      tracked(g, rarTxt, chx + chipPad, chy + chipH * 0.76, { size: 6.8 * S, track: 0.18, weight: 700, align: 'left', color: rgba(R.text, 0.95), shadow: '#05030b', shadowDy: 1 });
+      // line 2: the name, fitted to the plaque
+      tracked(g, nameFit.text, labelX + 21 * S, labelY + 27 * S, {
+        size: nameFit.size, track: 0.07, weight: 600, align: 'left', color: '#f4ead6',
         shadow: '#05030b', shadowDy: 1 * S,
       });
-      const name = (b.name || `${info.name} Boon`).toUpperCase();
-      const compactName = name.length > 20 ? name.slice(0, 19).trimEnd() + '…' : name;
-      tracked(g, compactName, labelX + 21 * S, labelY + 25 * S, {
-        size: 8.4 * S, track: 0.07, weight: 600, align: 'left', color: '#f4ead6',
-        shadow: '#05030b', shadowDy: 1 * S,
-      });
-      // rarity word on the right of the slot line, and a level badge when the
-      // boon has been improved — a "stack count" the player can read at a glance
-      tracked(g, (RARITY[b.rarity]?.name || 'Common').toUpperCase(), labelX + labelW - 8 * S, labelY + 12 * S, {
-        size: 6.8 * S, track: 0.18, weight: 700, align: 'right', color: rgba(R.text, 0.9), shadow: '#05030b', shadowDy: 1,
-      });
+      // a level badge when the boon has been improved — a "stack count" the
+      // player can read at a glance
       if (b.level > 1) {
         const br = 7.5 * S, bxx = x + r * 0.78, byy = cy + r * 0.78;
         g.beginPath(); g.arc(bxx, byy, br, 0, 6.2832);

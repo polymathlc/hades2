@@ -15,7 +15,7 @@ import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
 import { controlRows, ACTIONS, resetBindings, saveBindings } from '../core/controls.js';
 import { SETTINGS_DEFAULTS, SETTINGS_ROWS, bumpSetting, settingLabel, sanitiseSetting, saveSettings } from './settings.js';
-import { fmtRunTime } from './hud-boons.js';
+import { fmtRunTime, fitText, wrapLines } from './hud-boons.js';
 
 export class Menus {
   constructor(ui) {
@@ -28,6 +28,7 @@ export class Menus {
     this.settingsOpen = false;
     this.controlsOpen = false;
     this.boonsOpen = false;
+    this.pactOpen = false;
     this.boonSel = 0;
     this.controlSel = -1;          // highlighted row in the controls guide
     this.rebinding = null;         // action name while waiting for a key
@@ -46,12 +47,15 @@ export class Menus {
     this.settingsOpen = false;
     this.controlsOpen = false;
     this.boonsOpen = false;
+    this.pactOpen = false;
     this.rebinding = null;
     this.ui.dirty = true;
   }
 
   get modal() { return this.screen === 'title' || this.screen === 'pause' || this.screen === 'death' || this.screen === 'victory'; }
-  get subOpen() { return this.settingsOpen || this.controlsOpen || this.boonsOpen; }
+  get subOpen() { return this.settingsOpen || this.controlsOpen || this.boonsOpen || this.pactOpen; }
+  /** The Pact is only changeable at the Crossroads, so it is only offered there. */
+  get atCrossroads() { return this.ui.ctx?.run?.state === 'home'; }
 
   items() {
     if (this.subOpen) {
@@ -60,22 +64,27 @@ export class Menus {
     }
     switch (this.screen) {
       case 'title': return [{ label: 'Descend', act: 'start' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }, { label: 'Credits', act: 'credits' }];
-      case 'pause': return [{ label: 'Resume', act: 'resume' }, { label: 'Current Boons', act: 'boons' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }, { label: 'Abandon Run', act: 'abandon' }];
+      case 'pause': return this.atCrossroads
+        ? [{ label: 'Resume', act: 'resume' }, { label: 'The Pact', act: 'pact' }, { label: 'Current Boons', act: 'boons' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }]
+        : [{ label: 'Resume', act: 'resume' }, { label: 'Current Boons', act: 'boons' }, { label: 'Controls', act: 'controls' }, { label: 'Settings', act: 'settings' }, { label: 'Abandon Run', act: 'abandon' }];
       case 'death': return [{ label: 'Rise Again', act: 'retry' }, { label: 'Current Boons', act: 'boons' }, { label: 'Settings', act: 'settings' }];
       case 'victory': return [{ label: 'Return to the Crossroads', act: 'retry' }, { label: 'Current Boons', act: 'boons' }];
       default: return [];
     }
   }
 
+  _closeSubs() { this.settingsOpen = false; this.controlsOpen = false; this.boonsOpen = false; this.pactOpen = false; }
+
   activate(act) {
     const ui = this.ui;
     switch (act) {
-      case 'settings': this.settingsOpen = true; this.controlsOpen = false; this.boonsOpen = false; this.sel = 0; break;
-      case 'controls': this.controlsOpen = true; this.settingsOpen = false; this.boonsOpen = false; this.sel = 0; this.controlSel = -1; break;
-      case 'boons': this.boonsOpen = true; this.settingsOpen = false; this.controlsOpen = false; this.boonSel = 0; this.sel = 0; break;
+      case 'settings': this._closeSubs(); this.settingsOpen = true; this.sel = 0; break;
+      case 'controls': this._closeSubs(); this.controlsOpen = true; this.sel = 0; this.controlSel = -1; break;
+      case 'boons': this._closeSubs(); this.boonsOpen = true; this.boonSel = 0; this.sel = 0; break;
+      case 'pact': this._closeSubs(); this.pactOpen = true; this.sel = 0; ui.pactUI?.open?.(); break;
       case 'back':
         if (this.rebinding) { this.rebinding = null; ui.ctx?.input && (ui.ctx.input.capturing = null); break; }
-        this.settingsOpen = false; this.controlsOpen = false; this.boonsOpen = false; this.sel = 0; break;
+        this._closeSubs(); this.sel = 0; break;
       case 'resume': ui.screen('game'); break;
       case 'start': ui.screen('game'); ui.ctx?.events?.emit?.('run.start', {}); break;
       case 'retry': ui.retry?.(); break;
@@ -115,6 +124,7 @@ export class Menus {
 
   key(dir) {
     if (this.rebinding) return;
+    if (this.pactOpen) { this.ui.pactUI?.key?.(dir); return; }
     if (this.boonsOpen) {
       const n = this.ui.ctx?.boons?.list?.().length || 0;
       if (n) this.boonSel = (this.boonSel + dir + n) % n;
@@ -138,9 +148,18 @@ export class Menus {
     this.ui.dirty = true;
   }
 
+  /** Left / right (arrows, A/D, the d-pad): a setting steps, a pact row seals or releases. */
+  horizontal(dir) {
+    if (this.rebinding) return;
+    if (this.pactOpen) { const p = this.ui.pactUI; if (p && p.sel < p.rows().length) p.confirm(); return; }
+    const h = this.hit[this.sel];
+    if (h && h.act === 'setting') this._bump(h.key, dir);
+  }
+
   /** Enter / A on whatever has focus. */
   confirm() {
     if (this.rebinding) return;
+    if (this.pactOpen) { if (this.ui.pactUI?.confirm?.()) this.activate('back'); return; }
     if (this.controlsOpen && this.controlSel >= 0) { this._beginRebind(); return; }
     const h = this.hit[this.sel];
     if (!h) { const it = this.items()[Math.max(0, this.sel)]; if (it) this.activate(it.act); return; }
@@ -153,6 +172,7 @@ export class Menus {
       const h = this.hit[i];
       if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) {
         if (h.act === 'boon-select') { this.boonSel = h.boonIndex; this.ui.dirty = true; }
+        else if (h.act === 'pact-row') { if (this.ui.pactUI) { this.ui.pactUI.sel = h.pactIndex; this.ui.pactUI.toggle(h.pactId); } }
         else if (h.act === 'control-row') { this.controlSel = h.row; this.sel = -1; this._beginRebind(); }
         else if (h.act === 'setting') {
           if (h.kind === 'slider' && h.sliderW && x >= h.sliderX && x <= h.sliderX + h.sliderW) this._setSlider(h.key, clamp01((x - h.sliderX) / h.sliderW));
@@ -171,6 +191,8 @@ export class Menus {
       const h = this.hit[i];
       if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) {
         if (h.boonIndex != null) { if (this.boonSel !== h.boonIndex) { this.boonSel = h.boonIndex; this.ui.dirty = true; } }
+        else if (h.act === 'pact-row') { if (this.ui.pactUI && this.ui.pactUI.sel !== h.pactIndex) { this.ui.pactUI.sel = h.pactIndex; this.ui.dirty = true; } }
+        else if (this.pactOpen && h.act === 'back') { if (this.ui.pactUI && this.ui.pactUI.sel !== h.i) { this.ui.pactUI.sel = h.i; this.ui.dirty = true; } }
         else if (h.act === 'control-row') { if (this.controlSel !== h.row) { this.controlSel = h.row; this.sel = -1; this.ui.dirty = true; } }
         else if (this.sel !== h.i) { this.sel = h.i; if (this.controlsOpen) this.controlSel = -1; this.ui.dirty = true; }
         return;
@@ -221,8 +243,11 @@ export class Menus {
 
   /** Panel size for a sub-screen, so title / pause / death all agree. */
   _panelSize(S) {
-    const w = (this.boonsOpen ? 1040 : this.controlsOpen ? 760 : this.settingsOpen ? 560 : 460) * S;
-    const h = (this.boonsOpen ? 620 : this.controlsOpen ? 600 : this.settingsOpen ? 660 : 360) * S;
+    const w = (this.boonsOpen ? 1040 : this.controlsOpen ? 820 : this.pactOpen ? 760 : this.settingsOpen ? 560 : 460) * S;
+    // the plain plate grows with its item count so the key hints under the
+    // last item never land on the bottom meander band
+    const plain = (176 + this.items().length * 44 + 44) * S;
+    const h = this.boonsOpen ? 620 * S : this.controlsOpen ? 600 * S : this.pactOpen ? 640 * S : this.settingsOpen ? 660 * S : plain;
     return { w, h };
   }
 
@@ -283,7 +308,7 @@ export class Menus {
       sweep: (t * 0.2) % 1, glowAlpha: 0.26,
       fill: { top: '#1c1229', mid: '#120b1e', bot: '#0a0612' },
     });
-    const panelTitle = this.boonsOpen ? 'Current Boons' : this.controlsOpen ? 'Controls' : this.settingsOpen ? 'Settings' : title;
+    const panelTitle = this.boonsOpen ? 'Current Boons' : this.controlsOpen ? 'Controls' : this.pactOpen ? 'The Pact' : this.settingsOpen ? 'Settings' : title;
     tracked(g, panelTitle.toUpperCase(), W / 2, y + 62 * S, {
       size: 27 * S, track: 0.26, weight: 700, align: 'center', gold: true, sweep: (t * 0.2) % 1,
       shadow: '#06030c', shadowDy: 3 * S,
@@ -292,14 +317,23 @@ export class Menus {
     const rg = g.createLinearGradient(W / 2 - rw / 2, 0, W / 2 + rw / 2, 0);
     rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(0.5, rgba(PAL.gold, 0.65)); rg.addColorStop(1, 'rgba(0,0,0,0)');
     g.fillStyle = rg; g.fillRect(W / 2 - rw / 2, y + 76 * S, rw, Math.max(1, 1.2 * S));
-    // a run read-out on the pause plate: where you are and how long you have been
+    // a run read-out on the pause plate: where you are and how long you have
+    // been — LIVE from run.js, not the summary counters (those are only
+    // written on run.ended, which is why the plate used to say "0 SLAIN")
     if (!this.subOpen && this.screen === 'pause') {
-      const s = this.summary;
-      const line = `${String(s.biome || 'tartarus').toUpperCase()} · CHAMBER ${s.depth || 1} · ${fmtRunTime(this.ui.runTime || 0)} · ${s.kills || 0} SLAIN`;
-      tracked(g, line, W / 2, y + 100 * S, { size: 9.5 * S, track: 0.28, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.9) });
+      const run = this.ui.ctx?.run, s = this.summary;
+      const home = run?.state === 'home';
+      const biome = String(run?.biome || s.biome || 'tartarus').toUpperCase();
+      const depth = run?.depth ?? s.depth ?? 1, kills = run?.kills ?? s.kills ?? 0;
+      const line = home
+        ? `THE CROSSROADS${(run?.heat | 0) > 0 ? ` · PACT HEAT ${run.heat}` : ''} · CROSS THE PORTAL TO DESCEND`
+        : `${biome} · CHAMBER ${depth} · ${fmtRunTime(this.ui.runTime || 0)} · ${kills} SLAIN${(run?.heat | 0) > 0 ? ` · HEAT ${run.heat}` : ''}`;
+      const lf = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.28, weight: 600 }), line, w - 70 * S, { size: 9.5 * S, minSize: 8 * S });
+      tracked(g, lf.text, W / 2, y + 100 * S, { size: lf.size, track: 0.28, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.9) });
     }
     g.restore();
     if (this.boonsOpen) this._boonArchive(g, W, H, S, t, x + 34 * S, y + 96 * S, w - 68 * S, h - 128 * S);
+    else if (this.pactOpen) this.ui.pactUI?.draw?.(g, W, H, S, t, x + 40 * S, y + 96 * S, w - 80 * S, h - 128 * S);
     else if (this.controlsOpen) this._controls(g, W, H, S, t, y + 104 * S, w - 76 * S);
     else if (this.settingsOpen) this._settings(g, W, H, S, t, y + 104 * S, w - 90 * S);
     else this._menu(g, W, H, S, t, y + 140 * S, a);
@@ -331,8 +365,10 @@ export class Menus {
         size: 11.5 * S, track: 0.34, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.9),
       });
     } else {
-      laurelBranch(g, cx - headSize * 2.1, headY - 10 * S, headSize * 1.5, -1, { leaves: 7, leafLen: 0.28, bow: 0.3 });
-      laurelBranch(g, cx + headSize * 2.1, headY - 10 * S, headSize * 1.5, 1, { leaves: 7, leafLen: 0.28, bow: 0.3 });
+      // the laurels sit outside the MEASURED title, never behind its letters
+      const tw = trackedWidth(g, 'YOU HAVE ESCAPED', { size: headSize, track: 0.28, weight: 700 });
+      laurelBranch(g, cx - tw / 2 - 22 * S, headY - 10 * S, headSize * 1.5, -1, { leaves: 7, leafLen: 0.28, bow: 0.3 });
+      laurelBranch(g, cx + tw / 2 + 22 * S, headY - 10 * S, headSize * 1.5, 1, { leaves: 7, leafLen: 0.28, bow: 0.3 });
       tracked(g, 'YOU HAVE ESCAPED', cx, headY, {
         size: headSize, track: 0.28, weight: 700, align: 'center', gold: true, sweep: (t * 0.2) % 1,
         shadow: 'rgba(4,2,8,0.95)', shadowDy: 5 * S,
@@ -356,9 +392,15 @@ export class Menus {
       return;
     }
 
-    // summary plaque
+    // summary plaque — sized to its build: the boons lay out as a wrapping
+    // grid (five to a row) with two-line fitted names, and the plaque grows
+    // by a row when the build needs it. Ten names on one 640 px line at 6 px
+    // was the unreadable string the judges saw.
     g.save(); g.globalAlpha = a;
-    const w = Math.min(640 * S, W * 0.8), h = 214 * S, x = cx - w / 2, y = H * 0.30;
+    const bl = (s.boons || []).slice(0, 10);
+    const cols = Math.max(1, Math.min(5, bl.length)), gridRows = bl.length ? Math.ceil(bl.length / cols) : 0;
+    const rowH = 74 * S;
+    const w = Math.min(680 * S, W * 0.84), h = (bl.length ? 142 * S + gridRows * rowH : 176 * S), x = cx - w / 2, y = H * 0.27;
     frame(g, {
       x, y, w, h, weight: 1.0 * S, r: 7 * S, pad: 6, meander: true, meanderH: 8,
       palmetteS: 12, sweep: (t * 0.18) % 1, glowAlpha: 0.20,
@@ -386,32 +428,42 @@ export class Menus {
     });
     // a beaded rule then the build, as god emblems in rarity rings with names
     beadRule(g, x + 40 * S, y + 118 * S, w - 80 * S, 1.6 * S);
-    const bl = (s.boons || []).slice(0, 10);
     if (bl.length) {
-      const r = 15 * S, gap = Math.min(58 * S, (w - 60 * S) / bl.length);
-      const bx = cx - (bl.length - 1) * gap / 2;
+      const r = 14 * S;
+      const cellW = (w - 56 * S) / cols;
+      const nameW = cellW - 10 * S;
+      const measure = (txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.08, weight: 600 });
       for (let i = 0; i < bl.length; i++) {
         const b = bl[i];
-        const px = bx + i * gap, py = y + h - 60 * S;
+        const col = i % cols, row = (i / cols) | 0;
+        const px = x + 28 * S + cellW * (col + 0.5), py = y + 128 * S + row * rowH + 17 * S;
         const info = GOD_INFO[b.god] || GOD_INFO.zeus;
+        const R = RARITY[b.rarity] || RARITY.common;
         const reveal = ease.overshoot(clamp01((age - 0.7 - i * 0.06) / 0.4), 1.4);
         g.save(); g.translate(px, py); g.scale(reveal, reveal);
         g.beginPath(); g.arc(0, 0, r, 0, 6.2832);
         g.fillStyle = '#0c0715'; g.fill();
-        g.strokeStyle = rgba(RARITY[b.rarity]?.text || PAL.gold, 0.9); g.lineWidth = 1.5 * S; g.stroke();
+        g.strokeStyle = rgba(R.text || PAL.gold, 0.9); g.lineWidth = 1.5 * S; g.stroke();
         godEmblem(g, 0, 0, r * 0.55, b.god, { glowA: 0.35, glowR: 1.8 });
+        if (b.level > 1) {
+          g.beginPath(); g.arc(r * 0.78, r * 0.78, 6 * S, 0, 6.2832); g.fillStyle = '#0c0715'; g.fill();
+          g.strokeStyle = rgba(R.text, 0.95); g.lineWidth = 1 * S; g.stroke();
+          tracked(g, '+' + (b.level - 1), r * 0.78, r * 0.78 + 2.4 * S, { size: 6.4 * S, track: 0, weight: 800, align: 'center', color: '#fff3c7' });
+        }
         g.restore();
-        const nm = String(b.name || info.name).toUpperCase();
-        const short = nm.length > 14 ? nm.slice(0, 13) + '…' : nm;
-        tracked(g, short, px, py + r + 13 * S, { size: 6.4 * S, track: 0.1, weight: 600, align: 'center', color: rgba(PAL.parch, 0.75) });
-        tracked(g, String(b.slot || 'boon').toUpperCase(), px, py + r + 22 * S, { size: 5.8 * S, track: 0.18, weight: 700, align: 'center', color: rgba(info.color, 0.9) });
+        // the name on up to two measured lines, then slot · rarity in colour
+        const lines = wrapLines(measure, String(b.name || info.name).toUpperCase(), nameW, 7.8 * S, 2);
+        for (let k = 0; k < lines.length; k++) tracked(g, lines[k], px, py + r + 13 * S + k * 9.5 * S, { size: 7.8 * S, track: 0.08, weight: 600, align: 'center', color: rgba(PAL.parch, 0.85) });
+        const tag = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.16, weight: 700 }), `${String(b.slot || 'boon').toUpperCase()} · ${(R.name || 'Common').toUpperCase()}`, nameW, { size: 6.6 * S, minSize: 6 * S });
+        // the tag sits on one baseline for the whole row, whether the name took one line or two
+        tracked(g, tag.text, px, py + r + 13 * S + 2 * 9.5 * S + 1 * S, { size: tag.size, track: 0.16, weight: 700, align: 'center', color: rgba(info.color, 0.9) });
       }
     } else {
-      tracked(g, 'NO BOONS CLAIMED', cx, y + h - 44 * S, { size: 9 * S, track: 0.34, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.55) });
+      tracked(g, 'NO BOONS CLAIMED', cx, y + h - 40 * S, { size: 9 * S, track: 0.34, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.55) });
     }
     g.restore();
 
-    this._menu(g, W, H, S, t, H * 0.72, a);
+    this._menu(g, W, H, S, t, Math.min(y + h + 52 * S, H - 150 * S), a);
     if (dead) {
       g.save(); g.globalAlpha = a * 0.6;
       tracked(g, 'DEATH IS NOT THE END · THE CROSSROADS REMEMBERS YOUR NECTAR, TITAN BLOOD AND DARKNESS', cx, H - 30 * S, {
@@ -530,7 +582,7 @@ export class Menus {
         y += 16 * S;
       }
       const on = this.sel === i;
-      const sliderX = x + w * 0.50, sliderW = w * 0.50 - 40 * S;
+      const sliderX = x + w * 0.50, sliderW = w * 0.50 - 54 * S;   // the knob at 100% must clear the value text
       this.hit.push({ x, y: y - 13 * S, w, h: 24 * S, act: 'setting', key: r.key, kind: r.kind, sliderX, sliderW, i });
       if (on) { g.fillStyle = rgba(PAL.gold, 0.08); g.fillRect(x - 8 * S, y - 14 * S, w + 16 * S, 26 * S); palmette(g, x - 14 * S, y - 4 * S, 7 * S, { rot: Math.PI / 2, lobes: 5 }); }
       tracked(g, r.label.toUpperCase(), x, y, {
@@ -586,7 +638,13 @@ export class Menus {
     const w = width || 640 * S, x = W / 2 - w / 2;
     const pad = this.ui.padGlyphs ? this.ui.padGlyphs() : false;
     const rows = controlRows();
-    const actionX = x, keyboardX = x + w * 0.31, padX = x + w * 0.70;
+    // Three reserved columns. The action label is FITTED to its column
+    // (shrunk, then ellipsised, by measured width) so it can never run into
+    // the key caps — "BLOODSTONE / BINDING CAST" used to stop at "BINDING CA"
+    // under the Q cap.
+    const actionX = x, keyboardX = x + w * 0.34, padX = x + w * 0.72;
+    const actionW = keyboardX - actionX - 14 * S, padW = x + w - padX;
+    const measure = (txt, sz, o) => trackedWidth(g, txt, { size: sz, ...o });
     // the active device's column is lit, the other dimmed
     const kbCol = pad ? rgba(PAL.parchDim, 0.55) : '#f4ead6', padCol = pad ? '#f4ead6' : rgba(PAL.parchDim, 0.55);
     tracked(g, 'ACTION', actionX, y0, { size: 9 * S, track: 0.30, weight: 700, align: 'left', color: rgba(PAL.goldHi, 0.82) });
@@ -601,22 +659,25 @@ export class Menus {
       const listening = this.rebinding && bind === this.rebinding;
       if (on || listening) { g.fillStyle = rgba(listening ? PAL.goldHi : PAL.gold, listening ? 0.16 : 0.10); g.fillRect(x - 8 * S, y - 16 * S, w + 16 * S, 23 * S); palmette(g, x - 14 * S, y - 5 * S, 7 * S, { rot: Math.PI / 2, lobes: 5 }); }
       else if (i % 2 === 0) { g.fillStyle = rgba(PAL.gold, 0.045); g.fillRect(x - 8 * S, y - 16 * S, w + 16 * S, 23 * S); }
-      tracked(g, action.toUpperCase(), actionX, y, { size: 10.5 * S, track: 0.16, weight: 700, align: 'left', color: on ? '#ffe9a8' : rgba(PAL.parch, 0.86) });
+      const af = fitText((txt, sz) => measure(txt, sz, { track: 0.14, weight: 700 }), action.toUpperCase(), actionW, { size: 10.5 * S, minSize: 8.8 * S });
+      tracked(g, af.text, actionX, y, { size: af.size, track: 0.14, weight: 700, align: 'left', color: on ? '#ffe9a8' : rgba(PAL.parch, 0.86) });
       // keyboard column: bindable rows render their keys as real caps
       if (bind) {
         const keys = keyboard.split(' / ');
         let kx = keyboardX;
         for (const k of keys) {
-          const kw = Math.max(18 * S, 6.6 * S * k.length + 10 * S);
+          const kw = Math.max(18 * S, measure(k, 8.4 * S, { track: 0.02, weight: 700 }) + 12 * S);
           keyCap(g, kx, y - 12 * S, kw, 16 * S, listening ? '…' : k, { size: 8.4 * S, edgeAlpha: pad ? 0.4 : 0.85, color: pad ? rgba(PAL.parchDim, 0.8) : '#ffe9a8' });
           kx += kw + 5 * S;
         }
         tracked(g, listening ? 'PRESS A KEY' : 'REBIND', kx + 4 * S, y, { size: 7.4 * S, track: 0.22, weight: 700, align: 'left', color: on || listening ? rgba(PAL.goldHi, 0.9) : rgba(PAL.parchDim, 0.45) });
-        this.hit.push({ x: x - 8 * S, y: y - 16 * S, w: w * 0.68, h: 23 * S, act: 'control-row', row: i });
+        this.hit.push({ x: x - 8 * S, y: y - 16 * S, w: w * 0.70, h: 23 * S, act: 'control-row', row: i });
       } else {
-        tracked(g, keyboard.toUpperCase(), keyboardX, y, { size: 10.5 * S, track: 0.09, weight: 500, align: 'left', color: kbCol, font: bodyFont() });
+        const kf = fitText((txt, sz) => measure(txt, sz, { track: 0.09, weight: 500, font: bodyFont() }), keyboard.toUpperCase(), padX - keyboardX - 14 * S, { size: 10.5 * S, minSize: 8.8 * S });
+        tracked(g, kf.text, keyboardX, y, { size: kf.size, track: 0.09, weight: 500, align: 'left', color: kbCol, font: bodyFont() });
       }
-      tracked(g, padTxt.toUpperCase(), padX, y, { size: 10.5 * S, track: 0.09, weight: 500, align: 'left', color: padCol, font: bodyFont() });
+      const pf = fitText((txt, sz) => measure(txt, sz, { track: 0.09, weight: 500, font: bodyFont() }), padTxt.toUpperCase(), padW, { size: 10.5 * S, minSize: 8.8 * S });
+      tracked(g, pf.text, padX, y, { size: pf.size, track: 0.09, weight: 500, align: 'left', color: padCol, font: bodyFont() });
     }
     g.restore();
     const noteY = y0 + 26 * S + rows.length * step + 12 * S;

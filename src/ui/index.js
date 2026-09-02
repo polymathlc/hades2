@@ -28,12 +28,13 @@ import { HUD } from './hud.js';
 import { BoonOverlay, godEmblem } from './boons.js';
 import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
+import { PactScreen } from './pact.js';
 import { WorldLabels } from './worldlabels.js';
 import { BoonState, BOONS, DUOS, GOD_INFO } from '../game/boons.js';
 import { CHARACTER_INFO } from '../game/characters.js';
 import { loadSettings, saveSettings, wantPadGlyphs } from './settings.js';
 import { primaryKey, padLabel, ACTIONS } from '../core/controls.js';
-import { verbState } from './hud-boons.js';
+import { verbState, fitText } from './hud-boons.js';
 
 const REF_W = 1600, REF_H = 900;
 const IDLE_HZ = 30;                       // redraw rate when nothing changed
@@ -60,6 +61,7 @@ export class UI {
     this.boonUI = new BoonOverlay(this);
     this.nectarUI = new NectarOverlay(this);
     this.menus = new Menus(this);
+    this.pactUI = new PactScreen(this);   // the run-modifier screen, reached from the pause menu at home
     this.settings = this.menus.settings;  // ONE object: audio writes menus.settings.master
     this.labels = new WorldLabels(this);
     this.boonState = new BoonState(null);
@@ -148,15 +150,37 @@ export class UI {
     E.on('damage.number', (i) => {
       if (!i || !i.pos) return;
       if (i.target === ctx.player) return;                 // no numbers on the hero
-      this.labels.damageNumber(i.pos, i.amount, { crit: i.crit, type: i.type });
+      this.labels.damageNumber(i.pos, i.amount, { crit: i.crit, type: i.type, target: i.target });
     });
     E.on('damage.dealt', (i) => {
       if (!i || !i.target || i.target === ctx.player) return;
       const t = i.target;
-      if (t.maxHealth) this.labels.enemyHealth(t, t.health, t.maxHealth, t.def && (t.def.title || t.def.name));
-      if (t.def && t.def.boss) this.labels.setBoss({ name: t.def.title || t.def.name || 'The Warden', hp: t.health, max: t.maxHealth, phases: t.def.phases || 3, phase: Math.max(1, Math.ceil((t.health / t.maxHealth) * (t.def.phases || 3))) });
+      if (t.def && t.def.boss) {
+        // the plate is already up from boss.spawned; this only moves the fill.
+        // (If a boss reached us without a spawn event, land it now.)
+        if (!this.labels.boss) this.labels.setBoss({ name: t.def.title || t.def.label || t.def.name || 'The Warden', phases: t.def.phases || 3 });
+        this.labels.setBoss({ hp: t.health, max: t.maxHealth, enraged: !!t.enraged });
+      } else if (t.maxHealth) this.labels.enemyHealth(t, t.health, t.maxHealth, t.def && (t.def.title || t.def.label || t.def.name));
     });
     E.on('entity.died', (i) => { if (i && i.entity) { this.labels.removeEnemy(i.entity); if (i.entity.def && i.entity.def.boss) this.labels.setBoss(null); } });
+    // ── the boss plate lands on the spawn, not on the first hit ──
+    E.on('boss.spawned', (i) => {
+      if (!i) return;
+      const e = i.entity, def = e && e.def;
+      const name = i.name || (def && (def.title || def.label)) || 'The Warden';
+      const phases = i.phases || (def && def.phases) || 3;
+      this.labels.setBoss({ name, hp: e?.health ?? i.maxHealth, max: i.maxHealth || e?.maxHealth || 1, phases });
+      // the intro moment is a banner in the top band, never a toast across the
+      // body (not under capture: the enemy scenarios frame the boss itself)
+      if (!ctx.CAPTURE) this.banner(name, `${phases} PHASES · ${ctx.run?.heat > 0 ? `HEAT ${ctx.run.heat} · ` : ''}BREAK THE GUARD, STRIKE THE OPENING`, { icon: 'skull', color: '#ff9a8a', dur: 3.0 });
+    });
+    E.on('boss.health', (i) => { if (i) this.labels.setBoss({ name: i.name, hp: i.health, max: i.maxHealth, phase: i.phase, phases: i.phases }); });
+    E.on('boss.phase', (i) => { if (i && this.labels.boss) this.labels.setBoss({ phase: i.phase, hp: i.health, max: i.maxHealth }); });
+    E.on('boss.enraged', (i) => { if (this.labels.boss) this.labels.setBoss({ enraged: true }); });
+    E.on('boss.defeated', () => this.labels.setBoss(null));
+    // ── the Pact's heat, on the depth plaque ──
+    E.on('run.modifiers', (i) => this.hud.setHeat(i?.heat || 0));
+    E.on('home.entered', () => this.hud.setHeat(ctx.run?.heat || 0));
     E.on('boon.granted', (i) => {
       if (!i) return;
       const rec = i.record || i;
@@ -182,10 +206,11 @@ export class UI {
     E.on('capture.state', ({ name, args }) => this._captureState(name, args, ctx));
 
     // ── the run lifecycle: the screens the contract promises ──
-    E.on('run.started', () => {
+    E.on('run.started', (i) => {
       this._runStart = ctx.time?.t || 0;
       this.runTime = 0;
       this.banners.length = 0;
+      this.hud.setHeat(i?.heat ?? ctx.run?.heat ?? 0);
       if (!ctx.CAPTURE && !this.settings.onboarded) this.showOnboarding();
     });
     E.on('room.cleared', (e) => {
@@ -276,8 +301,8 @@ export class UI {
       if (!this._modal()) return;
       if (e.key === 'ArrowDown' || e.key === 's') this.menus.key(1);
       else if (e.key === 'ArrowUp' || e.key === 'w') this.menus.key(-1);
-      else if (e.key === 'ArrowRight' || e.key === 'd') { const h = this.menus.hit[this.menus.sel]; if (h && h.act === 'setting') this.menus._bump(h.key, 1); }
-      else if (e.key === 'ArrowLeft' || e.key === 'a') { const h = this.menus.hit[this.menus.sel]; if (h && h.act === 'setting') this.menus._bump(h.key, -1); }
+      else if (e.key === 'ArrowRight' || e.key === 'd') this.menus.horizontal(1);
+      else if (e.key === 'ArrowLeft' || e.key === 'a') this.menus.horizontal(-1);
       else if (e.key === 'Enter' || e.key === ' ') this.menus.confirm();
     };
     if (!ctx.CAPTURE) {
@@ -330,6 +355,11 @@ export class UI {
   showHomeUpgrades(meta, page) { this.nectarUI.open(meta || this.ctx?.meta, page); }
   /** icon: a god key (emblem) or a ui icon name ('skull','laurel','coin','heart','bolt','door','star','hammer','gear','info'). */
   toast(text, o = {}) {
+    // A boss announces itself with its own toast right after boss.spawned;
+    // the plate and the banner already carry the name, so that toast would
+    // only be a third copy struck across the body.
+    const boss = this.labels?.boss;
+    if (boss && this.t - boss.t0 < 1.5 && String(text).trim().toUpperCase() === String(boss.name).trim().toUpperCase()) return;
     this.toasts.push({ text: String(text), color: o.color || PAL.gold, icon: o.icon || null, t0: this.t, dur: o.dur || 2.4 });
     if (this.toasts.length > 4) this.toasts.shift();
     this.dirty = true;
@@ -349,12 +379,17 @@ export class UI {
     }
     this.dirty = true;
   }
-  /** Retry from the death / victory plate: back to the Crossroads, at once. */
+  /**
+   * Retry from the death / victory plate: back to the Crossroads, at once.
+   * run.js no longer restarts on its own after a death, so this is THE way
+   * home: run.restart() after a death, run.enterHome() after a victory.
+   */
   retry() {
     const run = this.ctx?.run;
     if (run) {
-      if (run.state === 'dead' && run.restart) run.restart();
-      else if (run.state === 'victory' && run.enterHome) run.enterHome();
+      if (run.state === 'victory' && typeof run.enterHome === 'function') run.enterHome();
+      else if (typeof run.restart === 'function') run.restart();
+      else if (typeof run.enterHome === 'function') run.enterHome();
     }
     this.screen('game');
   }
@@ -546,8 +581,8 @@ export class UI {
     if (!this.menus.modal || this.boonUI.active) return;
     if (edge('up', up)) this.menus.key(-1);
     if (edge('down', dn)) this.menus.key(1);
-    if (edge('left', lf)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, -1); }
-    if (edge('right', rt)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, 1); }
+    if (edge('left', lf)) this.menus.horizontal(-1);
+    if (edge('right', rt)) this.menus.horizontal(1);
     if (accept) this.menus.confirm();
     if (edge('back', down(1))) {
       if (this.menus.subOpen) this.menus.activate('back');
@@ -614,7 +649,8 @@ export class UI {
       const to = this.toasts[i];
       const age = t - to.t0;
       const a = age < 0.25 ? ease.out(age / 0.25) : age > to.dur - 0.5 ? 1 - ease.out((age - (to.dur - 0.5)) / 0.5) : 1;
-      const y = H * 0.30 + i * 34 * S - ease.out(clamp01(age / 0.4)) * 8 * S;
+      // the toast column hangs under the banner band, clear of the boss plate
+      const y = this._bannerY(H, S) + 78 * S + i * 34 * S - ease.out(clamp01(age / 0.4)) * 8 * S;
       const size = 13 * S;
       const icon = to.icon;
       const iconW = icon ? 22 * S : 0;
@@ -639,7 +675,17 @@ export class UI {
     }
   }
 
-  /** The centre banner: laurels, a gold title with a sweep, a tracked subline. */
+  /**
+   * The banner's baseline: the top band of the screen (a fifth of the height
+   * is the boss's head at every play lens), pushed down only as far as the
+   * boss plate needs when one is up.
+   */
+  _bannerY(H, S) {
+    const bossBottom = this.labels?.bossBottom ? this.labels.bossBottom(S) : 0;
+    return Math.max(H * 0.155, bossBottom + 52 * S);
+  }
+
+  /** The top-band banner: laurels, a gold title with a sweep, a tracked subline. */
   _banners(g, W, H, S, t) {
     const b = this.banners[0];
     if (!b || b.t0 < 0) return;
@@ -647,10 +693,12 @@ export class UI {
     const inA = ease.overshoot(clamp01(age / 0.45), 1.3);
     const out = age > b.dur - 0.5 ? 1 - ease.out((age - (b.dur - 0.5)) / 0.5) : 1;
     const a = clamp01(age / 0.25) * out;
-    const cx = W / 2, cy = H * 0.20;
-    const size = Math.min(34 * S, W / 18);
+    const cx = W / 2, cy = this._bannerY(H, S);
     const title = b.title.toUpperCase();
-    const tw = trackedWidth(g, title, { size, track: 0.22, weight: 700 });
+    // the title is fitted to the width between the laurels, never clipped
+    const fit = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.22, weight: 700 }), title, W * 0.62, { size: Math.min(34 * S, W / 18), minSize: 20 * S });
+    const size = fit.size;
+    const tw = trackedWidth(g, fit.text, { size, track: 0.22, weight: 700 });
     g.save(); g.globalAlpha = a;
     g.translate(cx, cy); g.scale(0.9 + 0.1 * inA, 0.9 + 0.1 * inA); g.translate(-cx, -cy);
     // a dark ribbon behind the title so it reads over any chamber
@@ -666,8 +714,11 @@ export class UI {
     g.fillRect(cx - lw, cy - size * 0.95, lw * 2, Math.max(1, 1.0 * S));
     laurelBranch(g, cx - tw / 2 - 18 * S, cy - size * 0.3, 70 * S * inA, -1, { leaves: 6, leafLen: 0.3, bow: 0.28 });
     laurelBranch(g, cx + tw / 2 + 18 * S, cy - size * 0.3, 70 * S * inA, 1, { leaves: 6, leafLen: 0.3, bow: 0.28 });
-    tracked(g, title, cx, cy, { size, track: 0.22, weight: 700, align: 'center', gold: true, sweep: clamp01(age / 1.2), shadow: '#06030c', shadowDy: 3 * S });
-    if (b.sub) tracked(g, b.sub.toUpperCase(), cx, cy + 27 * S, { size: 10 * S, track: 0.36, weight: 600, align: 'center', color: rgba(b.color, 0.92), shadow: '#06030c', shadowDy: 1.5 * S });
+    tracked(g, fit.text, cx, cy, { size, track: 0.22, weight: 700, align: 'center', gold: true, sweep: clamp01(age / 1.2), shadow: '#06030c', shadowDy: 3 * S });
+    if (b.sub) {
+      const sf = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.36, weight: 600 }), b.sub.toUpperCase(), rw - 60 * S, { size: 10 * S, minSize: 8.4 * S });
+      tracked(g, sf.text, cx, cy + 27 * S, { size: sf.size, track: 0.36, weight: 600, align: 'center', color: rgba(b.color, 0.92), shadow: '#06030c', shadowDy: 1.5 * S });
+    }
     if (b.icon) {
       const iy = cy - size * 0.95 - 14 * S;
       if (GOD_INFO[b.icon]) godEmblem(g, cx, iy, 10 * S, b.icon, { glowA: 0.5, glowR: 2 });
@@ -694,23 +745,37 @@ export class UI {
       ['DASH', this.keyFor('dash')],
       ['CALL', this.keyFor('summon')],
     ];
-    const w = 236 * S, h = 60 * S + rows.length * 26 * S;
+    // The card is sized to its content: the widest label + cap pair and the
+    // footer hint decide the width, the row count and the footer the height.
+    // (It used to be a fixed 236 px box whose footer overran the frame and
+    // whose last rows sat under it.)
+    const hint = pad ? 'ANY BUTTON DISMISSES · MENU FOR THE FULL GUIDE' : 'ANY KEY DISMISSES · H FOR THE FULL GUIDE';
+    const hintSize = 7.6 * S;
+    const hintW = trackedWidth(g, hint, { size: hintSize, track: 0.18, weight: 600 });
+    const capW = (key) => Math.max(20 * S, trackedWidth(g, String(key), { size: 9 * S, track: 0.02, weight: 700 }) + 12 * S);
+    let rowW = 0;
+    for (const [label, key] of rows) rowW = Math.max(rowW, trackedWidth(g, label, { size: 10 * S, track: 0.24, weight: 700 }) + 16 * S + capW(key));
+    const rowStep = 26 * S, top = 58 * S, footer = 36 * S;
+    const w = Math.min(W * 0.4, Math.max(236 * S, hintW + 44 * S, rowW + 44 * S));
+    const h = top + rows.length * rowStep + footer;
     const x = W - w - 28 * S, y = H * 0.5 - h / 2 + (1 - inA) * 20 * S;
     g.save(); g.globalAlpha = a;
     frame(g, { x, y, w, h, weight: 0.9 * S, r: 7 * S, pad: 5, meander: true, meanderH: 8, palmetteS: 11, sweep: (t * 0.2) % 1, glowAlpha: 0.22, fill: { top: '#1c1229', mid: '#120b1e', bot: '#0a0612' } });
     tracked(g, 'THE VERBS', x + w / 2, y + 34 * S, { size: 13 * S, track: 0.3, weight: 700, align: 'center', gold: true, sweep: (t * 0.3) % 1, shadow: '#06030c', shadowDy: 2 * S });
     for (let i = 0; i < rows.length; i++) {
-      const ry = y + 58 * S + i * 26 * S;
+      const ry = y + top + i * rowStep;
       const [label, key] = rows[i];
       const reveal = ease.out(clamp01((age - 0.15 - i * 0.07) / 0.3));
       g.save(); g.globalAlpha *= reveal;
-      tracked(g, label, x + 22 * S, ry + 5 * S, { size: 10 * S, track: 0.24, weight: 700, align: 'left', color: rgba(PAL.parch, 0.9), shadow: '#05030b', shadowDy: 1 });
-      const kw = Math.max(20 * S, 7 * S * String(key).length + 10 * S);
+      const kw = capW(key);
+      const lf = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.24, weight: 700 }), label, w - 44 * S - kw - 12 * S, { size: 10 * S, minSize: 8.6 * S });
+      tracked(g, lf.text, x + 22 * S, ry + 5 * S, { size: lf.size, track: 0.24, weight: 700, align: 'left', color: rgba(PAL.parch, 0.9), shadow: '#05030b', shadowDy: 1 });
       keyCap(g, x + w - 22 * S - kw, ry - 8 * S, kw, 17 * S, key, { pad: pad && String(key).length <= 2, size: 9 * S });
       g.restore();
     }
-    const hint = pad ? 'ANY BUTTON DISMISSES · MENU FOR THE FULL GUIDE' : 'ANY KEY DISMISSES · H FOR THE FULL GUIDE';
-    tracked(g, hint, x + w / 2, y + h - 12 * S, { size: 7 * S, track: 0.2, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.75) });
+    // a hairline over the footer so the hint reads as a caption, not a row
+    g.fillStyle = rgba(PAL.bronze, 0.55); g.fillRect(x + 22 * S, y + h - footer + 6 * S, w - 44 * S, Math.max(1, 0.8 * S));
+    tracked(g, hint, x + w / 2, y + h - 12 * S, { size: hintSize, track: 0.18, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.8) });
     g.restore();
   }
 
@@ -721,6 +786,10 @@ export class UI {
     else if (name === 'forge') this.setupCaptureBoons(ctx, 'hephaestus');
     else if (name === 'loadout') this.setupCaptureLoadout(ctx);
     else if (name === 'summary') this.setupCaptureDeath(ctx);   // 'death' belongs to VFX/ENEMY (§5)
+    else if (name === 'victory') this.setupCaptureDeath(ctx, 'victory');
+    else if (name === 'pact') this.setupCapturePact(ctx);
+    else if (name === 'onboarding') this.setupCaptureOnboarding(ctx);
+    else if (name === 'pause' || name === 'controls' || name === 'settings') this.setupCaptureMenu(ctx, name);
     else if (name === 'combat') {
       // the combat frame should carry the HUD too — it is what the player sees
       this.setupCaptureHUD(ctx, { quiet: true, character: args?.character, weapon: args?.weapon });
@@ -777,16 +846,31 @@ export class UI {
     // them would fight the real thing AGENT-ENEMY sets up.
     if (o.quiet) { this.dirty = true; return; }
 
-    // a boss mid-fight and a couple of numbers in flight
+    // a boss mid-fight (the plate lands on the spawn, as it does live), a
+    // couple of numbers in flight, and a stacked one
     this.labels.clear();
-    this.labels.setBoss({ name: 'The Bone Hydra', frac: 1, phases: 3, phase: 2 });
+    this.labels.setBoss({ name: 'The Warden of the Ninth Gate', frac: 1, phases: 3 });
     this.labels.boss.t0 = at - 1.4;
     this._sched.push({ at: at - 0.9, fn: () => this.labels.setBoss({ frac: 0.58, phase: 2, phases: 3 }) });
 
     const px = (ctx.player && ctx.player.position) ? ctx.player.position : { x: 0, y: 0, z: 0 };
     this._sched.push({ at: at - 0.46, fn: () => this.labels.damageNumber({ x: px.x + 1.9, y: 0.4, z: px.z - 2.1 }, 118, { crit: true, type: 'physical' }) });
     this._sched.push({ at: at - 0.28, fn: () => this.labels.damageNumber({ x: px.x - 2.4, y: 0.3, z: px.z - 1.2 }, 41, { type: 'lightning' }) });
-    this._sched.push({ at: at - 0.12, fn: () => this.labels.damageNumber({ x: px.x + 3.2, y: 0.5, z: px.z + 0.6 }, 27, { type: 'frost' }) });
+    this._sched.push({ at: at - 0.12, fn: () => this.labels.damageNumber({ x: px.x + 5.4, y: 0.5, z: px.z - 1.8 }, 27, { type: 'frost' }) });
+    // three quick hits on one foe fold into one growing number ("87 ×3")
+    const stackAt = { x: px.x - 3.4, y: 1.5, z: px.z + 1.4 };
+    this._sched.push({ at: at - 1.05, fn: () => this.labels.damageNumber(stackAt, 29, { type: 'physical' }) });
+    this._sched.push({ at: at - 0.86, fn: () => this.labels.damageNumber(stackAt, 29, { type: 'physical' }) });
+    this._sched.push({ at: at - 0.66, fn: () => this.labels.damageNumber(stackAt, 29, { type: 'physical' }) });
+    // two foes with bars: a shielded brute mid-guard and an armoured elite
+    this._capFoes = [
+      { position: { x: px.x - 3.4, y: 0, z: px.z + 1.4 }, height: 2.2, shielded: true, mem: { guardMax: 90, guard: 38 }, def: { label: 'Brute' } },
+      { position: { x: px.x + 3.2, y: 0, z: px.z + 0.6 }, height: 1.9, elite: 'armoured', armour: 6, def: { label: 'Wretch' } },
+    ];
+    this._sched.push({ at: at - 0.62, fn: () => this.labels.enemyHealth(this._capFoes[0], 140, 200, 'Brute') });
+    this._sched.push({ at: at - 0.24, fn: () => this.labels.enemyHealth(this._capFoes[0], 82, 200, 'Brute') });
+    this._sched.push({ at: at - 0.30, fn: () => this.labels.enemyHealth(this._capFoes[1], 46, 170, 'Wretch') });
+    this._sched.push({ at: at - 0.12, fn: () => this.labels.enemyHealth(this._capFoes[1], 31, 170, 'Wretch') });
 
     // the chamber-cleared banner mid-hold, and a reward toast with its emblem
     this._sched.push({ at: at - 1.1, fn: () => this.banner('Chamber Cleared', 'THE GATES ARE OPEN · CHOOSE YOUR REWARD', { icon: 'laurel', dur: 2.6 }) });
@@ -849,16 +933,47 @@ export class UI {
   }
 
   /** `summary`: the run-over plate over the chamber (the `death` state is AGENT-VFX's burst). */
-  setupCaptureDeath(ctx) {
+  setupCaptureDeath(ctx, kind = 'death') {
     this.setupCaptureLoadout(ctx);
     this.menus.set('game');
     this.setSummary({
-      depth: 9, biome: 'asphodel', kills: 84, time: 11 * 60 + 8, killedBy: 'the Minotaur',
+      depth: 9, biome: 'asphodel', kills: 84, time: 11 * 60 + 8, killedBy: 'the Minotaur', boss: 'hades',
       boons: (this.boonState.list?.() || []).map(r => ({ god: r.god, rarity: r.rarity, slot: r.slot, name: r.boon?.name, level: r.level })),
       character: 'Zagreus', weapon: 'Stygian Blade',
     });
-    this.screen('death');
+    this.screen(kind);
     this.menus.t0 = this.t - 2.5;
+    this.dirty = true;
+  }
+
+  /** `pact`: the run-modifier screen with three pacts sealed, one focused. */
+  setupCapturePact(ctx) {
+    this.setupCaptureHUD(ctx, { quiet: true });
+    this.pactUI.preview = new Set(['hardened', 'swift', 'deadline']);
+    this.hud.setHeat(4);
+    this.screen('pause');
+    this.menus.activate('pact');
+    this.pactUI.sel = 3;
+    this.menus.t0 = this.t - 1;
+    this.dirty = true;
+  }
+
+  /** `onboarding`: the first-run verbs card, settled, over the populated HUD. */
+  setupCaptureOnboarding(ctx) {
+    this.setupCaptureHUD(ctx, { quiet: true });
+    this.showOnboarding();
+    this.onboard.t0 = this.t - 1.2;
+    this.onboard.shownAt = Infinity;              // never auto-dismissed by the driver's input
+    this.dirty = true;
+  }
+
+  /** `pause` / `controls` / `settings`: the pause plate and its sub-screens over a live run. */
+  setupCaptureMenu(ctx, which) {
+    this.setupCaptureHUD(ctx, { quiet: true });
+    this.screen('pause');
+    if (which === 'controls') { this.menus.activate('controls'); this.menus.controlSel = 4; }
+    else if (which === 'settings') { this.menus.activate('settings'); this.menus.sel = 5; }
+    this.menus.t0 = this.t - 1;
     this.dirty = true;
   }
 

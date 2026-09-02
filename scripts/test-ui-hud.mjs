@@ -2,7 +2,11 @@ import assert from 'node:assert/strict';
 import {
   upsertHudBoon, hudBoonSlotLabel, fmtRunTime, cooldownFrac, lowHealthLevel, verbState,
   damageColor, DAMAGE_TYPE_COLORS, DAMAGE_TYPE_GLYPH, statChips,
+  fitText, wrapLines, damageStackRule, fanOffset, stackScale, DAMAGE_STACK_WINDOW, DAMAGE_DUPE_WINDOW, DAMAGE_STACK_MAX_AGE,
+  healthBand, HEALTH_BANDS, guardFrac, bossModel,
 } from '../src/ui/hud-boons.js';
+import { pactRows, pactTotals, pactFocus } from '../src/ui/pact.js';
+import { RUN_MODIFIERS, heatOf } from '../src/game/meta.js';
 import {
   SETTINGS_DEFAULTS, SETTINGS_ROWS, sanitiseSetting, bumpSetting, settingLabel, loadSettings, saveSettings, wantPadGlyphs, TEXT_SCALES,
 } from '../src/ui/settings.js';
@@ -163,4 +167,111 @@ assert.equal(advanceCardFocus(0, -1, 3), 2);
 assert.deepEqual(releaseGatedEdge(false, false, false), { armed: true, trigger: false });
 assert.equal(boonOfferComparison(null, null), null);
 
-console.log('ui hud ok: rail levels, run clock, cooldown rings, low-life law, safe palette, stat chips, settings model, bindings table, toggle latch');
+// ── label fitting: shrink, then ellipsise, never overflow ─────────────────
+{
+  const measure = (txt, size) => [...txt].length * size * 0.62;   // a fixed-pitch stand-in for canvas metrics
+  const fits = fitText(measure, 'DASH', 200, { size: 10 });
+  assert.deepEqual(fits, { text: 'DASH', size: 10, shrunk: false, truncated: false }, 'a label that fits is untouched');
+  const label = 'BLOODSTONE / BINDING CAST';
+  const wide = fitText(measure, label, measure(label, 10) - 1, { size: 10, minSize: 9 });
+  assert.equal(wide.text, label, 'a label that fits at the floor size shrinks rather than cuts');
+  assert.ok(wide.shrunk && wide.size < 10 && wide.size >= 9);
+  assert.ok(measure(wide.text, wide.size) <= measure(label, 10) - 1);
+  const cut = fitText(measure, label, 90, { size: 10, minSize: 9 });
+  assert.ok(cut.truncated && cut.text.endsWith('…'), 'a label that cannot fit at the floor is ellipsised');
+  assert.equal(cut.size, 9, 'ellipsising happens at the floor size, not above it');
+  assert.ok(measure(cut.text, cut.size) <= 90, 'the fitted label never exceeds its column');
+  assert.ok(!/[\s·]…$/.test(cut.text), 'no dangling separator before the ellipsis');
+  assert.equal(fitText(measure, '', 50).text, '');
+  for (const w of [40, 60, 80, 120, 160]) {
+    const r = fitText(measure, label, w, { size: 10.5, minSize: 8.8 });
+    assert.ok(measure(r.text, r.size) <= w, `fitted width must be <= ${w}`);
+  }
+  const lines = wrapLines(measure, 'Lightning Strike of Zeus', 70, 7.8, 2);
+  assert.ok(lines.length <= 2, 'two-line labels are capped at two lines');
+  for (const l of lines) assert.ok(measure(l, 7.8) <= 70, `wrapped line "${l}" must fit its cell`);
+  assert.deepEqual(wrapLines(measure, 'Short', 200, 8), ['Short']);
+  const long = wrapLines(measure, 'One two three four five six seven', 40, 8, 2);
+  assert.equal(long.length, 2); assert.ok(long[1].endsWith('…'), 'overflow past the last line is ellipsised');
+  assert.ok(wrapLines(measure, 'Supercalifragilistic', 30, 8, 2)[0].endsWith('…'), 'a single word wider than the cell is cut');
+}
+
+// ── damage-number stacking ────────────────────────────────────────────────
+{
+  const hit = { crit: false, type: 'physical', amount: 29 };
+  assert.deepEqual(damageStackRule(null, hit, 1), { mode: 'new', lane: 0 }, 'no number in flight: a new one');
+  const prev = { live: true, t0: 1.0, lastHit: 1.0, lastAmount: 29, crit: false, type: 'physical', lane: 0, fan: 0 };
+  assert.equal(damageStackRule(prev, hit, 1.0 + DAMAGE_DUPE_WINDOW / 2).mode, 'dupe', 'the same amount inside the dupe window is the same hit reported twice');
+  assert.equal(damageStackRule(prev, hit, 1.0 + DAMAGE_DUPE_WINDOW * 2).mode, 'merge', 'a repeat hit after the dupe window merges');
+  assert.equal(damageStackRule(prev, { ...hit, amount: 31 }, 1.01).mode, 'merge', 'a different amount is a real second hit even within the dupe window');
+  assert.equal(damageStackRule(prev, hit, 1.0 + DAMAGE_STACK_WINDOW + 0.01).mode, 'new', 'past the window the numbers are separate');
+  assert.equal(damageStackRule(prev, hit, 1.0 + DAMAGE_STACK_WINDOW).mode, 'merge', 'the window is inclusive');
+  assert.deepEqual(damageStackRule(prev, { crit: true, amount: 118 }, 1.2), { mode: 'fan', lane: 1 }, 'a crit never merges into a plain number: it fans out');
+  assert.deepEqual(damageStackRule({ ...prev, fan: 1 }, { type: 'fire', amount: 12 }, 1.2), { mode: 'fan', lane: 2 }, 'the fan lane advances');
+  assert.equal(damageStackRule({ ...prev, live: false }, hit, 1.1).mode, 'new', 'a dead pool entry is not a stack target');
+  assert.equal(damageStackRule(prev, hit, 0.5).mode, 'new', 'a hit before the number was born cannot merge into it');
+  const old = { ...prev, t0: 0, lastHit: 1.5 };
+  assert.equal(damageStackRule(old, hit, 1.6).mode, 'fan', 'a number older than the cap stops absorbing: the combo fans to a fresh one');
+  assert.equal(damageStackRule({ ...old, t0: 1.0 }, hit, 1.6).mode, 'merge');
+  assert.ok(DAMAGE_STACK_MAX_AGE > DAMAGE_STACK_WINDOW);
+  assert.equal(fanOffset(0), 0);
+  assert.ok(fanOffset(1) > 0 && fanOffset(2) < 0 && fanOffset(3) > fanOffset(1), 'lanes alternate sides and step outward');
+  assert.equal(fanOffset(2), -fanOffset(1));
+  assert.equal(stackScale(1), 1);
+  assert.ok(stackScale(3) > stackScale(2) && stackScale(2) > 1, 'a merged number grows with its hit count');
+  assert.equal(stackScale(40), 1.6, 'growth is capped');
+}
+
+// ── enemy bar bands, guard meter, boss plate ──────────────────────────────
+{
+  assert.equal(healthBand(1, false).key, 'high'); assert.equal(healthBand(0.5, false).key, 'mid');
+  assert.equal(healthBand(0.26, false).key, 'mid'); assert.equal(healthBand(0.25, false).key, 'low');
+  assert.equal(healthBand(NaN, false).key, 'low');
+  assert.equal(healthBand(0.9, false).color, HEALTH_BANDS.normal.high);
+  assert.equal(healthBand(0.9, true).color, HEALTH_BANDS.safe.high);
+  assert.notEqual(HEALTH_BANDS.safe.high, HEALTH_BANDS.normal.high, 'the safe palette must actually differ');
+  assert.ok(new Set(Object.values(HEALTH_BANDS.safe)).size === 3 && new Set(Object.values(HEALTH_BANDS.normal)).size === 3, 'three distinct bands in each palette');
+  assert.equal(guardFrac(null), null); assert.equal(guardFrac({ mem: {} }), null, 'no guard meter without a guardMax');
+  assert.equal(guardFrac({ shielded: true, mem: { guardMax: 80, guard: 40 } }), 0.5);
+  assert.equal(guardFrac({ shielded: true, mem: { guardMax: 80, guard: 200 } }), 1, 'clamped');
+  assert.equal(guardFrac({ shielded: false, mem: { guardMax: 80, guard: 0, guardBroken: 2 } }), 0, 'a broken guard still reports (empty) so the bar can say so');
+  assert.equal(guardFrac({ shielded: false, mem: { guardMax: 80, guard: 0, guardBroken: 0 } }), null, 'a dropped shield with no break timer has no meter');
+
+  const spawn = bossModel(null, { name: 'The Warden of the Ninth Gate', hp: 900, max: 900, phases: 3 });
+  assert.equal(spawn.hp, 1); assert.equal(spawn.phase, 1); assert.equal(spawn.remaining, 3); assert.equal(spawn.enraged, false);
+  assert.equal(spawn.name, 'The Warden of the Ninth Gate');
+  const hit = bossModel(spawn, { hp: 500, max: 900 });
+  assert.equal(hit.name, spawn.name, 'a health-only update keeps the name from the spawn');
+  assert.equal(hit.phase, 2, 'the phase follows the health when no phase event has arrived');
+  assert.equal(hit.remaining, 2);
+  const ph = bossModel(hit, { phase: 3 });
+  assert.equal(ph.phase, 3); assert.equal(ph.remaining, 1); assert.equal(ph.hp, hit.hp, 'a phase-only update keeps the fill');
+  const rage = bossModel(ph, { enraged: true });
+  assert.equal(rage.enraged, true); assert.equal(bossModel(rage, { hp: 100, max: 900 }).enraged, true, 'enrage persists across health updates');
+  assert.equal(bossModel(rage, { frac: 0.1 }).phase, 3);
+  assert.equal(bossModel(null, { hp: -5, max: 100 }).hp, 0, 'clamped');
+  assert.equal(bossModel(null, { phases: 0 }).phases, 3, 'a missing phase count falls back to the three-phase default');
+  assert.equal(bossModel(null, { phases: 1 }).remaining, 1);
+  assert.equal(bossModel(null, {}).name, 'The Warden');
+}
+
+// ── the Pact model ────────────────────────────────────────────────────────
+{
+  const rows = pactRows(new Set(['swift']));
+  assert.equal(rows.length, RUN_MODIFIERS.length, 'every run modifier gets a row');
+  assert.deepEqual(rows.map(r => r.id), RUN_MODIFIERS.map(m => m.id), 'rows keep table order');
+  assert.ok(rows.every(r => r.name && r.text && r.heat > 0), 'each row carries a name, a description and a heat cost');
+  assert.equal(rows.find(r => r.id === 'swift').on, true); assert.equal(rows.find(r => r.id === 'lean').on, false);
+  assert.deepEqual(pactRows(['lean']).find(r => r.id === 'lean').on, true, 'an array of ids works too');
+  const t = pactTotals(new Set(['swift', 'hardened', 'bogus']));
+  assert.equal(t.heat, heatOf(['swift', 'hardened']), 'the total is meta.js\'s own heat');
+  assert.equal(t.heat, 3); assert.equal(t.darknessPerClear, 3); assert.equal(t.sealed, 2, 'unknown ids are not counted');
+  assert.equal(t.max, RUN_MODIFIERS.reduce((a, m) => a + m.heat, 0));
+  assert.equal(pactTotals(new Set()).heat, 0);
+  const n = rows.length;
+  assert.equal(pactFocus(0, -1, n), n, 'focus wraps from the first row to the Back item');
+  assert.equal(pactFocus(n, 1, n), 0, 'and from Back to the first row');
+  assert.equal(pactFocus(2, 1, n), 3);
+}
+
+console.log('ui hud ok: rail levels, run clock, cooldown rings, low-life law, safe palette, stat chips, settings model, bindings table, toggle latch, label fitting, damage stacking, bar bands, boss plate, pact model');
