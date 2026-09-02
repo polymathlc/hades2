@@ -212,9 +212,17 @@ const S = (t, c) => ({ t, c });
  */
 export const RAMPS = {
   // ---- Tartarus: blood-dark carved stone -----------------------------------
+  // ── ROUND-2: THE WALL NEEDS A MID BAND ──────────────────────────────────
+  // Baked and measured, the wall albedo sat at p50 0.019 linear (2% reflectance)
+  // — every stop under 0.7 was below §2's Stone dark #2c1020 — and the world
+  // runs the wall at litGain 0.34. Result on the shot sheet: the mid-ground
+  // was a dark low-chroma slab with no value band between the floor and the
+  // void (§1.1, §12). The mid stops now sit ON §2's stone ladder (#2c1020 ->
+  // #5a2331 -> #8c3b46) instead of a full band under it, and the top reaches a
+  // lit crimson the chamfers can catch. Chroma stays at 0.42+ at every stop.
   'stone.tartarus': [
-    S(0.00, '#0b0410'), S(0.16, '#1f0b18'), S(0.34, '#33121f'),
-    S(0.52, '#481a27'), S(0.70, '#602332'), S(0.85, '#742a35'),
+    S(0.00, '#0e0512'), S(0.16, '#26101c'), S(0.34, '#3f1826'),
+    S(0.52, '#5a2331'), S(0.70, '#74303e'), S(0.85, '#8c3b46'),
     // §2 puts Tartarus "stone light" at #8c3b46. The old top stops (#8b4f4c /
     // #ad7d6c) were a desaturated putty, and under a warm key that is exactly
     // what reads as PINK CHALK — the single-hue-family failure §9.6 bans, but
@@ -222,7 +230,7 @@ export const RAMPS = {
     // §15: #a1595c is saturation 0.29 — a LOWER chroma than §2's own #8c3b46
     // (0.41), so the ramp desaturated on its way to its brightest stop. Same
     // luma band, real blood-stone chroma.
-    S(0.94, '#8c3b46'), S(1.00, '#a44e56'),
+    S(0.94, '#a34c57'), S(1.00, '#b85d63'),
   ],
   // cool glaze pass — mixed against the warm ramp for hue variety
   // ── §15 VIBRANCY, MEASURED ────────────────────────────────────────────────

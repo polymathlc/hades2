@@ -528,6 +528,13 @@ export function conchoidal(n, o = {}) {
  * the seams look chiselled rather than machine-drawn.
  */
 export function cracks(n, o = {}) {
+  // `res`: synthesise at a lower resolution and upsample, exactly as worleyField
+  // does. A crack a few texels wide at freq 9-14 loses nothing legible at n/2
+  // and the Voronoi search is the recipe's second most expensive pass.
+  if (o.res && o.res < n) {
+    const r = Math.max(64, o.res | 0);
+    return resampleTo(cracks(r, { ...o, res: 0 }), r, n);
+  }
   const levels = o.levels || [{ freq: 6, width: 0.10, weight: 1 }, { freq: 13, width: 0.07, weight: 0.7 }];
   const seed = (o.seed ?? 21) | 0;
   const jitter = o.jitter ?? 0.95;
@@ -1427,7 +1434,10 @@ export function ashlar(n, o = {}) {
     for (let i = 0; i < c; i++) wts.push(0.6 + rng() * 0.9);
     const tot = wts.reduce((a, b) => a + b, 0);
     for (let i = 0; i < c; i++) { acc += wts[i] / tot; edges.push(acc); }
-    layout.push({ edges, offset: rng(), tone: Array.from({ length: c }, () => rng()) });
+    // per-block hashes, computed ONCE per block rather than twice per texel
+    const lk = new Uint8Array(c), th = new Uint32Array(c);
+    for (let i = 0; i < c; i++) { lk[i] = ihash(i, r, 4409) & 255; th[i] = ihash(i, r, tseed) >>> 0; }
+    layout.push({ edges, offset: rng(), tone: Array.from({ length: c }, () => rng()), lk, th });
   }
 
   // wobble the seams so they are chiselled, not CAD
@@ -1459,7 +1469,7 @@ export function ashlar(n, o = {}) {
       height[i] = 1 - m;
       id[i] = L.tone[c % L.tone.length];
       // see tileGrid: the block's own light/shade axis, hand-painted per block
-      const lk = ihash(c, r, 4409) & 255;
+      const lk = L.lk[c];
       lobe[i] = (fx - 0.5) * LX[lk] + (fy - 0.5) * LY[lk];
       // drafted margin vs tooled face, measured from the mortar edge
       const dIn = d - mortar * 0.5;
@@ -1468,7 +1478,7 @@ export function ashlar(n, o = {}) {
       face[i] = (1 - m) * fInner;
       const ex = 1 - Math.abs(fx - 0.5) * 2, ey = 1 - Math.abs(fy - 0.5) * 2;
       dome[i] = Math.sqrt(Math.max(0, ex * ey)) * fInner;
-      const th = ihash(c, r, tseed);
+      const th = L.th[c];
       tool[i] = toolBase + ((th & 1023) / 1023 - 0.5) * 2 * toolSpread
         + ((o.toolFlip !== false && ((th >>> 10) & 1)) ? Math.PI * 0.5 : 0);
       boss[i] = ((th >>> 16) & 1023) / 1023;
