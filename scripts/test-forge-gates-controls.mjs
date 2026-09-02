@@ -18,7 +18,11 @@ import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
 import { TIERS } from '../src/render/renderer.js';
 import { GRADES } from '../src/render/shaders/grades.js';
 import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
-import { ENCOUNTER_POOLS, BOSS_SEQUENCE, FINAL_BOSSES, FINAL_BOSS_DEPTH, bossForDepth, Spawner, BIOME_THREAT, ELITE_AFFIXES, maxAliveFor } from '../src/entities/spawner.js';
+import { ENCOUNTER_POOLS, BOSS_SEQUENCE, FINAL_BOSSES, FINAL_BOSS_DEPTH, bossForDepth, Spawner, BIOME_THREAT, ELITE_AFFIXES, maxAliveFor, SPAWN_MAX_DIST } from '../src/entities/spawner.js';
+import { LANCE_CHARGE, lanceReach } from '../src/entities/enemies/variants.js';
+import { Enemy } from '../src/entities/enemies/base.js';
+import { RUN_REROLLS } from '../src/game/run.js';
+import { WEAPON_FX, AFFIX_COLOR, RING_CAP } from '../src/vfx/index.js';
 import { HitboxSystem } from '../src/entities/hitbox.js';
 import { FEEL } from '../src/entities/combat.js';
 import { TELEGRAPH, surroundSlot } from '../src/entities/ai.js';
@@ -1058,6 +1062,158 @@ assert.ok(WEAPONS.rail.lastRound.dmgMul >= 1.5);
   assert.equal(twoElites.filter(w => w.elite >= 0).length, 2, 'elite trial did not add a second elite');
 }
 
+// ROUND 2 — THREAT THAT CONNECTS / NO DEAD TIME / RUN FLOW / VFX BEATS.
+{
+  // every arrival lands on the hero's side of the room, never past the guard
+  const director = new Spawner();
+  director.rng = new RNG(11);
+  const placed = [];
+  const hero = new THREE.Vector3(9, 0, -6);
+  director.ctx = { player: { position: hero }, world: { bounds: { r: 22 } }, events: new Bus() };
+  director.mgr = { spawn: (kind, pos, opts) => { placed.push({ kind, pos, opts }); return { elite: null, position: new THREE.Vector3(pos.x, 0, pos.z) }; } };
+  director.depth = 3; director.wave = 1;
+  for (let i = 0; i < 12; i++) director._place('shade', i, 12, {});
+  for (let i = 0; i < 4; i++) director._place('hound', i, 4, { reinforcement: true });
+  for (const q of placed) {
+    const d = Math.hypot(q.pos.x - hero.x, q.pos.z - hero.z);
+    assert.ok(d <= SPAWN_MAX_DIST + 0.01, `arrival requested ${d.toFixed(1)} m from the hero (dead time)`);
+    assert.equal(q.opts.maxPlayerDist, SPAWN_MAX_DIST, 'spawn does not carry the max-distance guard');
+    assert.ok(q.opts.minPlayerDist >= 5.5, 'arrival may land on the hero');
+  }
+  assert.ok(placed.slice(12).every(q => Math.hypot(q.pos.x - hero.x, q.pos.z - hero.z) < 10.5), 'reinforcements arrive far');
+
+  // the manager pulls a far request in before it walks the safe-point spiral
+  const mgr = Object.create(EnemyManager.prototype);
+  mgr.ctx = { player: { position: new THREE.Vector3(0, 0, 0) }, world: { clampToArena: v => v, collide: v => v } };
+  const far = mgr.safePoint(30, 0, { minPlayerDist: 6, maxPlayerDist: SPAWN_MAX_DIST });
+  assert.ok(Math.hypot(far.x, far.z) <= SPAWN_MAX_DIST + 0.01, 'safePoint ignores maxPlayerDist');
+
+  // perception covers the whole arena: nobody stands idle across a 40 m hall
+  for (const kind of ['shade', 'hexer', 'lancer', 'hound', 'brute']) {
+    const e = new Enemy(ROSTER[kind]);
+    assert.ok(e.perc.range >= 60, `${kind} perception range ${e.perc.range} leaves far idlers`);
+  }
+  // and the watchdog exists with a sub-2 s trigger
+  assert.equal(typeof Enemy.prototype._watchdog, 'function');
+  assert.equal(typeof Enemy.prototype._blinkIn, 'function');
+
+  // the lancer's charge covers the range it commits at: a hero at 7 m (or at
+  // the commit ceiling) standing still is reached, with over-run
+  for (const d of [3.5, 7, LANCE_CHARGE.commitMax]) {
+    const reach = lanceReach(d);
+    assert.ok(reach >= d + 1.0, `lance reach ${reach} does not cover a commit at ${d} m`);
+    assert.ok(ROSTER.lancer.speed * LANCE_CHARGE.speedMul * LANCE_CHARGE.maxTime >= reach, 'lance time cap cannot travel its lane');
+  }
+  assert.ok(ROSTER.lancer.brain.states.charge && ROSTER.lancer.brain.states.aim, 'lancer lost its charge states');
+
+  // enemy damage scales into a real threat by depth 4 without breaking depth 0
+  const probe = Object.create(Enemy.prototype);
+  probe.def = ROSTER.shade; probe.mem = {}; probe.perc = { reset() {} }; probe.tell = {}; probe.position = new THREE.Vector3(); probe.velocity = new THREE.Vector3(); probe._knock = new THREE.Vector3();
+  probe.root = { visible: false, position: new THREE.Vector3(), scale: new THREE.Vector3(), rotation: { y: 0 } }; probe.facing = { x: 0, z: 1 }; probe.visual = {}; probe.brain = null; probe.id = 1;
+  probe.spawn(0, 0, 0); const m0 = probe.damageMul;
+  probe.spawn(0, 0, 4); const m4 = probe.damageMul;
+  probe.spawn(0, 0, 8); const m8 = probe.damageMul;
+  assert.ok(Math.abs(m0 - 1) < 1e-9 && m4 >= 1.3 && m4 <= 1.45 && m8 >= 1.8, `depth damage curve ${m0}/${m4}/${m8}`);
+  assert.ok(ROSTER.shade.brain.states.windup && ROSTER.hound.brain.states.lunge && ROSTER.brute.brain.states.shieldChargeGo, 'melee reach states missing');
+
+  // RUN FLOW: the death plate persists until the UI calls restart(); rerolls are real
+  const run = new RunState();
+  const bus = new Bus();
+  let homes = 0;
+  run.ctx = { events: bus, time: { t: 0 }, spawner: { stop: noop }, ui: { toast: noop } };
+  run.enterHome = () => { homes++; run.state = 'home'; return run; };
+  run.state = 'playing';
+  run._onDeath();
+  assert.equal(run.state, 'dead');
+  for (let i = 0; i < 60 * 30; i++) run.update(1 / 60, run.ctx);
+  assert.equal(run.state, 'dead', 'the death summary was auto-dismissed by a timer');
+  assert.equal(homes, 0);
+  assert.ok(run.deathT > 29, 'deathT does not count for the UI');
+  run.restart();
+  assert.equal(homes, 1, 'restart() must still return to the Crossroads');
+  run.state = 'victory'; run._victoryT = 0;
+  for (let i = 0; i < 60 * 20; i++) run.update(1 / 60, run.ctx);
+  assert.equal(run.state, 'victory', 'the victory summary was auto-dismissed');
+  assert.ok(RUN_REROLLS >= 1, 'a run grants no boon reroll');
+  run.meta = { mirrorRank: () => 0 };
+  const rerollEvents = [];
+  bus.on('run.rerolls', e => rerollEvents.push(e.rerolls));
+  assert.equal(run.grantRerolls(), RUN_REROLLS);
+  assert.equal(run.rerolls, RUN_REROLLS);
+  assert.deepEqual(rerollEvents, [RUN_REROLLS]);
+  run.meta = { mirrorRank: t => (t === 'darkForesight' ? 2 : 0) };
+  assert.equal(run.rerollsForRun(), RUN_REROLLS + 2, 'the Mirror does not add rerolls');
+  // the Pact API the UX agent builds against
+  assert.equal(typeof run.setModifier, 'function');
+  assert.ok(run.modifiers instanceof Set);
+  assert.equal(run.setModifier('swift', true), false, 'the Pact can be sealed outside the Crossroads');
+
+  // VFX BEATS: every new event has a listener, and the arms draw differently
+  const fx = new VFX();
+  const vbus = new Bus();
+  fx.enabled = true; fx.ctx = { events: vbus, time: { t: 0 } };
+  fx.biome = { key: '#ff5a3c', rim: '#5fd0ff' };
+  fx.rng = { range: () => 0, bool: () => true };
+  const rings = [], slashes = [], beams = [], parts = [];
+  fx.particles = { emit: (k, n, o) => parts.push({ k, n, o }), byName: new Map(), count: 0, cap: 100 };
+  fx.rings = { spawn: (x, y, z, o) => rings.push({ x, y, z, o }), liveCount: () => rings.length };
+  fx.slashes = { spawn: (a, d, o) => slashes.push(o) };
+  fx.beams = { spawn: (a, b, o) => beams.push({ a: { ...a }, b: { ...b }, o }) };
+  fx.decals = { spawn: noop }; fx.screen = { flash: noop, pulse: noop };
+  fx._bindBeats(fx.ctx);
+  for (const name of ['boss.enraged', 'weapon.perfectChain', 'weapon.charge.tier', 'player.riposte', 'weapon.tipHit', 'enemy.elite', 'damage.backstab', 'weapon.loose', 'weapon.riposte'])
+    assert.ok(vbus.map.has(name), `vfx has no listener for ${name}`);
+  const swinger = { position: new THREE.Vector3(1, 0, 1), facing: new THREE.Vector2(0, 1), radius: 0.45, height: 1.9 };
+  const boss = { position: new THREE.Vector3(4, 0, 4), radius: 1.2, height: 3, dead: false, alive: true };
+  vbus.emit('boss.enraged', { entity: boss, pos: boss.position });
+  for (const pending of fx._pending.splice(0)) pending.fn();
+  assert.ok(rings.length >= 3, 'enrage draws no shockwave');
+  assert.equal(fx._auras.length, 1, 'enrage leaves no persistent aura');
+  const before = rings.length; fx._updateAuras(0.5); assert.ok(rings.length > before, 'the enrage aura does not pulse');
+  boss.dead = true; fx._updateAuras(0.5); assert.equal(fx._auras.length, 0, 'the aura outlives the boss');
+  rings.length = 0;
+  vbus.emit('weapon.perfectChain', { actor: swinger, weapon: 'blade', streak: 2, reach: 2.3 });
+  assert.ok(rings.length === 1 && rings[0].o.color === '#ffe9a8' && rings[0].y > 0.5, 'perfect chain is not a gold ring at the blade');
+  rings.length = 0;
+  vbus.emit('weapon.charge.tier', { actor: swinger, weapon: 'bow', tier: 1, of: 3, color: '#ffe9a8' });
+  vbus.emit('weapon.charge.tier', { actor: swinger, weapon: 'bow', tier: 3, of: 3, color: '#ffe9a8' });
+  assert.ok(rings.length === 2 && rings[1].o.radius > rings[0].o.radius, 'charge tiers are not growing tick rings');
+  slashes.length = 0; parts.length = 0;
+  vbus.emit('player.riposte', { target: boss, pos: boss.position });
+  assert.ok(slashes.length === 1 && /^#b/.test(slashes[0].color), 'riposte is not a blue-white arc');
+  vbus.emit('weapon.tipHit', { target: boss, pos: boss.position, weapon: 'spear' });
+  assert.ok(parts.some(q => q.k === 'spark' && q.o.dy > 1), 'tip hit is not a spark spike');
+  rings.length = 0;
+  vbus.emit('enemy.elite', { entity: { ...boss, dead: false }, affix: 'swift', pos: boss.position });
+  assert.ok(rings.length === 1 && rings[0].o.color === AFFIX_COLOR.swift && fx._auras.length === 1, 'elite ring is not affix-coloured');
+  parts.length = 0;
+  vbus.emit('damage.backstab', { target: boss, source: swinger });
+  assert.ok(parts.some(q => q.k === 'shard'), 'backstab draws nothing');
+  // per-arm shapes: the same slash call diverges by weapon
+  const dir = new THREE.Vector3(0, 0, 1), origin = new THREE.Vector3(0, 1.05, 0);
+  const swing = (weapon) => { slashes.length = 0; rings.length = 0; beams.length = 0; parts.length = 0; fx.slash(origin, dir, { arc: 130, radius: 2.3, width: 0.44, weapon }); return { slashes: slashes.map(o => ({ width: o.width, radius: o.radius, arc: o.arc })), rings: rings.length, chev: parts.filter(q => q.k === 'chev').length }; };
+  const blade = swing('blade'), axe = swing('axe'), shield = swing('shield'), fists = swing('fists'), blades = swing('blades');
+  assert.equal(blade.slashes.length, 1);
+  assert.ok(axe.slashes.length === 2 && axe.slashes[0].width > blade.slashes[0].width * 1.3, 'axe is not a wide heavy crescent');
+  assert.ok(shield.rings === 1 && shield.slashes[0].arc < blade.slashes[0].arc, 'shield is not a flat bash ring');
+  assert.ok(fists.chev > 0 && fists.slashes[0].radius < blade.slashes[0].radius, 'fists are not a short jab');
+  assert.equal(blades.slashes.length, 2, 'sister blades are not twin ribbons');
+  beams.length = 0; parts.length = 0;
+  fx.beam(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 1, 4), { weapon: 'spear', thrust: true, width: 0.3 });
+  assert.ok(beams.length === 1 && beams[0].o.width < 0.2 && parts.some(q => q.k === 'star'), 'spear thrust is not a thin streak with a hot tip');
+  beams.length = 0;
+  vbus.emit('weapon.loose', { actor: swinger, weapon: 'bow', color: '#ffe9a8' });
+  assert.ok(beams.length === 1 && Math.hypot(beams[0].b.x - beams[0].a.x, beams[0].b.z - beams[0].a.z) > 8, 'bow loose draws no tracer');
+  beams.length = 0;
+  vbus.emit('weapon.loose', { actor: swinger, weapon: 'rail', color: '#ffe9a8' });
+  assert.ok(beams.length === 1 && beams[0].o.width > 0.1, 'rail loose draws no tracer');
+  assert.ok(Object.keys(WEAPON_FX).length >= 12, 'not every arm has a shape entry');
+  // the ring cap
+  rings.length = 0; for (let i = 0; i < RING_CAP; i++) rings.push({});
+  fx.shockwave(new THREE.Vector3(), { radius: 3 });
+  assert.equal(rings.length, RING_CAP, 'shockwave ignores the ring cap');
+}
+
 // RUN STRUCTURE: trials are a pure function of (seed, depth), door rewards
 // shape the next chamber, and the Pact is persisted and paid.
 {
@@ -1181,4 +1337,4 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
 assert.equal(GOD_KEYS.length, 17);
 for (const god of ['demeter', 'apollo', 'hera', 'hestia', 'chaos', 'hades']) assert.ok(GOD_INFO[god], `missing expanded god ${god}`);
-console.log('features ok: 15 enemies, 5 unique bosses, heir-specific finales, 17 gods, 12 arms, 44 Attack/Special/Cast forges, audio bridge, gameplay pass (perfect chain, tiers, tip, parry, perfect dodge, elites, beats, trials, pact)');
+console.log('features ok: 15 enemies, 5 unique bosses, heir-specific finales, 17 gods, 12 arms, 44 Attack/Special/Cast forges, audio bridge, gameplay pass (perfect chain, tiers, tip, parry, perfect dodge, elites, beats, trials, pact), round 2 (spawn ring, perception, lance reach, damage curve, run flow, rerolls, vfx beats, per-arm shapes, ring cap)');

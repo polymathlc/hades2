@@ -148,6 +148,10 @@ function staggerTo(a, state, token) {
   }
 }
 
+/** the lancer's charge: lane length from commit distance, and its hard cap */
+export const LANCE_CHARGE = Object.freeze({ speedMul: 2.75, maxTime: 1.0, minReach: 5.5, maxReach: 11.6, overrun: 1.6, commitMax: 10.0 });
+export function lanceReach(dist) { return Math.min(LANCE_CHARGE.maxReach, Math.max(LANCE_CHARGE.minReach, dist + LANCE_CHARGE.overrun)); }
+
 export const LANCER = {
   kind: 'lancer', label: 'Stygian Lancer',
   role: 'lane charger — a long spear line must be sidestepped, not outrun',
@@ -183,31 +187,43 @@ export const LANCER = {
           const p = a.perc;
           a.steer.begin(a.def.speed).orbit(p.aimX, p.aimZ, 6.2, a.orbitDir, 1.0, 0.72).separation(a.mgr.list, 2.0).avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ });
-          if (a.attackCd <= 0 && p.dist > 3.0 && p.dist < 10.0 && a.wantToken('heavy', -p.dist)) return 'aim';
+          if (a.attackCd <= 0 && p.dist > 3.0 && p.dist < LANCE_CHARGE.commitMax && a.wantToken('heavy', -p.dist)) return 'aim';
         },
       },
       aim: {
         enter(a) {
           a.committed = true; a.play('attack3', { fade: 0.08, restart: true, speed: 0.65 });
           const p = a.perc; a.snapFace(p.dirX, p.dirZ); a.mem.dx = p.dirX; a.mem.dz = p.dirZ;
-          a.telegraph('lance', 0.78, { shape: 'line', radius: 8.2, inner: 0.17, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: '#71d8ff' });
+          // THE LANE IS THE CHARGE. It used to be 0.42 s of travel (~5 m) under
+          // an 8.2 m telegraph, so a lancer that committed at 7 m stopped two
+          // metres short of a hero standing still. Reach is now the distance
+          // it committed at plus an over-run, and the charge runs until it
+          // has covered it.
+          a.mem.reach = lanceReach(p.dist); a.mem.trav = 0;
+          a.telegraph('lance', 0.78, { shape: 'line', radius: a.mem.reach, inner: 0.17, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: '#71d8ff' });
         },
         update(a, dt, ctx) {
           a.steer.begin(a.def.speed * 0.08).separation(a.mgr.list, 1.4);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
-          a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 4.0); a.mem.dx = a.facing.x; a.mem.dz = a.facing.z;
+          // track the hero's LIVE line through the wind-up (slowly), leading
+          // by a little of their velocity so a stroll does not walk out of it
+          const pl = ctx.player, lx = a.perc.aimX + (pl?.velocity?.x || 0) * 0.3 - a.position.x, lz = a.perc.aimZ + (pl?.velocity?.z || 0) * 0.3 - a.position.z;
+          a.faceTowards(lx, lz, dt, 4.0); a.mem.dx = a.facing.x; a.mem.dz = a.facing.z;
+          a.mem.reach = lanceReach(a.perc.dist);
+          if (a._tellHandle) { a._tellHandle.r = a.mem.reach; a._tellHandle.mesh.scale.set(a.mem.reach, 1, a.mem.reach); }
           if (a.tell.k >= 1) return 'charge';
         },
       },
       charge: {
         enter(a, ctx) { a.endTell(true); a.mem.hit = false; ctx.audio?.sfx?.('lunge', { pos: a.position }); },
         update(a, dt, ctx) {
-          a.steer.begin(a.def.speed * 2.75).add(a.mem.dx, a.mem.dz, 1).separation(a.mgr.list, 0.5);
+          a.steer.begin(a.def.speed * LANCE_CHARGE.speedMul).add(a.mem.dx, a.mem.dz, 1).separation(a.mgr.list, 0.5);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false, accel: 110 });
-          if (!a.mem.hit && ctx.player && inDisc(a.position.x, a.position.z, ctx.player, 1.15)) {
+          a.mem.trav += (a.speedNow || 0) * dt;
+          if (!a.mem.hit && ctx.player && inDisc(a.position.x, a.position.z, ctx.player, 1.25)) {
             a.mem.hit = true; a._hitPlayer(ctx, 18, 'physical', a.mem.dx, a.mem.dz, 11);
           }
-          if (a.brain.t > 0.42) return 'recover';
+          if (a.mem.trav >= (a.mem.reach || 8) || a.brain.t > LANCE_CHARGE.maxTime) return 'recover';
         },
       },
       recover: {

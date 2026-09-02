@@ -157,6 +157,8 @@ export class Rings {
       p.mat.uniforms.uThick.value = p.thick * (1 - 0.55 * e);
     }
   }
+  /** how many rings are on the floor right now (the readability cap reads this) */
+  liveCount() { let n = 0; for (const p of this.pool) if (p.live) n++; return n; }
   clear() { for (const p of this.pool) { p.live = false; p.mesh.visible = false; p.mat.uniforms.uOpacity.value = 0; } }
   dispose() { this.geo.dispose(); for (const p of this.pool) p.mat.dispose(); }
 }

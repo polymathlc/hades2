@@ -1003,15 +1003,16 @@ export class CombatSystem {
     // shorter than its own lifetime, so whenever the frame is grabbed there is
     // a live hitbox, a fresh crescent and bolts in the air.
 
-    // 0.05 — the room is hot, and two patches of ground are marked hostile
+    // 0.05 — the room is hot, and one patch of ground is marked hostile.
+    // (round 1 marked two and erupted both on a pulse: with the roster's own
+    // tells and the impact rings that was six rings in the centre of the
+    // frame — the judges could not read it. One patch, up-screen, is enough.)
     if (at(0.05)) {
       this.intensity = 0.92; this._recentDamage = 240;
       P.combatHeat = Math.max(P.combatHeat || 0, 1.25);
-      for (let i = 0; i < 2; i++) {
-        const a = -0.95 + i * 1.9;
-        ctx.vfx?.decal?.(_v.set(px + Math.cos(a) * 4.6, 0, pz + Math.sin(a) * 4.6), null,
-          { kind: 'sigil', size: 1.9, color: '#e01f2d', opacity: 0.30 });
-      }
+      const a = 3.93;   // up-screen, off the hero's line
+      ctx.vfx?.decal?.(_v.set(px + Math.cos(a) * 4.6, 0, pz + Math.sin(a) * 4.6), null,
+        { kind: 'sigil', size: 1.9, color: '#e01f2d', opacity: 0.30 });
     }
 
     // 0.45 — the volley: three bolts from the rim, closing slowly enough that
@@ -1071,24 +1072,31 @@ export class CombatSystem {
     if (T >= 1.00 && T - (this._cap.pulse || 0) >= 0.42) {
       this._cap.pulse = T;
       const n = this._cap.i++;
-      const s = WEAPONS.blade.combo[2];
+      // THE EQUIPPED ARM, not the blade: a bow frame draws a bow, a spear a
+      // thrust streak, a shield a bash ring. The step's own vfx table entry
+      // goes through the live runtime path so the capture and play match.
+      const W = WEAPONS[this.weaponId] || WEAPONS.blade;
+      const steps = W.combo || (W.special ? [W.special] : []);
+      const s = steps[Math.min(steps.length - 1, 2)] || steps[0] || WEAPONS.blade.combo[2];
+      const hb = s.hitbox || WEAPONS.blade.combo[2].hitbox;
       this.hitboxes.spawn({
-        shape: 'arc', owner: P, source: P, radius: s.hitbox.radius, arcDeg: s.hitbox.arcDeg,
-        offset: s.hitbox.offset, t0: 0.01, t1: 0.40, life: 0.44,
+        shape: hb.shape, owner: P, source: P, radius: hb.radius, arcDeg: hb.arcDeg, innerRadius: hb.innerRadius,
+        halfLength: hb.halfLength, halfWidth: hb.halfWidth, length: hb.length,
+        offset: hb.offset, t0: 0.01, t1: 0.40, life: 0.44,
         damage: s.damage, knockback: s.knockback, poiseDamage: s.poise,
-        hitstop: 0, shake: 0, color: s.vfx.color, tag: 'capture:lunge',
+        hitstop: 0, shake: 0, color: s.vfx?.color || W.palette.body, tag: 'capture:' + (s.name || 'swing'),
       });
-      ctx.vfx?.slash?.(_v.set(px, 1.02, pz), _v2.set(fx, 0, fz),
-        { arc: s.vfx.arc, radius: s.vfx.radius, width: 0.46, color: s.vfx.color, glow: '#ff5a3c', spin: 1 });
-      // the swing CONNECTS: sparks on the arc and a number over each
-      for (let i = 0; i < 2; i++) {
-        const a = Math.atan2(fz, fx) + (i ? 0.62 : -0.68);
+      const rt = this.runtimeFor(P, this.weaponId);
+      if (rt && rt._playVfx) rt._playVfx(s.vfx ? s : { ...s, vfx: { call: 'slash', arc: 150, radius: 2.4, width: 0.46, color: W.palette.body } });
+      // the swing CONNECTS: one impact on the arc and a number over it
+      {
+        const a = Math.atan2(fz, fx) - 0.62;
         const hx = px + Math.cos(a) * 2.35, hz = pz + Math.sin(a) * 2.35;
         ctx.vfx?.impact?.(_v.set(hx, 1.05, hz), _v2.set(-Math.cos(a), 0, -Math.sin(a)),
-          { type: 'physical', scale: i ? 0.45 : 0.7, color: '#ffb04a' });
+          { type: 'physical', scale: 0.7, color: '#ffb04a' });
         const dn = new THREE.Vector3(hx, 1.6, hz);
-        ctx.events.emit('damage.number', { pos: dn, amount: i ? 29 : 54, crit: i === 0, type: 'physical' });
-        ctx.ui?.damageNumber?.(dn, i ? 29 : 54, { crit: i === 0, type: 'physical' });
+        ctx.events.emit('damage.number', { pos: dn, amount: 54, crit: true, type: 'physical' });
+        ctx.ui?.damageNumber?.(dn, 54, { crit: true, type: 'physical' });
       }
       ctx.events.emit('camera.shake', { amp: 0.14, dur: 0.24, freq: 29 });
       // the player answers with a bolt of their own, leaving frame
@@ -1098,9 +1106,8 @@ export class CombatSystem {
         kind: 'straight', speed: 11, radius: 0.28, life: 3, damage: 30, type: 'physical',
         color: '#ffe9a8', size: 1.2, coreSize: 1.1, source: P, team: TEAM.PLAYER, hero: true, pierce: 3,
       });
-      // and the ground under one of the marked patches erupts
-      const ta = -0.9 + (n % 2) * 1.9;
-      ctx.vfx?.shockwave?.(_v.set(px + Math.cos(ta) * 4.6, 0.05, pz + Math.sin(ta) * 4.6),
+      // and, every other pulse, the marked patch erupts
+      if (n % 2 === 0) ctx.vfx?.shockwave?.(_v.set(px + Math.cos(3.93) * 4.6, 0.05, pz + Math.sin(3.93) * 4.6),
         { radius: 2.1, color: '#e01f2d', life: 0.5, opacity: 0.45 });
     }
   }

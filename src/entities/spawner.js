@@ -107,6 +107,8 @@ export function bossForDepth(depth, character = 'zagreus') {
 }
 
 const _v = new THREE.Vector3();
+/** no arrival may land farther than this from the hero (the dead-time guard) */
+export const SPAWN_MAX_DIST = 14.0;
 
 export class Spawner {
   constructor() {
@@ -351,11 +353,18 @@ export class Spawner {
     // the sides so nothing materialises directly in the hero's blind spot
     const base = this.rng.range(0, TAU);
     const a = base + (index / Math.max(1, count)) * TAU * 0.86;
-    // reinforcements come in closer: they are a surprise, but a legible one
-    const ring = clamp(R * (o.reinforcement ? 0.5 : 0.68), 9.0, 23.5) + this.rng.range(-1.8, 1.8);
-    const x = Math.cos(a) * ring, z = Math.sin(a) * ring;
+    // THE ARRIVAL RING IS MEASURED FROM THE HERO, NOT THE ORIGIN. A ring around
+    // the arena centre put a body 25-35 m from a hero standing near a wall,
+    // and that body spent six seconds walking (or, past its perception range,
+    // standing) while the wave "ended" without it. Arrivals now come in on the
+    // hero's side of the room: ~11 m out for a wave, ~7 m for a reinforcement,
+    // never past SPAWN_MAX_DIST, and the arena rim clamps whatever falls
+    // outside — which lands the body on the rim of the hero's half.
+    const want = o.reinforcement ? clamp(R * 0.42, 6.5, 9.0) : clamp(R * 0.62, 9.0, 12.5);
+    const ring = want + this.rng.range(-1.4, 1.4);
+    const x = p.x + Math.cos(a) * ring, z = p.z + Math.sin(a) * ring;
     const e = this.mgr.spawn(kind, { x, z }, {
-      depth: this.depth, wave: this.wave, minPlayerDist: 6.0, elite: o.elite || null,
+      depth: this.depth, wave: this.wave, minPlayerDist: 6.0, maxPlayerDist: SPAWN_MAX_DIST, elite: o.elite || null,
     });
     if (e) { this.spawnedTotal++; if (e.elite) this.elitesSpawned++; }
     return e;

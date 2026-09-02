@@ -134,7 +134,7 @@ export class EnemyManager {
     if (opts.elite && !e.def.boss) this._makeElite(e, opts.elite, opts.depth ?? 0);
     ctx.combat?.register?.(e);
     if (this.list.indexOf(e) < 0) this.list.push(e);
-    this._spawnFX(e, opts);
+    if (!opts.silent) this._spawnFX(e, opts);
     ctx.events.emit('enemy.spawned', { entity: e, kind, pos: e.position.clone(), elite: e.elite });
     return e;
   }
@@ -230,6 +230,14 @@ export class EnemyManager {
     const minD = opts.minPlayerDist ?? 5.2;
     const p = ctx.player ? ctx.player.position : null;
     const v = _v.set(x, 0, z);
+    // THE DEAD-TIME GUARD: a requested point farther than maxPlayerDist from
+    // the hero is pulled in along the hero's line before anything else. A
+    // body that arrives 25 m out spends the wave walking, or never notices
+    // the hero at all.
+    if (p && opts.maxPlayerDist > 0) {
+      const dx = x - p.x, dz = z - p.z, d = Math.hypot(dx, dz);
+      if (d > opts.maxPlayerDist) { const k = opts.maxPlayerDist / d; x = p.x + dx * k; z = p.z + dz * k; }
+    }
     for (let i = 0; i < 24; i++) {
       v.set(x, 0, z);
       if (i > 0) {
@@ -303,28 +311,51 @@ export class EnemyManager {
     this._relax(dt);
     this.telegraphs.update(dt, ctx);
     this.spawner.update(dt, ctx);
-    if (this._capMode === 'combat') this._holdCaptureTell(ctx);
+    if (this._cap) this._holdCaptureTell(ctx);
   }
 
   /**
    * The capture harness steps 2 seconds of live simulation after `state()`
-   * returns, so a tell posed inside setupCaptureCombat() has long since fired
-   * by the time the shutter opens. This re-arms it every step, which keeps the
-   * §5 requirement ("one mid-telegraph") true of the frame that is actually
-   * written to disk rather than of an intermediate one nobody sees.
+   * returns, so anything posed inside setupCaptureCombat() has long since
+   * fired by the time the shutter opens. This re-arms the frame every step:
+   * the brute stays mid shield-charge tell, the hexer keeps its bolt lane
+   * drawn, and every other body is held on its authored surround slot so
+   * nobody walks onto the hero (the round-1 frame had the brute standing ON
+   * the player). The §5 requirement is of the frame that is written to disk.
    */
   _holdCaptureTell(ctx) {
-    const s = this._capStar;
-    if (!s || s.dead) return;
-    if (!s.tell.active) {
-      s.attackCd = 0; s.stagger = 0; s.iframes = 0.4;
-      this.tokens.reset();
-      s.wantToken(s.def.tokenPool, 99);
-      s.brain.set('windup', ctx);
-    } else if (s.tell.k > 0.80) { s.tell.t = s.tell.dur * 0.62; s.tell.k = 0.62;
-      if (s._tellHandle) { s._tellHandle.t = s._tellHandle.dur * 0.62; s._tellHandle.u.uK.value = 0.62; } }
-    const h = this._capSecond;
-    if (h && !h.dead && !h.tell.active) { h.attackCd = 0; h.iframes = 0.4; h.brain.set('cast', ctx); }
+    const cap = this._cap;
+    if (!cap) return;
+    const P = ctx.player;
+    cap.t = (cap.t || 0) + 1 / 60;
+    for (let i = 0; i < cap.slots.length; i++) {
+      const sl = cap.slots[i], e = sl.e;
+      if (!e || e.dead) continue;
+      e.position.set(sl.x, 0, sl.z);
+      e.velocity.set(0, 0, 0); e._knock.set(0, 0, 0);
+      e.snapFace(P.position.x - sl.x, P.position.z - sl.z);
+      e.attackCd = 9; e.iframes = 0.4; e.stagger = 0; e.spawnGrace = 0;
+      e.root.scale.setScalar(e.visualScale || 1);
+      if (sl.state === 'shieldCharge') {
+        if (!e.tell.active || e.stateName !== 'shieldCharge') { this.tokens.reset(); e.wantToken('heavy', 99); e.brain.set('shieldCharge', ctx); }
+        this._pinTell(e, 0.58, 0.72);
+      } else if (sl.state === 'bolt') {
+        if (!e.tell.active || e.stateName !== 'bolt') { e.wantToken('ranged', 99); e.brain.set('bolt', ctx); }
+        this._pinTell(e, 0.34, 0.48);
+      } else if (e.committed || e.tell.active) {
+        // nobody else winds up in this frame: two tells is one blob
+        if (e.tell.active) e.endTell(false);
+        e.committed = false;
+      }
+    }
+    // the elite's affix ring: VFX.clear() ran on capture.state after the
+    // spawn, so announce it again once the frame is live
+    if (!cap.elited && cap.elite && !cap.elite.dead) { cap.elited = true; ctx.events.emit('enemy.elite', { entity: cap.elite, affix: cap.elite.elite, pos: cap.elite.position }); }
+  }
+  /** keep a tell's progress cycling inside [lo, hi] so the sweep reads mid-wind-up */
+  _pinTell(e, lo, hi) {
+    if (!e.tell.active) return;
+    if (hi <= lo || e.tell.k > hi) { e.tell.t = e.tell.dur * lo; e.tell.k = lo; if (e._tellHandle) { e._tellHandle.t = e._tellHandle.dur * lo; e._tellHandle.u.uK.value = lo; } }
   }
 
   /**
@@ -355,9 +386,14 @@ export class EnemyManager {
           const s = wa + wb || 1;
           a.position.x -= ux * push * (wa / s) * 2; a.position.z -= uz * push * (wa / s) * 2;
           b.position.x += ux * push * (wb / s) * 2; b.position.z += uz * push * (wb / s) * 2;
+          a._relaxed = true; b._relaxed = true;
         }
       }
     }
+    // a separation push is the one move that bypassed world.collide(): it could
+    // leave a body inside a column plinth or past the rim until its next step
+    const W = this.ctx.world;
+    if (W && W.collide) for (let i = 0; i < n; i++) { const e = L[i]; if (e._relaxed) { e._relaxed = false; W.collide(e.position, e.radius + 0.28); } }
   }
 
   lateUpdate(alpha, ctx) {
@@ -368,7 +404,7 @@ export class EnemyManager {
   get boss() { for (const e of this.list) if (e.def.boss) return e; return null; }
 
   clear() {
-    this._capMode = null; this._capStar = null; this._capSecond = null;
+    this._cap = null;
     for (const e of this.all) if (e.root.visible) { e.despawn(); this.ctx.combat?.unregister?.(e); }
     this.list.length = 0;
     this.tokens.reset();
@@ -389,54 +425,58 @@ export class EnemyManager {
   }
 
   /**
-   * §5 combat: 4–6 enemies alive and ENGAGED, one mid-telegraph. Deterministic
-   * placement in a ring around the hero, then the sim is stepped so the AI is
-   * genuinely in its states rather than posed.
+   * §5 combat: 4-6 enemies alive and ENGAGED, one mid-telegraph, none on top
+   * of the hero. Authored in the CAMERA's basis (up = away from the lens,
+   * right = across the frame, see vfx/index.js _setupBurst) so every body
+   * lands where the 'combat' pose can see it:
+   *   brute        right, mid shield-charge — the LANE tell, aimed at the hero
+   *   hexer        up-screen at 6 m — its bolt lane crosses the frame
+   *   riftstalker  the ELITE, affix ring under it
+   *   hound/lancer/shade on their surround slots at 2.6-3.8 m
+   * Bodies are then HELD on those slots every step (see _holdCaptureTell)
+   * instead of being simulated into a pile: round 1 stepped 96 frames of live
+   * AI here and the brute finished standing on the player.
    */
   setupCaptureCombat(ctx, args) {
     this.clear();
-    const p = ctx.player ? ctx.player.position : new THREE.Vector3();
+    const P = ctx.player;
+    const p = P ? P.position : new THREE.Vector3();
     const depth = (args && args.depth) ?? 3;
-    const plan = (args && args.plan) || ['brute', 'hexer', 'hound', 'lancer', 'riftstalker', 'oracle'];
-    // ring tuned to the 'combat' capture pose (distance 12.6, fov 36): any
-    // wider and half the roster falls outside the frame the critic reads.
-    const R = 5.4;
-    for (let i = 0; i < plan.length; i++) {
-      const a = -0.55 + (i / plan.length) * TAU * 0.86;
-      const r = R + ((i % 3) - 1) * 0.95;
-      // hpMul: the harness steps 2s of real simulation AFTER this setup runs,
-      // during which the player's frozen attack pose keeps connecting. Without
-      // it half the roster is dead before the shutter opens and the 'combat'
-      // frame shows an empty room, which is exactly the failure the shot list
-      // already called out once.
-      const e = this.spawn(plan[i], { x: p.x + Math.cos(a) * r, z: p.z + Math.sin(a) * r }, { depth, minPlayerDist: 4.2, wave: 1, hpMul: 30 });
-      if (e) { e.spawnGrace = 0; e.root.scale.setScalar(1); e.perc.aware = true; e.perc._init = true; e.perc.aimX = p.x; e.perc.aimZ = p.z; }
+    const ux = -0.7071, uz = -0.7071, rx = 0.7071, rz = -0.7071;
+    const at = (up, right) => ({ x: p.x + ux * up + rx * right, z: p.z + uz * up + rz * right });
+    const plan = (args && args.plan) || null;
+    const slots = plan
+      ? plan.map((kind, i) => ({ kind, ...at(2.2 + (i % 2) * 1.4, ((i - (plan.length - 1) / 2) * 2.2)) }))
+      : [
+        // the boot chamber's cover columns stand up-screen of the hero, so
+        // nothing that has to be READ (the lanes, the affix ring) goes there
+        { kind: 'brute', ...at(-0.3, 3.9), state: 'shieldCharge' },   // right, level: lane runs left across open floor
+        { kind: 'hexer', ...at(3.2, 5.4), state: 'bolt' },            // up-right, clear of the columns
+        { kind: 'riftstalker', ...at(-2.5, -2.1), elite: 'swift' },   // down-left: the affix ring on open floor
+        { kind: 'hound', ...at(0.8, -3.6) },
+        { kind: 'lancer', ...at(2.6, -3.3) },
+        { kind: 'shade', ...at(-2.1, 2.3) },
+      ];
+    for (const sl of slots) {
+      // hpMul: the harness steps 2 s of real simulation after this runs, and
+      // the player's frozen swing keeps connecting; without it half the roster
+      // is dead before the shutter opens
+      const e = this.spawn(sl.kind, { x: sl.x, z: sl.z }, { depth, minPlayerDist: 2.3, wave: 1, hpMul: 30, elite: sl.elite || null, silent: true });
+      if (!e) continue;
+      sl.x = e.position.x; sl.z = e.position.z; sl.e = e;
+      e.spawnGrace = 0; e.root.scale.setScalar(e.visualScale || 1);
+      e.perc.aware = true; e.perc._init = true; e.perc.aimX = p.x; e.perc.aimZ = p.z;
+      e.attackCd = 9;
+      e.snapFace(p.x - e.position.x, p.z - e.position.z);
     }
-    // settle the fight, then guarantee exactly one enemy is at the peak of its
-    // tell — the frame has to answer "who is about to attack" instantly.
-    for (let i = 0; i < 96; i++) this.update(1 / 60, ctx);
-    this._capMode = 'combat';
-    let star = this.list.find(e => e.kind === 'brute') || this.list[0];
-    this._capStar = star;
-    this._capSecond = this.list.find(e => e.kind === 'hexer');
-    if (star) {
-      this.tokens.reset();
-      star.attackCd = 0;
-      star.stagger = 0;
-      star.brain.set('windup', ctx);
-      if (!star.tell.active) {
-        star.telegraph('heavy', 0.72, { shape: 'arc', radius: 3.4, arc: 118, follow: true, color: star.tellColor });
-      }
-      star.tell.t = star.tell.dur * 0.72;
-      star.tell.k = 0.72;
-      if (star._tellHandle) { star._tellHandle.t = star._tellHandle.dur * 0.72; star._tellHandle.u.uK.value = 0.72; }
-    }
-    // a second tell at low progress on the caster so the frame shows the RANGE
-    const hex = this.list.find(e => e.kind === 'hexer');
-    if (hex && !hex.tell.active) {
-      hex.brain.set('cast', ctx);
-      hex.tell.t = hex.tell.dur * 0.30; hex.tell.k = 0.30;
-      if (hex._tellHandle) { hex._tellHandle.t = hex._tellHandle.dur * 0.30; hex._tellHandle.u.uK.value = 0.30; }
+    this._cap = { slots, t: 0, elite: slots.find(s => s.elite)?.e || null, elited: false };
+    // a few steps so the bodies settle into their gait, then pin the tells
+    for (let i = 0; i < 8; i++) this.update(1 / 60, ctx);
+    for (const sl of slots) {
+      const e = sl.e; if (!e || e.dead) continue;
+      if (sl.state === 'shieldCharge') { this.tokens.reset(); e.wantToken('heavy', 99); e.brain.set('shieldCharge', ctx); this._pinTell(e, 0.58, 0); }
+      else if (sl.state === 'bolt') { e.wantToken('ranged', 99); e.brain.set('bolt', ctx); this._pinTell(e, 0.34, 0); }
+      else e.brain.set(e.def.brain.states.circle ? 'circle' : (e.def.brain.initial || 'idle'), ctx);
     }
     return this.list;
   }

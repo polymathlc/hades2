@@ -749,7 +749,7 @@ export class WeaponRuntime {
       const col = w.palette.glow || w.palette.body;
       this.ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x, 0.06, A.position.z), { radius: 1.25, color: col, life: 0.20 });
       this.ctx.audio?.sfx?.('charge.full', { pos: A.position, gain: 0.35, pitch: 1.5 });
-      this.ctx.events.emit('weapon.perfectChain', { weapon: this.weaponId, step: s.name, actor: A, bonus: pc.bonus, streak: this.chainStreak });
+      this.ctx.events.emit('weapon.perfectChain', { weapon: this.weaponId, step: s.name, actor: A, bonus: pc.bonus, streak: this.chainStreak, color: this.weapon.palette.body, reach: (s.hitbox && (s.hitbox.radius || s.hitbox.length || (s.hitbox.halfLength ? s.hitbox.halfLength * 2 : 0))) || 2.2 });
     }
   }
 
@@ -766,7 +766,7 @@ export class WeaponRuntime {
     if (dashBonus) A._boonPostDash = false;
     // timing pays: the perfect-chain bonus and the shield's parry riposte
     let timingMul = 1 + (this.stepBonus || 0);
-    if (slot === 'attack' && this._riposte > 0) { timingMul *= 1 + this._riposte; this._riposte = 0; this._riposteT = 0; this.ctx.events.emit('weapon.riposte', { weapon: this.weaponId, actor: A }); }
+    if (slot === 'attack' && this._riposte > 0) { timingMul *= 1 + this._riposte; this._riposte = 0; this._riposteT = 0; this.ctx.events.emit('weapon.riposte', { weapon: this.weaponId, actor: A, color: this.weapon.palette.body }); }
     const damage = (s.damage || 0) * slotMul * forgeActionMul * (mods?.dmgMul || 1) * timingMul + (rider?.bonus || 0) + dashBonus;
     const forgeMul = mods?.forgeMul || 1;
     const color = rider?.color || (s.vfx && s.vfx.color) || this.weapon.palette.body;
@@ -876,7 +876,7 @@ export class WeaponRuntime {
         tag: this.weaponId + ':' + s.name,
       });
     }
-    this.ctx.events.emit('weapon.loose', { weapon: this.weaponId, charge: 0, full: false, actor: A, step: s.name, dashStrike, count: n });
+    this.ctx.events.emit('weapon.loose', { weapon: this.weaponId, charge: 0, full: false, actor: A, step: s.name, dashStrike, count: n, color: s.vfx?.color || this.weapon.palette.body, glow: this.weapon.palette.glow });
   }
 
   /** A real third action state, not a standing Attack pasted onto Dash. */
@@ -919,15 +919,20 @@ export class WeaponRuntime {
     const P = this.combat._v3a.set(A.position.x, v.y ?? 1.05, A.position.z);
     const D = this.combat._v3b.set(A.facing.x, 0, A.facing.y);
     const col = rider?.color || v.color || this.weapon.palette.body;
+    // every call carries the ARM: vfx/index.js owns a per-weapon shape table
+    // (crescent / heavy crescent / thrust streak / bash ring / tracer ...) so
+    // a bow frame and a spear frame stop being pixel-identical apart from the
+    // held prop
+    const weapon = this.weaponId;
     if (v.call === 'slash') {
-      ctx.vfx?.slash?.(P, D, { arc: v.arc ?? 130, radius: v.radius ?? 2.3, width: v.width ?? 0.44, color: col, glow: this.weapon.palette.glow, spin: v.spin });
+      ctx.vfx?.slash?.(P, D, { arc: v.arc ?? 130, radius: v.radius ?? 2.3, width: v.width ?? 0.44, color: col, glow: this.weapon.palette.glow, spin: v.spin, weapon, step: s.name });
     } else if (v.call === 'shockwave') {
-      ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x, 0.06, A.position.z), { radius: v.radius ?? 3, color: col, life: v.life ?? 0.4 });
+      ctx.vfx?.shockwave?.(this.combat._v3a.set(A.position.x, 0.06, A.position.z), { radius: v.radius ?? 3, color: col, life: v.life ?? 0.4, weapon });
     } else if (v.call === 'thrust') {
       // a spear thrust is a BEAM, not a crescent — the shape language has to
       // tell you the hitbox is a line before the damage number does
       const b = this.combat._v3b.set(A.position.x + A.facing.x * (v.length ?? 3.8), v.y ?? 1.08, A.position.z + A.facing.y * (v.length ?? 3.8));
-      ctx.vfx?.beam?.(P, b, { color: col, width: v.width ?? 0.30, life: 0.20 });
+      ctx.vfx?.beam?.(P, b, { color: col, width: v.width ?? 0.30, life: 0.20, weapon, thrust: true });
     }
     if (rider) this._playBoonFx(rider, P, D, slot);
   }
@@ -957,7 +962,7 @@ export class WeaponRuntime {
     const c = this.weapon.charge; if (!c) return;
     this.state = 'charge'; this.t = 0; this.charge = 0; this.fired = false; this._tier = 0;
     this.actor.onWeaponState?.('charge', c);
-    this.ctx.events.emit('weapon.charge.begin', { weapon: this.weaponId, actor: this.actor });
+    this.ctx.events.emit('weapon.charge.begin', { weapon: this.weaponId, actor: this.actor, color: this.weapon.palette.body });
   }
   _stepCharge(dt) {
     const c = this.weapon.charge;
@@ -971,13 +976,13 @@ export class WeaponRuntime {
       this._tier++;
       this.ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.06, this.actor.position.z), { radius: 0.8 + 0.3 * this._tier, color: c.tell?.color || '#ffe9a8', life: 0.18 });
       this.ctx.audio?.sfx?.('telegraph', { pos: this.actor.position, gain: 0.3, pitch: 1.2 + 0.25 * this._tier });
-      this.ctx.events.emit('weapon.charge.tier', { weapon: this.weaponId, actor: this.actor, tier: this._tier, of: c.tiers.length });
+      this.ctx.events.emit('weapon.charge.tier', { weapon: this.weaponId, actor: this.actor, tier: this._tier, of: c.tiers.length, color: this.weapon.palette.body, glow: this.weapon.palette.glow });
     }
     if (this.charge >= 1 && !this._fullPing) {
       this._fullPing = true;
       this.ctx.vfx?.shockwave?.(this.combat._v3a.set(this.actor.position.x, 0.06, this.actor.position.z), { radius: 1.5, color: c.tell?.color || '#ffe9a8', life: 0.26 });
       this.ctx.audio?.sfx?.('charge.full', { pos: this.actor.position });
-      this.ctx.events.emit('weapon.charge.full', { weapon: this.weaponId, actor: this.actor });
+      this.ctx.events.emit('weapon.charge.full', { weapon: this.weaponId, actor: this.actor, color: this.weapon.palette.body, glow: this.weapon.palette.glow });
     }
     if (!this.holding && this.t >= c.windup + c.minHold) this._releaseCharge();
   }
@@ -1082,7 +1087,7 @@ export class WeaponRuntime {
       { count: full ? 22 : 9, color: col, speed: full ? 11 : 6, spread: 0.45, kind: 'chev', dir: this.combat._v3b.set(A.facing.x, 0.12, A.facing.y) });
     if (rider) this._playBoonFx(rider, this.combat._v3a.set(A.position.x + A.facing.x, 1.1, A.position.z + A.facing.y), this.combat._v3b.set(A.facing.x, 0.12, A.facing.y), slot);
     if (slot === 'special' && rider?.deflect) this.combat.activateDeflect(A, rider.deflect, rider.color);
-    this.ctx.events.emit('weapon.loose', { weapon: this.weaponId, charge: k, full, actor: A });
+    this.ctx.events.emit('weapon.loose', { weapon: this.weaponId, charge: k, full, actor: A, color: this.weapon.palette.body, glow: this.weapon.palette.glow });
     if (full) this.ctx.engine?.slowmo?.(0.55, 0.10);
   }
 

@@ -150,10 +150,18 @@ export function makeMeleeBrain(o = {}) {
           a.committed = true;
           a.play(o.windupClip || 'attack1', { fade: 0.06, restart: true, speed: (a.visual.duration(o.windupClip || 'attack1') || 0.46) / (WIND + STRIKE + 0.18) });
           const p = a.perc;
-          a.snapFace(p.dirX, p.dirZ);
+          // LEAD THE TARGET. The tell is aimed at the lagged belief plus a
+          // short projection of the hero's current velocity, so a hero who
+          // keeps strolling through the wind-up is still inside the wedge
+          // when it lands — walking is not a dodge; the dash is.
+          const pl = ctx.player, lead = o.lead ?? 0.22;
+          const lx = p.aimX + (pl?.velocity?.x || 0) * lead - a.position.x;
+          const lz = p.aimZ + (pl?.velocity?.z || 0) * lead - a.position.z;
+          const ll = Math.hypot(lx, lz) || 1;
+          a.snapFace(lx / ll, lz / ll);
           a.telegraph(o.tellKind || 'melee', WIND, {
             shape: o.tellShape || 'arc', radius: RANGE * 1.05, arc: ARC,
-            dirX: p.dirX, dirZ: p.dirZ, follow: true, color: a.tellColor,
+            dirX: a.facing.x, dirZ: a.facing.z, follow: true, color: a.tellColor,
           });
           if (o.onWindup) o.onWindup(a, ctx);
         },
@@ -290,7 +298,7 @@ export const SHADE = {
   },
   brain: makeMeleeBrain({
     standoff: 3.3, range: 2.35, arc: 104, windup: TELEGRAPH.lightMelee,
-    strike: 0.09, recover: 0.44, cooldown: 0.8, damage: 11, knock: 5.5,
+    strike: 0.09, recover: 0.44, cooldown: 0.8, damage: 10, knock: 5.5,
     token: 'melee', runSpeed: 1.12, surround: 3.3,
     // from the second depth a shade can swing twice: a quick follow-up with
     // a 0.30s tell, so "dash in the instant it swings" is no longer free
@@ -579,13 +587,20 @@ export const BRUTE = {
           const p = a.perc;
           a.snapFace(p.dirX, p.dirZ);
           a.mem.cx = p.dirX; a.mem.cz = p.dirZ;
-          a.telegraph('shield-charge', TELEGRAPH.shieldCharge, { shape: 'line', radius: 9.0, inner: 0.19, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: '#ffb03c' });
+          // the lane is as long as the charge: it runs the distance the brute
+          // committed at plus a body-length of over-run, never a fixed 0.55 s
+          // that stops short of a hero standing still at 9 m
+          a.mem.reach = Math.min(11.0, Math.max(5.0, p.dist + 1.8));
+          a.mem.trav = 0;
+          a.telegraph('shield-charge', TELEGRAPH.shieldCharge, { shape: 'line', radius: a.mem.reach, inner: 0.19, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: '#ffb03c' });
         },
         update(a, dt, ctx) {
           a.steer.begin(a.def.speed * 0.1).separation(a.mgr.list, 1.2);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
           a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 2.0);
           a.mem.cx = a.facing.x; a.mem.cz = a.facing.z;
+          a.mem.reach = Math.min(11.0, Math.max(5.0, a.perc.dist + 1.8));
+          if (a._tellHandle) { a._tellHandle.r = a.mem.reach; a._tellHandle.mesh.scale.set(a.mem.reach, 1, a.mem.reach); }
           if (a.tell.k >= 1) return 'shieldChargeGo';
         },
       },
@@ -595,11 +610,12 @@ export const BRUTE = {
           a.steer.begin(a.def.speed * 4.2).add(a.mem.cx, a.mem.cz, 1).separation(a.mgr.list, 0.4);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false, accel: 120 });
           a.mgr.dustAt(ctx, a.position, '#ffb03c');
+          a.mem.trav += (a.speedNow || 0) * dt;
           if (!a.mem.hit && ctx.player && inDisc(a.position.x, a.position.z, ctx.player, 1.45)) {
             a.mem.hit = true;
             a.strikeCone(ctx, { range: 2.2, arc: 200, damage: 20, knock: 13, color: '#ffb03c', width: 0.5, shake: 0.14 });
           }
-          if (a.brain.t > 0.55) return 'chargeRecover';
+          if (a.mem.trav >= (a.mem.reach || 6.5) || a.brain.t > 1.15) return 'chargeRecover';
         },
       },
       // the crash: the brute over-runs, plants, and is open from BEHIND for

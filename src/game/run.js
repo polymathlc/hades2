@@ -32,6 +32,35 @@
 // derived seed is a pure function of (runSeed, depth). Two runs with the same
 // seed are the same run, which is what makes the capture harness and the
 // critic loop reproducible.
+//
+// ── PUBLIC API FOR THE UI (stable; the Pact screen and the summary plates
+//    are built against exactly this) ───────────────────────────────────────
+//
+//   run.state            'home' | 'playing' | 'cleared' | 'choosing' |
+//                        'transition' | 'dead' | 'victory'
+//   run.restart()        leave the death plate for the Crossroads. NOTHING
+//                        calls this on a timer any more: the death and victory
+//                        summaries persist until the UI's Retry calls
+//                        ctx.run.restart() (death) or ctx.run.enterHome()
+//                        (victory). `run.deathT` / `run.victoryT` count the
+//                        seconds the plate has been up, for the UI's own use.
+//   run.rerolls          boon-reroll charges left this run. Granted at
+//                        startRun() (RUN_REROLLS, plus one per Mirror rank of
+//                        'darkForesight' if that talent exists); the boon UI
+//                        reads ctx.run.rerolls, spends one per reroll and
+//                        emits 'boon.rerolled' {remaining}, which this file
+//                        mirrors back into run.rerolls.
+//   run.modifiers        Set<string> of active Pact ids (see meta.js
+//                        RUN_MODIFIERS for id/name/heat/text).
+//   run.heat             sum of the active modifiers' heat.
+//   run.setModifier(id, on) -> bool   toggle a Pact at the Crossroads only
+//                        (state === 'home'); persists through meta, re-syncs
+//                        run.modifiers/run.heat and emits 'run.modifiers'
+//                        {modifiers: [...ids], heat}.
+//   events in:  'pact.toggle' {id, on}   the UI's way to call setModifier
+//               'run.start' / 'run.abandon'
+//   events out: 'run.modifiers', 'run.started', 'run.ended', 'run.victory',
+//               'run.roomCleared', 'run.transition', 'run.rerolls' {rerolls}
 // ---------------------------------------------------------------------------
 
 import { GOD_INFO, GOD_KEYS } from './boons.js';
@@ -55,6 +84,9 @@ export const TRIALS = Object.freeze({
   ambush: { name: 'Ambush', text: 'Reinforcements will arrive mid-fight. Bonus Obols on the clear.', obols: 30, darkness: 0 },
   elite: { name: 'Elite', text: 'A second elite stalks this chamber. Bonus Darkness on the clear.', obols: 12, darkness: 1 },
 });
+
+/** boon-reroll charges every descent starts with */
+export const RUN_REROLLS = 1;
 
 export class RunState {
   constructor() {
@@ -85,6 +117,20 @@ export class RunState {
     this.heat = 0;
     this.trial = null;          // the live chamber's trial, or null
     this.nextTrial = undefined; // forced by a door reward; undefined = roll it
+    this.rerolls = 0;           // boon-reroll charges left (see the API note)
+  }
+  get deathT() { return this._deathT; }
+  get victoryT() { return this._victoryT; }
+
+  /** charges a fresh descent is granted: a fixed one, plus the Mirror's foresight */
+  rerollsForRun() {
+    const rank = this.meta?.mirrorRank ? (this.meta.mirrorRank('darkForesight') || 0) : 0;
+    return RUN_REROLLS + rank;
+  }
+  grantRerolls(n = this.rerollsForRun()) {
+    this.rerolls = Math.max(0, n | 0);
+    this.ctx?.events?.emit?.('run.rerolls', { rerolls: this.rerolls });
+    return this.rerolls;
   }
 
   async init(ctx) {
@@ -112,6 +158,7 @@ export class RunState {
     ctx.events.on('run.start', () => { if (this.state === 'home') this.startRun(); });
     ctx.events.on('run.abandon', () => this.enterHome());
     ctx.events.on('pact.toggle', (e) => this.setModifier(e?.id, e?.on));
+    ctx.events.on('boon.rerolled', (e) => { this.rerolls = Math.max(0, (e && e.remaining != null) ? e.remaining | 0 : this.rerolls - 1); });
     ctx.events.on('home.altarClosed', () => this._home?.releaseAltar?.());
     ctx.events.on('capture.state', ({ name, args }) => {
       if (name === 'home') {
@@ -209,6 +256,7 @@ export class RunState {
     this._deathT = 0;
     this._victoryT = 0;
     this.obols = 0;
+    this.rerolls = 0;
     this.nectar = this.meta?.nectar || 0;
     this.selectedWeapon = null;
     this.selectedCharacter = ctx.player?.characterId || this.selectedCharacter || 'zagreus';
@@ -277,6 +325,7 @@ export class RunState {
     ctx.ui?.clearRunBoons?.();
     ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
     this._syncModifiers();
+    this.grantRerolls();
     this.nextTrial = undefined;
     this.biome = 'tartarus';
     this.enterRoom(0, 'tartarus');
@@ -563,7 +612,11 @@ export class RunState {
     this.ctx.ui?.toast?.('You have died', { color: '#c81d3c' });
   }
 
-  /** Death and abandon always return to the Crossroads before another run. */
+  /**
+   * Death and abandon always return to the Crossroads before another run.
+   * Called by the UI's Retry — never by a timer: the summary plate is the
+   * player's to read for as long as they like.
+   */
   restart() {
     return this.enterHome();
   }
@@ -586,8 +639,7 @@ export class RunState {
       if (this._drops[i]?.update?.(dt)) this._drops.splice(i, 1);
     }
     if (this.state === 'victory') {
-      this._victoryT += dt;
-      if (this._victoryT > 9.0) this.enterHome();
+      this._victoryT += dt;          // the plate persists; the UI leaves it
       return;
     }
     if (this._pending) {
@@ -597,8 +649,7 @@ export class RunState {
       return;
     }
     if (this.state === 'dead') {
-      this._deathT += dt;
-      if (this._deathT > 4.5) this.restart();
+      this._deathT += dt;            // no auto-restart: see restart()
     }
   }
 }

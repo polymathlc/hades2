@@ -239,7 +239,8 @@ export const HOUND = {
             .orbit(p.aimX, p.aimZ, 4.4 + 0.7 * Math.sin(a.id * 1.7), a.orbitDir, 0.7, 1.15)
             .separation(a.mgr.list, 2.2).avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ, turn: 13 });
-          if (a.attackCd <= 0 && p.dist < 7.5 && a.wantToken('melee', -p.dist + 0.5)) return 'crouch';
+          // commit only from inside the lunge's real reach (a 6.4 m lane)
+          if (a.attackCd <= 0 && p.dist < 5.8 && a.wantToken('melee', -p.dist + 0.5)) return 'crouch';
         },
       },
       // the LUNGE tell: a hard crouch and a lane drawn on the floor
@@ -249,6 +250,8 @@ export const HOUND = {
           const p = a.perc;
           a.snapFace(p.dirX, p.dirZ);
           a.mem.lungeX = p.dirX; a.mem.lungeZ = p.dirZ;
+          a.mem.reach = Math.min(6.4, Math.max(3.0, p.dist + 1.3));
+          a.mem.trav = 0;
           a.telegraph('lunge', TELEGRAPH.dash, {
             shape: 'line', radius: 6.4, inner: 0.14, dirX: p.dirX, dirZ: p.dirZ,
             follow: true, color: '#ff5a3c',
@@ -259,6 +262,7 @@ export const HOUND = {
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
           a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 7);
           a.mem.lungeX = a.facing.x; a.mem.lungeZ = a.facing.z;
+          a.mem.reach = Math.min(6.4, Math.max(3.0, a.perc.dist + 1.3));
           if (a.tell.k >= 1) return 'lunge';
         },
       },
@@ -268,13 +272,16 @@ export const HOUND = {
           const s = a.def.speed * 2.35;
           a.steer.begin(s).add(a.mem.lungeX, a.mem.lungeZ, 1).separation(a.mgr.list, 0.8);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false, accel: 90 });
+          a.mem.trav += (a.speedNow || 0) * dt;
           if (!a.mem.hit && a.brain.t > 0.04) {
-            if (inDisc(a.position.x, a.position.z, ctx.player, 1.05)) {
+            if (inDisc(a.position.x, a.position.z, ctx.player, 1.15)) {
               a.mem.hit = true;
-              a.strikeCone(ctx, { range: 1.5, arc: 160, damage: 9, knock: 6, color: '#ff8c1a', width: 0.22, shake: 0.04 });
+              a.strikeCone(ctx, { range: 1.6, arc: 170, damage: 8, knock: 6, color: '#ff8c1a', width: 0.22, shake: 0.04 });
             }
           }
-          if (a.brain.t > 0.30) return 'recover';
+          // the lunge runs the lane it drew, not a stopwatch: it ends when it
+          // has covered the distance it committed at (or hit), 0.5 s at most
+          if (a.mem.hit || a.mem.trav >= (a.mem.reach || 4.5) || a.brain.t > 0.50) return 'recover';
         },
       },
       recover: {

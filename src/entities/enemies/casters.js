@@ -169,7 +169,7 @@ export const HEXER = {
           a.play('cast', { fade: 0.08, restart: true, speed: 0.6 / TELEGRAPH.bolt });
           const p = a.perc;
           a.snapFace(p.dirX, p.dirZ);
-          a.telegraph('bolt', TELEGRAPH.bolt, { shape: 'line', radius: 11, inner: 0.10, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: a.tellColor, alpha: 0.8 });
+          a.telegraph('bolt', TELEGRAPH.bolt, { shape: 'line', radius: Math.min(13, Math.max(8, p.dist + 3)), inner: 0.10, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: a.tellColor, alpha: 0.8 });
         },
         update(a, dt, ctx) {
           const p = a.perc;
@@ -183,10 +183,15 @@ export const HEXER = {
         enter(a, ctx) {
           a.endTell(true);
           const p = a.perc;
-          const dx = p.aimX - a.position.x, dz = p.aimZ - a.position.z;
+          // released down the lane at the lagged belief, led by a quarter
+          // second of the hero's own velocity; the seek is stronger than it
+          // was (1.3 -> 2.2) so a hero who merely strolls is found, and still
+          // weak enough that a dash across the lane breaks it
+          const pl = ctx.player;
+          const dx = p.aimX + (pl?.velocity?.x || 0) * 0.25 - a.position.x, dz = p.aimZ + (pl?.velocity?.z || 0) * 0.25 - a.position.z;
           ctx.combat?.enemyProjectile?.(a, {
             x: a.position.x + a.facing.x * 0.9, y: 1.55, z: a.position.z + a.facing.z * 0.9, dx, dz,
-            kind: 'homing', homing: 1.3, target: ctx.player, speed: 13.5, radius: 0.32, life: 2.8,
+            kind: 'homing', homing: 2.2, target: ctx.player, speed: 14.5, radius: 0.36, life: 2.6,
             damage: 15, type: 'arcane', knockback: 6, hitstop: 30, color: a.tellColor, size: 1.15, coreSize: 1.1, tag: 'enemy:hex-bolt',
           });
           ctx.vfx?.burst?.(new THREE.Vector3(a.position.x + a.facing.x * 0.9, 1.6, a.position.z + a.facing.z * 0.9), { count: 12, color: a.tellColor, speed: 6, spread: 0.5, kind: 'rune' });
