@@ -12,3 +12,6 @@ desktop/app/
 release/
 
 .standalone-build/
+
+# subagent worktrees
+.claude/worktrees/
