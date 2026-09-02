@@ -72,7 +72,7 @@ export const GRADES = {
     // grade taking it back out. Kept a little under §15's stated 1.10/1.50/1.30
     // floor because the floor is darker this round and AgX's toe already leans on
     // chroma in the darks.
-    agxSat: 1.02,
+    agxSat: 0.98,
     // pivot 0.22 sat below the frame's median, so the S-curve could only ever
     // push pixels down and there was nothing on its lower arm to bite on.
     contrast: 0.68,
@@ -112,10 +112,10 @@ export const GRADES = {
     // 0.86 was desaturating the ONE cool element in the frame (the mandated
     // #5fd0ff rim lives in the shadow band by construction — see painterly.js
     // shBoost). Hold chroma in the darks; the ink is a HUE, not a grey.
-    satShadow: 1.10,
+    satShadow: 1.00,
     // measured meanSaturation was 0.68 against a §7 target of 0.28-0.60: jewel
     // tones, not neon. The chroma belongs in the PALETTE, not in the grade.
-    satMid:    1.32,
+    satMid:    1.06,
     // ROUND-4: A PRESCRIPTION THAT DID NOT SURVIVE THE IMAGE. A review round
     // named this as the thing bleaching the rim ("satHigh 0.76 is desaturating
     // the highlights the rim lives in"). Built at 0.88 and 0.94 and looked at:
@@ -126,7 +126,7 @@ export const GRADES = {
     // from 0.61 to 0.65 against a §7 ceiling of 0.60. The chroma the frame was
     // missing was never in the top band. Left at 0.76; the rim is fixed where
     // it is delivered, in painterly.js shBoost.
-    satHigh:   1.12,
+    satHigh:   0.96,
     shadowMix: 0.32, highMix: 0.14, tintStrength: 0.48,
     hueLobes: [
       // narrowed + strengthened: 24% of the frame's chroma was sitting in the
