@@ -6,6 +6,7 @@ const URL_BASE = process.env.EREBUS_URL || 'http://localhost:4173/';
 const OUT = process.argv[2] || 'shots/latest';
 const ONLY = process.argv[3] ? process.argv[3].split(',') : null;
 const W = +(process.env.SHOT_W||1600), H = +(process.env.SHOT_H||900);
+const T = +(process.env.SHOT_TIMEOUT||300000); // page load / ready timeout; swiftshader under load needs headroom
 
 const list = JSON.parse(fs.readFileSync(new URL('./shotlist.json', import.meta.url)));
 fs.mkdirSync(OUT, { recursive:true });
@@ -15,13 +16,13 @@ const b = await chromium.launch({ executablePath: CHROME, args:[
   '--ignore-gpu-blocklist','--enable-webgl','--no-sandbox','--disable-dev-shm-usage',
   '--force-color-profile=srgb','--disable-lcd-text','--hide-scrollbars','--mute-audio']});
 const pg = await b.newPage({ viewport:{width:W,height:H}, deviceScaleFactor:1 });
-pg.setDefaultTimeout(180000);
+pg.setDefaultTimeout(T);
 const errors=[];
 pg.on('console', m=>{ if(m.type()==='error') errors.push(m.text()); });
 pg.on('pageerror', e=>errors.push('PAGEERROR: '+e.message));
 
-await pg.goto(URL_BASE+'?capture=1&seed=1337', { waitUntil:'load', timeout:90000 });
-try { await pg.waitForFunction('window.__EREBUS_READY===true', { timeout:90000 }); }
+await pg.goto(URL_BASE+'?capture=1&seed=1337', { waitUntil:'load', timeout:T });
+try { await pg.waitForFunction('window.__EREBUS_READY===true', { timeout:T }); }
 catch(e){ const t = await pg.evaluate(()=>document.body.innerText.slice(0,2000)).catch(()=>'');
   console.log(JSON.stringify({fatal:'capture driver never became ready', body:t, errors},null,1)); await pg.screenshot({path:path.join(OUT,'00_FATAL.png')}); await b.close(); process.exit(2); }
 
@@ -35,8 +36,8 @@ for(const s of list.shots){
   // carved-relief work captured a UI overlay instead, and the two shipped as near-duplicates.
   // A critic caught this, not the harness. Reload between shots so every scenario starts clean.
   if (dirtyState) {
-    await pg.goto(URL_BASE+'?capture=1&seed=1337', { waitUntil:'load', timeout:120000 });
-    await pg.waitForFunction('window.__EREBUS_READY===true', { timeout:120000 });
+    await pg.goto(URL_BASE+'?capture=1&seed=1337', { waitUntil:'load', timeout:T });
+    await pg.waitForFunction('window.__EREBUS_READY===true', { timeout:T });
     dirtyState = false;
   }
   if (s.state) dirtyState = true;
