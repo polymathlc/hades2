@@ -6,8 +6,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { TAU } from '../../core/math.js';
+import { tubeGeo } from '../rig.js';
 import { inDisc } from '../ai.js';
 import { charMaterial, paintGeo, tickEnrage } from './base.js';
+import * as PR from './props.js';
 
 const MINOTAUR_PALETTE = {
   skin: '#75412f', skinDeep: '#2c1716', hair: '#20151a', hairTip: '#5d3428',
@@ -63,6 +65,7 @@ function attach(a, key, boneName, factory, ctx, transform) {
 }
 
 function buildBullHead(ctx) {
+  const P = MINOTAUR_PALETTE;
   const group = new THREE.Group();
   const skull = new THREE.SphereGeometry(0.43, 16, 12); skull.scale(0.96, 1.08, 0.92); skull.translate(0, 0.08, 0.05);
   const muzzle = new THREE.SphereGeometry(0.30, 14, 10); muzzle.scale(1.05, 0.62, 1.22); muzzle.translate(0, -0.13, 0.31);
@@ -70,15 +73,16 @@ function buildBullHead(ctx) {
   paintGeo(muzzle, '#8f5a43', { y0: -0.4, y1: 0.3, aoLow: 0.52, top: '#c28363' });
   group.add(mesh(skull, ctx, 'hair', 'minotaur'), mesh(muzzle, ctx, 'skin', 'minotaur'));
 
-  const hornParts = [];
-  for (const side of [-1, 1]) {
-    const horn = new THREE.ConeGeometry(0.16, 1.12, 9);
-    horn.rotateZ(side * 1.04); horn.rotateY(side * 0.20); horn.translate(side * 0.66, 0.34, -0.02); hornParts.push(horn);
-    const ear = new THREE.ConeGeometry(0.15, 0.46, 5);
-    ear.rotateZ(side * 1.38); ear.translate(side * 0.44, 0.06, 0.00); hornParts.push(ear);
+  // HORNS with growth rings, sweeping out, forward and up; ears as vanes; a
+  // brass nose ring — the three things that say BULL from a thumbnail.
+  const parts = [];
+  for (const s of [-1, 1]) {
+    parts.push(PR.horn({ from: [s * 0.30, 0.30, -0.02], ctrl: [s * 0.86, 0.34, -0.06], to: [s * 1.02, 0.98, 0.16], r0: 0.14, ripples: 12, n: 14 }));
+    parts.push(PR.feather({ from: [s * 0.36, 0.10, -0.02], to: [s * 0.78, -0.08, -0.12], w: 0.11, bow: 0.06, n: 5 }));
   }
-  const horns = mergeGeometries(hornParts, false);
-  paintGeo(horns, '#d7c095', { y0: -0.2, y1: 1.1, aoLow: 0.58, top: '#fff5d5' });
+  parts.push(PR.xf(PR.ring({ y: 0, R: 0.10, th: 0.020, hh: 0.030, seg: 18 }), { p: [0, -0.30, 0.56], r: [Math.PI / 2, 0, 0] }));
+  const horns = PR.tint(PR.merge(parts), (x, y, z) => (z > 0.5 ? P.metal : (y > 0.7 ? '#fff5d5' : (Math.abs(x) > 0.6 ? '#d7c095' : '#7a5a44'))),
+    { y0: -0.2, y1: 1.1, aoLow: 0.58 });
   group.add(mesh(horns, ctx, 'metal', 'minotaurhorn'));
 
   for (const side of [-1, 1]) {
@@ -91,20 +95,24 @@ function buildBullHead(ctx) {
 }
 
 function buildLabrys(ctx) {
+  // THE LABRYS: two bevelled crescent blades on a chamfered langet collar, a
+  // top spike, and a wrapped haft with iron ferrules.
+  const P = MINOTAUR_PALETTE;
   const group = new THREE.Group();
-  const haft = new THREE.CylinderGeometry(0.07, 0.09, 2.85, 9); haft.translate(0, 0.86, 0);
-  paintGeo(haft, '#3a231c', { y0: -0.7, y1: 2.4, aoLow: 0.44, top: '#875334' });
+  const haft = PR.merge([
+    PR.tint(PR.shaft({ y0: -0.56, y1: 2.52, r0: 0.092, r1: 0.070, radial: 9 }), '#3a231c', { y0: -0.7, y1: 2.4, aoLow: 0.44 }),
+    PR.tint(PR.grip({ y0: -0.12, y1: 0.52, r: 0.102 }), PR.wrapped('#281616', '#140a0a', 9)),
+  ]);
   group.add(mesh(haft, ctx, 'hair', 'minotaurhaft'));
-
-  const blades = [];
+  const parts = [];
   for (const side of [-1, 1]) {
-    const blade = new THREE.ConeGeometry(0.50, 1.18, 4);
-    blade.rotateZ(side * Math.PI / 2); blade.rotateY(Math.PI / 4); blade.translate(side * 0.48, 2.18, 0); blades.push(blade);
+    parts.push(PR.tint(PR.xf(PR.axeHead({ R: 0.64, span: 1.80, depth: 0.080, rIn: 0.17, side }), { p: [0, 2.18, 0] }),
+      (x, y) => (Math.hypot(x, y - 2.18) > 0.56 ? P.bladeEdge : P.blade), { y0: 1.5, y1: 2.8, aoLow: 0.6 }));
   }
-  const collar = new THREE.CylinderGeometry(0.18, 0.18, 0.28, 10); collar.translate(0, 2.18, 0); blades.push(collar);
-  const steel = mergeGeometries(blades, false);
-  paintGeo(steel, '#9da8ad', { y0: 1.4, y1: 2.8, aoLow: 0.58, top: '#f4ffff' });
-  group.add(mesh(steel, ctx, 'metal', 'minotaurblade'));
+  parts.push(PR.tint(PR.ring({ y: 2.18, R: 0.17, th: 0.022, hh: 0.32, seg: 14 }), PR.chamfered(P.metalHot, P.metal, P.metalDeep)));
+  parts.push(PR.tint(PR.ring({ y: 1.94, R: 0.11, th: 0.012, hh: 0.05, seg: 12 }), P.metalDeep));
+  parts.push(PR.tint(PR.blade({ len: 0.42, w: 0.055, th: 0.055, profile: 'straight', base: [0, 2.42, 0], stations: 5, radial: 8 }), P.metalHot));
+  group.add(mesh(PR.merge(parts), ctx, 'metal', 'minotaurblade'));
   return group;
 }
 
@@ -127,57 +135,76 @@ function buildLionPelt(ctx) {
 }
 
 function buildClub(ctx) {
+  // olive-wood: a bark-ridged trunk with a swollen head and a ring of knots
   const group = new THREE.Group();
-  const trunk = new THREE.CylinderGeometry(0.15, 0.25, 2.75, 10); trunk.translate(0, 0.98, 0);
+  const trunk = tubeGeo([
+    { p: [0, -0.40, 0], r: 0.13 }, { p: [0, 0.60, 0], r: 0.15 }, { p: [0, 1.50, 0], r: 0.20 },
+    { p: [0, 2.10, 0], r: 0.27 }, { p: [0, 2.36, 0], r: 0.24 },
+  ], { radial: 12, capStart: 'round', capEnd: 'round', shape: (th) => 1 + 0.05 * Math.cos(th * 7) });
   const knots = [];
-  for (let i = 0; i < 5; i++) {
-    const a = i / 5 * TAU;
-    const knot = new THREE.SphereGeometry(0.12 + (i % 2) * 0.035, 8, 6);
-    knot.translate(Math.cos(a) * 0.19, 1.68 + i * 0.19, Math.sin(a) * 0.19); knots.push(knot);
+  for (let i = 0; i < 6; i++) {
+    const a = i / 6 * TAU;
+    knots.push(PR.gem(0.10 + (i % 2) * 0.03, [Math.cos(a) * 0.24, 1.66 + i * 0.13, Math.sin(a) * 0.24]));
   }
-  const geo = mergeGeometries([trunk, ...knots], false);
-  paintGeo(geo, '#6d4023', { y0: -0.5, y1: 2.8, aoLow: 0.42, top: '#bd8242' });
+  const geo = PR.tint(PR.merge([trunk, ...knots]), (x, y, z) => (Math.hypot(x, z) > 0.23 ? '#bd8242' : '#6d4023'), { y0: -0.5, y1: 2.8, aoLow: 0.42 });
   group.add(mesh(geo, ctx, 'hair', 'heraclesclub'));
   return group;
 }
 
 function buildBident(ctx) {
+  // THE BIDENT: two outward-bowed diamond-section tines off a chamfered
+  // collar, a crossbar, a wrapped grip and a sauroter foot.
+  const P = HADES_PALETTE;
   const group = new THREE.Group();
-  const shaft = new THREE.CylinderGeometry(0.065, 0.09, 3.25, 10); shaft.translate(0, 0.85, 0);
-  paintGeo(shaft, '#20162a', { y0: -0.9, y1: 2.6, aoLow: 0.40, top: '#76598b' });
-  const tips = [];
+  const shaft = PR.merge([
+    PR.tint(PR.shaft({ y0: -0.92, y1: 2.40, r0: 0.070, r1: 0.058, radial: 9 }), '#20162a', { y0: -0.9, y1: 2.6, aoLow: 0.40 }),
+    PR.tint(PR.grip({ y0: -0.16, y1: 0.46, r: 0.078 }), PR.wrapped('#1c1424', '#0b0810', 9)),
+  ]);
+  const parts = [];
   for (const side of [-1, 1]) {
-    const tine = new THREE.ConeGeometry(0.13, 0.82, 8); tine.translate(side * 0.22, 2.78, 0); tips.push(tine);
-    const hook = new THREE.ConeGeometry(0.075, 0.44, 7); hook.rotateZ(side * 0.42); hook.translate(side * 0.31, 2.47, 0); tips.push(hook);
+    parts.push(PR.tint(PR.blade({ len: 1.02, w: 0.058, th: 0.024, profile: 'straight', base: [side * 0.19, 2.40, 0], dir: [side * 0.10, 1, 0], across: [1, 0, 0], curve: side * 0.09, stations: 9 }),
+      PR.edged(P.blade, P.bladeEdge)));
   }
-  const collar = new THREE.TorusGeometry(0.25, 0.04, 8, 24); collar.rotateX(Math.PI / 2); collar.translate(0, 2.34, 0); tips.push(collar);
-  const head = mergeGeometries(tips, false);
-  paintGeo(head, '#a78648', { y0: 2.0, y1: 3.3, aoLow: 0.60, top: '#fff0a8' });
-  group.add(mesh(shaft, ctx, 'hair', 'hadesbident'), mesh(head, ctx, 'metal', 'hadesbident'));
+  parts.push(PR.tint(PR.crossguard({ y: 2.36, w: 0.56, r: 0.032, curl: -0.02 }), PR.chamfered(P.metalHot, P.metal, P.metalDeep)));
+  parts.push(PR.tint(PR.ring({ y: 2.28, R: 0.085, th: 0.014, hh: 0.10, seg: 14 }), PR.chamfered(P.metalHot, P.metal, P.metalDeep)));
+  parts.push(PR.tint(PR.gem(0.075, [0, 2.50, 0], [1, 1.5, 1]), P.metalHot));
+  parts.push(PR.tint(PR.blade({ len: 0.30, w: 0.05, th: 0.05, profile: 'straight', base: [0, -0.90, 0], dir: [0, -1, 0], stations: 5, radial: 8 }), P.metalDeep));
+  group.add(mesh(shaft, ctx, 'hair', 'hadesbident'), mesh(PR.merge(parts), ctx, 'metal', 'hadesbident'));
   return group;
 }
 
 function buildHadesCrown(ctx) {
-  const parts = [];
-  const band = new THREE.TorusGeometry(0.33, 0.045, 8, 28); band.rotateX(Math.PI / 2); parts.push(band);
+  const P = HADES_PALETTE;
+  const parts = [PR.ring({ y: 0, R: 0.33, th: 0.020, hh: 0.075, seg: 30 })];
   for (const side of [-1, 1]) {
-    const horn = new THREE.ConeGeometry(0.09, 0.62, 7); horn.rotateZ(side * 0.72); horn.translate(side * 0.35, 0.27, 0); parts.push(horn);
+    parts.push(PR.horn({ from: [side * 0.24, 0.05, -0.04], ctrl: [side * 0.50, 0.40, -0.10], to: [side * 0.42, 0.78, -0.02], r0: 0.070, ripples: 9, n: 11 }));
   }
-  const geo = mergeGeometries(parts, false);
-  paintGeo(geo, '#80683a', { y0: -0.3, y1: 0.9, aoLow: 0.58, top: '#ffe8a0' });
+  for (let i = 0; i < 5; i++) {
+    const a = (-0.5 + i / 4) * 1.4;
+    parts.push(PR.gem(0.040 + 0.014 * Math.cos(a), [Math.sin(a) * 0.30, 0.10 + 0.05 * Math.cos(a), Math.cos(a) * 0.30], [1, 2.4, 1]));
+  }
+  const geo = PR.tint(PR.merge(parts), (x, y) => (y > 0.55 ? P.metalHot : (y < 0.04 ? P.metalDeep : P.metal)), { y0: -0.3, y1: 0.9, aoLow: 0.58 });
   return mesh(geo, ctx, 'metal', 'hadescrown');
 }
 
 function buildChronosScythe(ctx) {
+  // THE SCYTHE: a long curved scimitar-section blade off a chamfered tang
+  // collar, on a snath with two grip wraps and an iron foot.
+  const P = CHRONOS_PALETTE;
   const group = new THREE.Group();
-  const shaft = new THREE.CylinderGeometry(0.06, 0.085, 3.4, 10); shaft.translate(0, 0.78, 0);
-  paintGeo(shaft, '#27231a', { y0: -1.0, y1: 2.7, aoLow: 0.42, top: '#7c6a3b' });
-  const bladeParts = [];
-  const arc = new THREE.TorusGeometry(0.72, 0.095, 7, 30, Math.PI * 0.82); arc.rotateZ(-0.16); arc.translate(0.54, 2.42, 0); bladeParts.push(arc);
-  const point = new THREE.ConeGeometry(0.13, 0.72, 7); point.rotateZ(-1.08); point.translate(1.12, 2.68, 0); bladeParts.push(point);
-  const blade = mergeGeometries(bladeParts, false);
-  paintGeo(blade, '#bda04f', { y0: 1.6, y1: 3.4, aoLow: 0.62, top: '#fff2ac' });
-  group.add(mesh(shaft, ctx, 'hair', 'chronosscythe'), mesh(blade, ctx, 'metal', 'chronosscythe'));
+  const shaft = PR.merge([
+    PR.tint(PR.shaft({ y0: -1.05, y1: 2.46, r0: 0.062, r1: 0.056, radial: 9 }), '#27231a', { y0: -1.0, y1: 2.7, aoLow: 0.42 }),
+    PR.tint(PR.grip({ y0: -0.18, y1: 0.36, r: 0.070 }), PR.wrapped('#201e18', '#0c0b08', 8)),
+    PR.tint(PR.grip({ y0: 1.10, y1: 1.44, r: 0.070 }), PR.wrapped('#201e18', '#0c0b08', 6)),
+  ]);
+  const parts = [
+    PR.tint(PR.blade({ len: 1.85, w: 0.150, th: 0.026, profile: 'scimitar', base: [0.06, 2.44, 0], dir: [1, -0.08, 0], across: [0, 1, 0], curve: -0.30, stations: 12, radial: 10 }),
+      PR.edged(P.blade, P.bladeEdge), { y0: 1.6, y1: 3.4, aoLow: 0.62 }),
+    PR.tint(PR.ring({ y: 2.38, R: 0.086, th: 0.014, hh: 0.14, seg: 14 }), PR.chamfered(P.metalHot, P.metal, P.metalDeep)),
+    PR.tint(PR.ring({ y: -1.00, R: 0.060, th: 0.010, hh: 0.06, seg: 12 }), P.metalDeep),
+    PR.tint(PR.gem(0.062, [0, 2.56, 0], [1, 1.5, 1]), P.metalHot),
+  ];
+  group.add(mesh(shaft, ctx, 'hair', 'chronosscythe'), mesh(PR.merge(parts), ctx, 'metal', 'chronosscythe'));
   return group;
 }
 
@@ -279,7 +306,8 @@ export const MINOTAUR = {
   spec: {
     name: 'erebus.minotaur', height: 3.34,
     build: { shoulder: 1.70, limb: 1.16, bulk: 1.65 }, palette: MINOTAUR_PALETTE,
-    features: { pauldron: 'both', crown: 'none', cape: false, skirt: 6, greaves: true, bracers: true, harness: true, hair: 'none', eyes: false, weapon: 'none' },
+    features: { pauldron: 'both', crown: 'none', cape: false, skirt: 6, greaves: true, bracers: true, harness: true, hair: 'none', eyes: false, weapon: 'none', spikes: true, armlet: 'none' },
+    gait: { idle: 'idleBrace', run: 'runHeavy' },
     glowIntensity: 0.78,
   },
   onSpawn(a, ctx) {
@@ -369,7 +397,8 @@ export const HERACLES = {
   spec: {
     name: 'erebus.heracles', height: 3.08,
     build: { shoulder: 1.58, limb: 1.12, bulk: 1.48 }, palette: HERACLES_PALETTE,
-    features: { pauldron: 'left', crown: 'laurel', cape: true, skirt: 6, greaves: true, bracers: true, harness: true, hair: 'swept', eyes: true, weapon: 'none' },
+    features: { pauldron: 'left', crown: 'laurel', cape: true, skirt: 6, greaves: true, bracers: true, harness: true, hair: 'swept', eyes: true, weapon: 'none', armlet: 'right' },
+    gait: { idle: 'idleBrace', run: 'runHeavy' },
     glowIntensity: 0.72,
   },
   onSpawn(a, ctx) {
@@ -572,7 +601,8 @@ export const HADES = {
   spec: {
     name: 'erebus.hades', height: 3.18,
     build: { shoulder: 1.62, limb: 1.14, bulk: 1.52 }, palette: HADES_PALETTE,
-    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 10, greaves: true, bracers: true, harness: true, hair: 'swept', eyes: true, weapon: 'none' },
+    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 10, greaves: true, bracers: true, harness: true, hair: 'swept', eyes: true, weapon: 'none', robe: true, armlet: 'none' },
+    gait: { idle: 'idleBrace' },
     glowIntensity: 0.82,
   },
   onSpawn(a, ctx) {
@@ -602,7 +632,8 @@ export const CHRONOS = {
   spec: {
     name: 'erebus.chronos', height: 3.24,
     build: { shoulder: 1.56, limb: 1.15, bulk: 1.44 }, palette: CHRONOS_PALETTE,
-    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 12, greaves: true, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'none' },
+    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 12, greaves: true, bracers: false, harness: true, hair: 'none', eyes: true, weapon: 'none', hood: 'deep', robe: true, sleeves: true, armlet: 'none' },
+    gait: { idle: 'idleCaster' },
     glowIntensity: 0.90,
   },
   onSpawn(a, ctx) {

@@ -33,6 +33,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { clamp, clamp01, lerp, TAU } from '../../core/math.js';
 import { TELEGRAPH, inDisc } from '../ai.js';
 import { charMaterial, paintGeo, tickEnrage } from './base.js';
+import * as PR from './props.js';
 
 const WARDEN_PALETTE = {
   skin: '#c08a6a', skinDeep: '#5e2f22',
@@ -45,55 +46,28 @@ const WARDEN_PALETTE = {
   glow: '#ff5a3c',
 };
 
-function buildCrown(ctx) {
-  const parts = [];
-  const band = new THREE.CylinderGeometry(0.235, 0.245, 0.16, 14, 1, true);
-  band.translate(0, 0.10, 0);
-  parts.push(band);
-  for (const s of [1, -1]) {
-    const p = [];
-    for (let i = 0; i <= 8; i++) {
-      const t = i / 8;
-      p.push(new THREE.Vector3(
-        s * (0.16 + 0.40 * Math.sin(t * 1.45)),
-        0.14 + 0.60 * t - 0.24 * t * t,
-        -0.02 - 0.30 * t * t));
-    }
-    parts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(p), 12, 0.055, 6, false));
-  }
-  for (let i = 0; i < 5; i++) {
-    const a = (-0.5 + i / 4) * 1.5;
-    const c = new THREE.ConeGeometry(0.038, 0.20 + 0.10 * Math.cos(a), 5);
-    c.translate(Math.sin(a) * 0.22, 0.26, Math.cos(a) * 0.22);
-    parts.push(c);
-  }
-  const g = mergeGeometries(parts, false);
-  paintGeo(g, '#e8c98a', { y0: 0, y1: 0.8, aoLow: 0.5, top: '#fff6d8' });
-  const m = new THREE.Mesh(g, charMaterial(ctx, 'metal', 'warden'));
-  m.castShadow = true; m.frustumCulled = false;
-  return m;
-}
 
 function buildGreatsword(ctx) {
+  // THE GREATSWORD. A fullered straight blade with a real diamond section and
+  // two ground edges, a curled hex quillon with a ferrule, a wrapped two-hand
+  // grip and a heavy faceted pommel. Three meshes: steel, gold, grip.
+  const P = WARDEN_PALETTE;
   const grp = new THREE.Group();
-  // blade: a long tapered wedge — the diagonal that breaks the body mass
-  const blade = new THREE.BoxGeometry(0.20, 2.55, 0.065);
-  blade.translate(0, 1.55, 0);
-  const tip = new THREE.ConeGeometry(0.145, 0.42, 4); tip.rotateY(Math.PI / 4); tip.translate(0, 3.02, 0);
-  const fuller = new THREE.BoxGeometry(0.055, 2.1, 0.09); fuller.translate(0, 1.5, 0);
-  const steel = mergeGeometries([blade, tip], false);
-  paintGeo(steel, '#8e93ab', { y0: 0.3, y1: 3.1, aoLow: 0.55, top: '#ffe9a8' });
-  const guard = new THREE.BoxGeometry(0.86, 0.11, 0.15); guard.translate(0, 0.30, 0);
-  const gk = new THREE.SphereGeometry(0.09, 10, 8); gk.translate(0, -0.30, 0);
-  const grip = new THREE.CylinderGeometry(0.055, 0.062, 0.56, 8); grip.translate(0, 0.0, 0);
-  const gold = mergeGeometries([guard, gk, fuller], false);
-  paintGeo(gold, '#e8c98a', { y0: -0.4, y1: 1.6, aoLow: 0.55, top: '#fff6d8' });
-  paintGeo(grip, '#2a161f', { y0: -0.4, y1: 0.4, aoLow: 0.5 });
-
-  const ms = new THREE.Mesh(steel, charMaterial(ctx, 'metal', 'wardenblade'));
-  const mg = new THREE.Mesh(gold, charMaterial(ctx, 'metal', 'warden'));
-  const mp = new THREE.Mesh(grip, charMaterial(ctx, 'hair', 'wardengrip'));
-  for (const m of [ms, mg, mp]) { m.castShadow = true; m.frustumCulled = false; grp.add(m); }
+  const steel = PR.tint(
+    PR.blade({ len: 2.78, w: 0.118, th: 0.032, profile: 'straight', base: [0, 0.36, 0], fuller: 0.34, stations: 12, radial: 12 }),
+    PR.edged(P.blade, P.bladeEdge, '#a8aec4'), { y0: 0.3, y1: 3.1, aoLow: 0.72 });
+  const gold = PR.merge([
+    PR.tint(PR.crossguard({ y: 0.30, w: 0.94, r: 0.034, curl: 0.07 }), PR.chamfered(P.metalHot, P.metal, P.metalDeep)),
+    PR.tint(PR.ring({ y: 0.37, R: 0.080, th: 0.012, hh: 0.060, seg: 12 }), P.metalDeep),
+    PR.tint(PR.ring({ y: 0.24, R: 0.070, th: 0.010, hh: 0.024, seg: 12 }), P.metalHot),
+    PR.tint(PR.gem(0.088, [0, -0.35, 0], [1, 1.25, 1]), P.metalHot),
+    PR.tint(PR.gem(0.046, [0, 0.30, 0.055], [1, 1, 0.5]), P.glow),
+  ]);
+  const grip = PR.tint(PR.grip({ y0: -0.28, y1: 0.23, r: 0.058 }), PR.wrapped(P.leather, '#120a10', 8));
+  const ms = PR.mesh(ctx, steel, 'metal', 'wardenblade');
+  const mg = PR.mesh(ctx, gold, 'metal', 'warden');
+  const mp = PR.mesh(ctx, grip, 'hair', 'wardengrip');
+  grp.add(ms, mg, mp);
   return grp;
 }
 
@@ -127,10 +101,13 @@ export const WARDEN = {
     name: 'erebus.warden', height: 3.42,
     build: { shoulder: 1.62, limb: 1.2, bulk: 1.52 },
     palette: WARDEN_PALETTE,
+    // THE MONOLITH: horned helm, spiked pauldrons, a tabard over the pteruges.
     features: {
       pauldron: 'both', crown: 'none', cape: true, skirt: 10, greaves: true,
       bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'none',
+      helm: 'horned', spikes: true, tabard: true, armlet: 'none',
     },
+    gait: { idle: 'idleBrace', run: 'runHeavy' },
     glowIntensity: 0.8,
   },
   onSpawn(a, ctx) {
@@ -141,7 +118,6 @@ export const WARDEN = {
     a.resist = null;
     if (!a.mem.built) {
       const rig = a.visual.rig;
-      if (rig?.bones?.head) { const c = buildCrown(ctx); c.position.set(0, 0.22, 0.01); rig.bones.head.add(c); }
       if (rig?.bones?.handR) {
         const s = buildGreatsword(ctx);
         s.position.set(0.02, -0.02, 0.05);

@@ -752,6 +752,128 @@ export function buildClipData() {
   rkLag('handR', [[-24, 0, 4], [-16, 0, 4], [-6, 0, 4], [-16, 0, 4], [-24, 0, 4]], 0.42);
   C.run = new Clip('run', 0.58, runKeys, { loop: true });
 
+  // ═══ ROLE GAITS ══════════════════════════════════════════════════════════
+  // The roster asks for 'idle' and 'run' by name and base.js maps each family
+  // onto one of these (spec.gait). A brute that breathes like the hero is a
+  // recolour in motion; these give the wide bodies a braced weight, the robes
+  // a floating stillness and the wraiths a broken lurch. Every one is built
+  // at clip-compile time — nothing here allocates per frame.
+
+  // ── idleBrace: the wide bodies. Feet planted wide, knees soft, the shield
+  // arm forward and the weapon arm cocked; a slow deep breath and a weight
+  // sway that never lands on the breath's keys.
+  const BRACE = {
+    pelvis: [6, 4, 1.5], spine1: [5, -2, -1], spine2: [5, -3, -1], chest: [4, 14, -2],
+    neck: [-4, 2, 0], head: [-2, 6, 1], clavL: [0, 0, 6], clavR: [0, 0, -5],
+    armL: [-22, 0, 34], foreL: [-62, 0, -10], handL: [-10, 0, 0],
+    armR: [10, 0, -38], foreR: [-48, 0, 12], handR: [-14, 0, 30],
+    thighL: [-8, 0, 14], shinL: [16, 0, 0], footL: [-6, 8, 0],
+    thighR: [6, 0, -14], shinR: [14, 0, 0], footR: [-6, -8, 0],
+  };
+  const brace = (t, e) => pose(t, BRACE, e);
+  C.idleBrace = new Clip('idleBrace', 3.4, [
+    ...brace(0), ...brace(3.4),
+    { t: 0, b: 'pelvis', r: BRACE.pelvis, p: [0.020, -0.058, 0] },
+    { t: 1.5, b: 'pelvis', r: [6, 2, -1.0], p: [-0.024, -0.070, 0], e: 'outQuad' },
+    { t: 3.4, b: 'pelvis', r: BRACE.pelvis, p: [0.020, -0.058, 0] },
+    { t: 0.9, b: 'chest', r: [1, 14, -3] }, { t: 1.9, b: 'chest', r: [7, 14, -1] }, { t: 2.8, b: 'chest', r: [2, 14, -3] },
+    { t: 1.1, b: 'spine2', r: [3, -3, -1] }, { t: 2.1, b: 'spine2', r: [7, -3, -1] },
+    { t: 1.2, b: 'head', r: [-4, 12, 2] }, { t: 2.4, b: 'head', r: [0, -3, 0] },
+    { t: 1.3, b: 'neck', r: [-5, 5, 0] }, { t: 2.5, b: 'neck', r: [-3, -1, 0] },
+    { t: 0.7, b: 'armR', r: [14, 0, -42] }, { t: 1.9, b: 'armR', r: [7, 0, -36] }, { t: 2.9, b: 'armR', r: [12, 0, -40] },
+    { t: 0.9, b: 'foreR', r: [-54, 0, 12] }, { t: 2.1, b: 'foreR', r: [-44, 0, 12] },
+    { t: 0.8, b: 'armL', r: [-25, 0, 36] }, { t: 2.0, b: 'armL', r: [-19, 0, 32] }, { t: 3.0, b: 'armL', r: [-23, 0, 35] },
+    { t: 1.0, b: 'foreL', r: [-66, 0, -10] }, { t: 2.2, b: 'foreL', r: [-58, 0, -10] },
+  ], { loop: true });
+
+  // ── runHeavy: the same cycle with the stride shortened, the hips dropped
+  // and rolled harder, the trunk leaning into it and the arms held wide — a
+  // charge that stomps rather than sprints. 0.74s: a heavier body is slower.
+  const heavyKeys = runKeys.map((k) => {
+    const r = k.r ? k.r.slice() : null, p = k.p ? k.p.slice() : null;
+    if (r) {
+      if (/^(thigh|shin)/.test(k.b)) r[0] *= 0.78;
+      if (/^arm/.test(k.b)) { r[0] *= 0.55; r[2] += (k.b === 'armL' ? 14 : -14); }
+      if (/^fore/.test(k.b)) r[0] *= 0.7;
+      if (k.b === 'chest') r[0] += 10;
+      if (k.b === 'pelvis') { r[0] += 4; r[1] *= 1.3; r[2] *= 1.6; }
+      if (k.b === 'head') r[0] += 4;
+    }
+    if (p && k.b === 'pelvis') { p[1] = p[1] * 1.6 - 0.03; p[0] *= 2.2; }
+    return { ...k, r: r || k.r, p: p || k.p, t: k.t * (0.74 / 0.58) };
+  });
+  C.runHeavy = new Clip('runHeavy', 0.74, heavyKeys, { loop: true });
+
+  // ── idleCaster: the robes. The staff hand held up before the chest, the
+  // free hand open at the hip, and a slow float — the whole body drifts on
+  // one breath-length wave so the figure reads as hovering, not standing.
+  const CASTER = {
+    pelvis: [0, 6, 1.5], spine1: [3, -2, -1], spine2: [3, -3, -1], chest: [-2, 10, -2],
+    neck: [-3, 3, 0], head: [2, 6, 1], clavL: [0, 0, 5], clavR: [0, 0, -4],
+    armL: [-30, 0, 30], foreL: [-62, 0, -30], handL: [-30, 0, 0],
+    armR: [-20, 0, -24], foreR: [-76, 0, 14], handR: [-8, 0, 20],
+    thighL: [-2, 0, 2], shinL: [4, 0, 0], footL: [-2, 4, 0],
+    thighR: [2, 0, -2], shinR: [4, 0, 0], footR: [-2, -4, 0],
+  };
+  const caster = (t, e) => pose(t, CASTER, e);
+  C.idleCaster = new Clip('idleCaster', 3.2, [
+    ...caster(0), ...caster(3.2),
+    { t: 0, b: 'pelvis', r: CASTER.pelvis, p: [0, 0, 0] },
+    { t: 1.6, b: 'pelvis', r: [2, 6, -1.0], p: [0, 0.016, 0] },
+    { t: 3.2, b: 'pelvis', r: CASTER.pelvis, p: [0, 0, 0] },
+    { t: 0.8, b: 'chest', r: [-5, 10, -3] }, { t: 2.4, b: 'chest', r: [1, 10, -1] },
+    { t: 1.1, b: 'head', r: [4, 10, 2] }, { t: 2.5, b: 'head', r: [-1, 2, 0] },
+    { t: 0.9, b: 'armL', r: [-34, 0, 34] }, { t: 2.3, b: 'armL', r: [-26, 0, 27] },
+    { t: 1.1, b: 'foreL', r: [-66, 0, -32] }, { t: 2.5, b: 'foreL', r: [-58, 0, -28] },
+    { t: 1.3, b: 'handL', r: [-36, 0, 0] }, { t: 2.7, b: 'handL', r: [-24, 0, 0] },
+    { t: 0.7, b: 'armR', r: [-24, 0, -26] }, { t: 2.2, b: 'armR', r: [-16, 0, -22] },
+    { t: 0.9, b: 'foreR', r: [-80, 0, 14] }, { t: 2.4, b: 'foreR', r: [-72, 0, 14] },
+  ], { loop: true });
+
+  // ── idleHunch: the wraiths. Bent forward at every joint of the trunk, the
+  // arms hanging, the head lolling on a faster, shallower breath.
+  const HUNCH = {
+    pelvis: [12, 4, 2], spine1: [10, -2, -1], spine2: [12, -3, -1], chest: [10, 10, -2],
+    neck: [6, 3, 0], head: [-6, 6, 2], clavL: [0, 0, 8], clavR: [0, 0, -8],
+    armL: [12, 0, 18], foreL: [-14, 0, -4], handL: [-6, 0, 0],
+    armR: [10, 0, -22], foreR: [-10, 0, 6], handR: [-12, 0, 28],
+    thighL: [-10, 0, 2], shinL: [16, 0, 0], footL: [-4, 4, 0],
+    thighR: [-6, 0, -4], shinR: [12, 0, 0], footR: [-4, -3, 0],
+  };
+  const hunch = (t, e) => pose(t, HUNCH, e);
+  C.idleHunch = new Clip('idleHunch', 2.4, [
+    ...hunch(0), ...hunch(2.4),
+    { t: 0, b: 'pelvis', r: HUNCH.pelvis, p: [0.016, -0.040, 0] },
+    { t: 1.1, b: 'pelvis', r: [14, 2, -1], p: [-0.012, -0.052, 0], e: 'outQuad' },
+    { t: 2.4, b: 'pelvis', r: HUNCH.pelvis, p: [0.016, -0.040, 0] },
+    { t: 0.5, b: 'chest', r: [13, 10, -4] }, { t: 1.2, b: 'chest', r: [8, 10, 0] }, { t: 1.9, b: 'chest', r: [12, 10, -3] },
+    { t: 0.7, b: 'head', r: [-10, 16, 6] }, { t: 1.5, b: 'head', r: [-3, -6, -4] }, { t: 2.1, b: 'head', r: [-8, 4, 2] },
+    { t: 0.8, b: 'neck', r: [8, 4, 1] }, { t: 1.6, b: 'neck', r: [4, 1, -1] },
+    { t: 0.6, b: 'armL', r: [14, 0, 21] }, { t: 1.4, b: 'armL', r: [9, 0, 16] },
+    { t: 0.6, b: 'armR', r: [12, 0, -25] }, { t: 1.4, b: 'armR', r: [8, 0, -20] },
+    { t: 0.9, b: 'handR', r: [-12, 0, 32] }, { t: 1.7, b: 'handR', r: [-12, 0, 26] },
+  ], { loop: true });
+
+  // ── shamble: a broken run. The right leg carries two-thirds of the stride,
+  // the hips drop hard on that stance, the trunk stays bent and the arms
+  // swing from the hang rather than the shoulder.
+  const shambleKeys = runKeys.map((k) => {
+    const r = k.r ? k.r.slice() : null, p = k.p ? k.p.slice() : null;
+    if (r) {
+      if (k.b === 'thighR' || k.b === 'shinR' || k.b === 'footR') r[0] *= 0.62;
+      if (k.b === 'thighL' || k.b === 'shinL') r[0] *= 0.9;
+      if (/^arm/.test(k.b)) { r[0] *= 0.45; r[2] = k.b === 'armL' ? 14 : -18; }
+      if (/^fore/.test(k.b)) r[0] = r[0] * 0.5 - 6;
+      if (k.b === 'chest') { r[0] += 14; r[1] *= 1.3; }
+      if (k.b === 'spine2') r[0] += 6;
+      if (k.b === 'head') r[0] -= 4;
+      if (k.b === 'pelvis') r[2] += 3;
+    }
+    if (p && k.b === 'pelvis') p[1] = k.t > 0.29 ? p[1] * 1.8 - 0.030 : p[1] - 0.010;
+    return { ...k, r: r || k.r, p: p || k.p, t: k.t * (0.66 / 0.58) };
+  });
+  C.shamble = new Clip('shamble', 0.66, shambleKeys, { loop: true });
+
   // ── DASH — anticipation, hard lunge, trailing after-image pose, absorb ────
   C.dash = new Clip('dash', 0.42, [
     ...pose(0, {
