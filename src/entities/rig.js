@@ -29,6 +29,7 @@
 import * as THREE from 'three';
 import { hexToRgb } from '../materials/palette.js';
 import { setPaint } from '../materials/painterly.js';
+import { characterShader } from '../render/shaders/character.js';
 import { TAU, clamp, clamp01, lerp, smoothstep } from '../core/math.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -72,13 +73,59 @@ function ih(a, b, c) {
  * Exactly 1 at theta = 0 and 90 degrees, so the section's bounding box (and
  * therefore the part's silhouette) is unchanged.
  */
-function superellipse(n) {
+export function superellipse(n) {
   return (th) => {
     const c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
     return 1 / Math.pow(Math.pow(c, n) + Math.pow(s, n), 1 / n);
   };
 }
-const SECT5 = superellipse(5);
+/** a ground blade: two edges on the N axis, a ridge on the B axis */
+export const DIAMOND = superellipse(1.25);
+/** a struck plate: flat faces, tight corners */
+export const PLATE = superellipse(5);
+const SECT5 = PLATE;
+/** a fullered blade: the diamond with a groove down each flat */
+export function fullered(depth = 0.30) {
+  return (th) => {
+    const s = Math.abs(Math.sin(th));
+    const g = Math.exp(-Math.pow((1 - s) / 0.16, 2));
+    return DIAMOND(th) * (1 - depth * g);
+  };
+}
+
+/**
+ * THE ONE RING SPINE. Every horizontal band in the game — the hero's armour
+ * lames (bandAt below), the roster's ferrules and circlets (enemies/props.js
+ * ring), the arms' collars (player-weapons.js bandRing) — is a sweep of a
+ * plate section round +y, and they used to be three copies of the same loop.
+ *   { y|cy, R, th, hh, seg, a0, a1 (deg), cx, cz, ex, ez, rx(a), dy(a), prof(t) }
+ */
+export function ringSpine(o = {}, N = o.seg ?? 20) {
+  const A0 = (o.a0 ?? 0) * D2R, A1 = (o.a1 ?? 360) * D2R;
+  const cy = o.cy ?? o.y ?? 0;
+  const spine = [];
+  for (let i = 0; i < N; i++) {
+    const t = N > 1 ? i / (N - 1) : 0, a = lerp(A0, A1, t);
+    const prof = o.prof ? o.prof(t) : 1;
+    const R = (o.R ?? 0.18) * (o.rx ? o.rx(a) : 1);
+    spine.push({
+      p: [(o.cx ?? 0) + R * Math.sin(a) * (o.ex ?? 1),
+        cy + (o.dy ? o.dy(a) : 0),
+        (o.cz ?? 0) + R * Math.cos(a) * (o.ez ?? 1)],
+      r: 1, sx: o.th ?? 0.008, sz: (o.hh ?? 0.02) * prof,
+    });
+  }
+  return spine;
+}
+/** a chamfered ring around +y: ferrule, collar, circlet, lame. Plate section by default. */
+export function ringSweep(o = {}) {
+  const full = Math.abs((o.a1 ?? 360) - (o.a0 ?? 0)) >= 359.9;
+  const cap = o.cap ?? (full ? 'flat' : 'round');
+  return tubeGeo(ringSpine(o), {
+    radial: o.radial ?? 8, up: [0, 1, 0], capStart: cap, capEnd: cap,
+    shape: o.shape === undefined ? PLATE : o.shape,
+  });
+}
 
 const fade5 = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 /** C1 trilinear value noise, 0..1, wavelength 1 unit. */
@@ -1666,19 +1713,7 @@ function buildParts(spec) {
     // n = 5 against the radial count the ornament zones supply (10 -> ~28)
     // puts 3-4 samples across the corner, which is what "resolvable" means.
     const N = Math.max(2, Math.round((o.seg ?? 26) * (1 + (bg - 1) * 0.75)));
-    const A0 = (o.a0 ?? 0) * D2R, A1 = (o.a1 ?? 360) * D2R;
-    const spine = [];
-    for (let i = 0; i < N; i++) {
-      const t = N > 1 ? i / (N - 1) : 0, a = lerp(A0, A1, t);
-      const prof = o.prof ? o.prof(t) : 1;
-      const R = (o.R ?? 0.18) * (o.rx ? o.rx(a) : 1);
-      spine.push({
-        p: [(o.cx ?? 0) + R * Math.sin(a) * (o.ex ?? 1),
-        (o.cy ?? 0) + (o.dy ? o.dy(a) : 0),
-        (o.cz ?? 0) + R * Math.cos(a) * (o.ez ?? 1)],
-        r: 1, sx: o.th, sz: o.hh * prof,
-      });
-    }
+    const spine = ringSpine(o, N);
     const g = tubeGeo(spine, {
       radial: Math.max(3, Math.round((o.radial ?? 10) * (1 + (bg - 1) * 1.45))), up: [0, 1, 0],
       capStart: o.cap ?? 'flat', capEnd: o.cap ?? 'flat',
@@ -2861,6 +2896,9 @@ function slotMaterial(ctx, slot, spec) {
       rimColor: tune.rimColor, rimDir: tune.rimDir,
     };
   }
+  // §1.2 / §4: the character shader — constant complement rim, painted ramp,
+  // colour-shifted contour, metal glint, and the rim-outline hurt flash.
+  characterShader(m, { metal: slot === 'metal', glow: slot === 'glow', familyRim: spec.rim && spec.rim.color });
   m.needsUpdate = true;
   return m;
 }
@@ -3149,4 +3187,4 @@ export function buildHumanoid(spec_, ctx) {
   return rig;
 }
 
-export default { buildHumanoid, HERO_SPEC, HERO_PALETTE, MELINOE_SPEC, MELINOE_PALETTE, mergeSpec, tubeGeo, sheetGeo, prim, solveSkinWeights, linRGB };
+export default { buildHumanoid, HERO_SPEC, HERO_PALETTE, MELINOE_SPEC, MELINOE_PALETTE, mergeSpec, tubeGeo, sheetGeo, prim, solveSkinWeights, linRGB, superellipse, DIAMOND, PLATE, fullered, ringSpine, ringSweep };

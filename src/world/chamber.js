@@ -35,6 +35,7 @@
 import * as THREE from 'three';
 import { Kit, Parts, Batcher, lathe, faceted, mergeGeos, meanderPeriod, meanderRail, eggAndDartUnit,
          beadAndReelUnit, columnDrumGeo, rubbleChunkGeo, brokenCapitalGeo, taperedTube, catenary,
+         chamferedBox, dentilUnit, volute, ensureColor,
          Field, TAU, DEG } from './kit.js';
 import { BIOMES, ARCHETYPES, ARCHETYPE_IDS, getBiome, getArchetype, DEFAULT_BIOME } from './biomes.js';
 import { Doors } from './doors.js';
@@ -2414,12 +2415,44 @@ export class World {
     // Three deliberately placed steles break the longest firing lanes. They
     // sit in the middle band, with broad gaps on every side, rather than among
     // perimeter architecture where knockback used to pin players and enemies.
-    const { B } = G;
+    const { B, kit } = G;
+    // THE STELE IS KIT, NOT BOXES. Three stacked BoxGeometry slabs were the
+    // one piece of raw primitive left inside the play frame — every column and
+    // cornice in the room wore the chamfered / Ionic order and the three
+    // steles the camera actually looks at in 02/07 did not. The same footprint
+    // and the same collider, built from the kit: a chamfered plinth and step,
+    // a chamfered shaft, a meander fret in its recessed rail on the two faces
+    // that look into the arena, a dentil course, a chamfered leaf abacus, and
+    // a pair of Ionic volutes rolled under each end of the cap.
+    //
+    // Every piece is one InstancedMesh across all three steles (Batcher), so
+    // the whole set costs 8 draw calls against the 9 the boxes did.
     const stone = this._M(B.mats.column, { variation: 0.22, litGain: 0.43, ambGain: 0.54, specGain: 1.05 });
     const trim = this._M(B.mats.leaf, { emissiveIntensity: 0.02, litGain: 0.36, ambGain: 0.42, specGain: 1.55 });
-    const baseGeo = this._keep(new THREE.CylinderGeometry(1.02, 1.10, 0.28, 10));
-    const bodyGeo = this._keep(new THREE.BoxGeometry(1.72, 2.30, 0.64));
-    const capGeo = this._keep(new THREE.BoxGeometry(2.02, 0.24, 0.82));
+    const relief = this._M(B.mats.leaf, {
+      emissiveIntensity: 0.04, vertexColors: true, tint: '#d9b552',
+      litGain: 0.34, ambGain: 0.36, specGain: 2.10,
+    });
+    const BW = 1.72, BD = 0.64;                    // the shaft's footprint (unchanged)
+    const FH = 0.24;                                // fret height
+    const geo = {
+      plinth: kit.geo('stele.plinth', () => ensureColor(faceted(chamferedBox(2.14, 0.30, 1.02, 0.055)))),
+      step:   kit.geo('stele.step', () => ensureColor(faceted(chamferedBox(1.92, 0.13, 0.84, 0.035)))),
+      shaft:  kit.geo('stele.shaft', () => ensureColor(faceted(chamferedBox(BW, 2.06, BD, 0.06)))),
+      rail:   kit.geo('stele.rail', () => meanderRail(FH, BW - 0.16, 0.30)),
+      fret:   kit.geo('stele.fret', () => meanderPeriod(FH, 0.30)),
+      dentil: kit.geo('stele.dentil', () => dentilUnit(0.115)),
+      cap:    kit.geo('stele.cap', () => ensureColor(faceted(chamferedBox(2.02, 0.22, 0.82, 0.05)))),
+      volute: kit.geo('stele.volute', () => ensureColor(volute(0.17, 1.85, 0.042))),
+    };
+    const batch = new Batcher(this.root);
+    const m = new THREE.Matrix4(), lm = new THREE.Matrix4(), q = new THREE.Quaternion(), one = new THREE.Vector3(1, 1, 1);
+    const place = (root, g, mat, p, r, name, s) => {
+      q.setFromEuler(new THREE.Euler(r ? r[0] : 0, r ? r[1] : 0, r ? r[2] : 0));
+      lm.compose(new THREE.Vector3(p[0], p[1], p[2]), q, s || one);
+      m.multiplyMatrices(root, lm);
+      batch.add(g, mat, m, { name });
+    };
     const blocks = (x, z, r) => G.keepOut.some(k => {
       const rr = r + (k.r || 0) + 0.55;
       return (x - k.x) * (x - k.x) + (z - k.z) * (z - k.z) < rr * rr;
@@ -2430,19 +2463,44 @@ export class World {
       const ring = 5.5 + (probe % 2) * 0.75;
       const x = Math.cos(a) * ring, z = Math.sin(a) * ring;
       if (!this.insideXZ(x, z, 3.0) || blocks(x, z, 1.02)) continue;
-      const root = new THREE.Group();
-      root.name = `combat.cover.${built + 1}`;
-      root.position.set(x, this.heightAt(x, z), z);
-      root.rotation.y = a + Math.PI * 0.5;
-      const base = new THREE.Mesh(baseGeo, stone); base.position.y = 0.14;
-      const body = new THREE.Mesh(bodyGeo, stone); body.position.y = 1.43;
-      const cap = new THREE.Mesh(capGeo, trim); cap.position.y = 2.58;
-      for (const m of [base, body, cap]) { m.castShadow = true; m.receiveShadow = true; }
-      root.add(base, body, cap); this.root.add(root);
+      const rootM = new THREE.Matrix4().compose(
+        new THREE.Vector3(x, this.heightAt(x, z), z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, a + Math.PI * 0.5, 0)), one);
+      const tag = `combat.cover.${built + 1}`;
+      place(rootM, geo.plinth, stone, [0, 0.15, 0], null, tag + '.plinth');
+      place(rootM, geo.step, stone, [0, 0.365, 0], null, tag + '.step');
+      place(rootM, geo.shaft, stone, [0, 0.43 + 1.03, 0], null, tag + '.shaft');
+      // the fret: a recessed rail with the meander rising from it, on the two
+      // long faces. A single run of periods, offset by a third of a period so
+      // the two faces never read as the same stamp (§7).
+      const nPer = Math.floor((BW - 0.24) / FH);
+      for (const sz of [1, -1]) {
+        const zf = sz * (BD * 0.5 + 0.005);
+        place(rootM, geo.rail, relief, [0, 2.16, zf], [0, sz > 0 ? 0 : Math.PI, 0], tag + '.rail');
+        for (let i = 0; i < nPer; i++) {
+          const xf = (i - (nPer - 1) * 0.5) * FH * (sz > 0 ? 1 : -1);
+          place(rootM, geo.fret, relief, [xf, 2.16, zf + sz * 0.012], [0, sz > 0 ? 0 : Math.PI, 0], tag + '.fret');
+        }
+      }
+      // dentil course under the abacus, all four sides
+      const dh = 0.115, dy = 2.395;
+      const nF = Math.floor((BW + 0.16) / (dh * 1.9)), nS = Math.floor((BD + 0.16) / (dh * 1.9));
+      for (const sz of [1, -1]) for (let i = 0; i < nF; i++) {
+        place(rootM, geo.dentil, relief, [(i - (nF - 1) * 0.5) * dh * 1.9, dy, sz * (BD * 0.5 + 0.045)], [0, sz > 0 ? 0 : Math.PI, 0], tag + '.dentil');
+      }
+      for (const sx of [1, -1]) for (let i = 0; i < nS; i++) {
+        place(rootM, geo.dentil, relief, [sx * (BW * 0.5 + 0.045), dy, (i - (nS - 1) * 0.5) * dh * 1.9], [0, sx > 0 ? Math.PI * 0.5 : -Math.PI * 0.5, 0], tag + '.dentil');
+      }
+      place(rootM, geo.cap, trim, [0, 2.575, 0], null, tag + '.cap');
+      // Ionic volutes rolled under each end of the cap, scrolls facing the arena
+      for (const sx of [1, -1]) for (const sz of [1, -1]) {
+        place(rootM, geo.volute, trim, [sx * 0.86, 2.36, sz * 0.24], [0, sz > 0 ? 0 : Math.PI, 0], tag + '.volute', new THREE.Vector3(sx * (sz > 0 ? 1 : -1), 1, 1));
+      }
       this.colliders.push({ kind: 'circle', x, z, r: 1.02, combatCover: true });
       G.keepOut.push({ x, z, r: 1.85 });
       built++;
     }
+    for (const mesh of batch.build()) { mesh.castShadow = true; mesh.receiveShadow = true; }
   }
 
   // =========================================================================

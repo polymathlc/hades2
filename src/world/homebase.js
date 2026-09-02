@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { GOD_INFO, GOD_KEYS } from '../game/boons.js';
 import { WEAPONS, WEAPON_IDS } from '../entities/weapons.js';
+import { createArmDisplay } from '../entities/player-weapons.js';
 import { CHARACTER_INFO, CHARACTER_IDS, characterInfo, weaponIdsForCharacter } from '../game/characters.js';
 
 const PORTAL_POS = new THREE.Vector3(0, 0, -7.0);
@@ -47,6 +48,7 @@ export class HomeBase {
     this._ownedMats = [];
     this._portalTriggered = false;
     this.armory = [];
+    this._armDisplays = [];
     this.characterStations = [];
     this.selectedWeapon = null;
     this.t = 0;
@@ -288,78 +290,6 @@ export class HomeBase {
     return mesh;
   }
 
-  _buildWeaponModel(id, parent, core, body, dark) {
-    if (id === 'blade') {
-      const blade = this._mesh(new THREE.BoxGeometry(0.20, 1.55, 0.10), core, parent); blade.position.y = 0.24;
-      const tip = this._mesh(new THREE.ConeGeometry(0.145, 0.38, 4), core, parent); tip.position.y = 1.205; tip.rotation.y = Math.PI / 4;
-      const guard = this._mesh(new THREE.BoxGeometry(0.88, 0.13, 0.18), body, parent); guard.position.y = -0.60;
-      const grip = this._mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.58, 10), dark, parent); grip.position.y = -0.94;
-      const pommel = this._mesh(new THREE.OctahedronGeometry(0.17, 0), body, parent); pommel.position.y = -1.28;
-      parent.rotation.z = -0.16;
-    } else if (id === 'spear') {
-      const shaft = this._mesh(new THREE.CylinderGeometry(0.065, 0.075, 2.45, 10), dark, parent); shaft.position.y = -0.05;
-      const collar = this._mesh(new THREE.CylinderGeometry(0.16, 0.11, 0.30, 8), body, parent); collar.position.y = 1.26;
-      const head = this._mesh(new THREE.ConeGeometry(0.25, 0.72, 4), core, parent); head.position.y = 1.74; head.rotation.y = Math.PI / 4;
-      const butt = this._mesh(new THREE.ConeGeometry(0.12, 0.35, 6), body, parent); butt.position.y = -1.48; butt.rotation.z = Math.PI;
-      parent.rotation.z = 0.12;
-    } else if (id === 'bow') {
-      const curve = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(0.18, -1.12, 0), new THREE.Vector3(0.52, -0.62, 0),
-        new THREE.Vector3(0.05, 0, 0), new THREE.Vector3(0.52, 0.62, 0), new THREE.Vector3(0.18, 1.12, 0),
-      ]);
-      this._mesh(new THREE.TubeGeometry(curve, 28, 0.085, 8, false), body, parent);
-      this._rod(new THREE.Vector3(0.18, -1.12, 0), new THREE.Vector3(0.18, 1.12, 0), 0.018, core, parent);
-      this._rod(new THREE.Vector3(-0.58, -0.04, 0.05), new THREE.Vector3(0.72, -0.04, 0.05), 0.025, dark, parent);
-      const arrow = this._mesh(new THREE.ConeGeometry(0.09, 0.28, 6), core, parent); arrow.position.set(0.81, -0.04, 0.05); arrow.rotation.z = -Math.PI / 2;
-      parent.rotation.z = -0.08;
-    } else if (id === 'shield') {
-      const disk = this._mesh(new THREE.CylinderGeometry(0.86, 0.86, 0.18, 32), body, parent); disk.rotation.x = Math.PI / 2;
-      const rim = this._mesh(new THREE.TorusGeometry(0.78, 0.10, 10, 36), core, parent); rim.position.z = 0.11;
-      const boss = this._mesh(new THREE.SphereGeometry(0.28, 16, 10), core, parent); boss.scale.z = 0.55; boss.position.z = 0.18;
-      for (let i = 0; i < 8; i++) {
-        const a = i / 8 * Math.PI * 2;
-        const stud = this._mesh(new THREE.SphereGeometry(0.055, 8, 6), dark, parent);
-        stud.position.set(Math.cos(a) * 0.56, Math.sin(a) * 0.56, 0.22);
-      }
-      parent.rotation.x = -0.10;
-    } else if (id === 'fists' || id === 'coat') {
-      const cuff = this._mesh(new THREE.CylinderGeometry(id === 'coat' ? 0.34 : 0.25, 0.22, 0.85, 10), body, parent); cuff.position.y = -0.15;
-      const plate = this._mesh(new THREE.BoxGeometry(id === 'coat' ? 0.85 : 0.65, 0.34, 0.28), core, parent); plate.position.set(0, 0.25, 0.10);
-      for (const sx of [-1, 1]) {
-        const spike = this._mesh(new THREE.ConeGeometry(0.10, 0.48, 6), body, parent); spike.position.set(sx * 0.25, 0.60, 0); spike.rotation.z = Math.PI;
-      }
-    } else if (id === 'rail') {
-      const bodyM = this._mesh(new THREE.BoxGeometry(0.38, 1.45, 0.32), body, parent); bodyM.position.y = -0.2;
-      const barrel = this._mesh(new THREE.CylinderGeometry(0.12, 0.16, 1.10, 10), core, parent); barrel.position.y = 0.95;
-      const muzzle = this._mesh(new THREE.TorusGeometry(0.18, 0.045, 8, 20), core, parent); muzzle.rotation.x = Math.PI / 2; muzzle.position.y = 1.52;
-    } else if (id === 'staff') {
-      const shaft = this._mesh(new THREE.CylinderGeometry(0.06, 0.075, 2.65, 10), dark, parent); shaft.position.y = -0.10;
-      const moon = this._mesh(new THREE.TorusGeometry(0.36, 0.075, 9, 30, Math.PI * 1.55), core, parent); moon.position.y = 1.45; moon.rotation.z = 0.76;
-      const gem = this._mesh(new THREE.OctahedronGeometry(0.17, 0), body, parent); gem.position.y = 1.45;
-    } else if (id === 'blades') {
-      for (const sx of [-1, 1]) {
-        const knife = this._mesh(new THREE.ConeGeometry(0.15, 1.20, 4), sx > 0 ? core : body, parent); knife.position.set(sx * 0.18, 0.18, 0); knife.rotation.set(0, Math.PI / 4, sx > 0 ? 0.12 : -0.12);
-        const grip = this._mesh(new THREE.CylinderGeometry(0.055, 0.07, 0.46, 8), dark, parent); grip.position.set(sx * 0.18, -0.65, 0);
-      }
-    } else if (id === 'flames') {
-      const grip = this._mesh(new THREE.CylinderGeometry(0.08, 0.11, 1.1, 10), dark, parent); grip.position.y = -0.25;
-      for (let i = 0; i < 3; i++) {
-        const ring = this._mesh(new THREE.TorusGeometry(0.24 + i * 0.09, 0.045, 8, 24), i === 2 ? core : body, parent); ring.position.y = 0.45; ring.rotation.x = Math.PI / 2 + i * 0.2;
-      }
-      const ember = this._mesh(new THREE.OctahedronGeometry(0.22, 1), core, parent); ember.position.y = 0.55;
-    } else if (id === 'axe') {
-      const shaft = this._mesh(new THREE.CylinderGeometry(0.07, 0.09, 2.45, 10), dark, parent); shaft.position.y = -0.1;
-      const head = this._mesh(new THREE.BoxGeometry(1.20, 0.38, 0.22), body, parent); head.position.set(0.28, 1.22, 0); head.rotation.z = 0.18;
-      const edge = this._mesh(new THREE.ConeGeometry(0.45, 0.82, 4), core, parent); edge.position.set(0.82, 1.20, 0); edge.rotation.set(0, Math.PI / 4, Math.PI / 2);
-    } else if (id === 'skull') {
-      const skull = this._mesh(new THREE.DodecahedronGeometry(0.58, 1), body, parent); skull.scale.set(1, 1.12, 0.88);
-      for (const sx of [-1, 1]) {
-        const eye = this._mesh(new THREE.OctahedronGeometry(0.11, 0), core, parent); eye.position.set(sx * 0.18, 0.08, 0.48);
-      }
-      const jaw = this._mesh(new THREE.BoxGeometry(0.62, 0.22, 0.38), core, parent); jaw.position.y = -0.47;
-    }
-  }
-
   _buildArmory(stone, bronze, dark, characterId = this.selectedCharacter) {
     const ids = weaponIdsForCharacter(characterId);
     for (let i = 0; i < ids.length; i++) {
@@ -382,10 +312,25 @@ export class HomeBase {
       hover.name = `infernal-arm.${id}`;
       hover.position.y = 2.05;
       station.add(hover);
-      const core = this._m(new THREE.MeshStandardMaterial({ color: weapon.palette.core, emissive: weapon.palette.core, emissiveIntensity: 0.52, roughness: 0.22, metalness: 0.92 }));
-      const body = this._m(new THREE.MeshStandardMaterial({ color: weapon.palette.body, emissive: weapon.palette.glow, emissiveIntensity: 0.72, roughness: 0.35, metalness: 0.82 }));
-      const grip = this._m(new THREE.MeshStandardMaterial({ color: '#17111f', emissive: weapon.palette.glow, emissiveIntensity: 0.16, roughness: 0.72, metalness: 0.35 }));
-      this._buildWeaponModel(id, hover, core, body, grip);
+      // THE DISPLAY IS THE ARM. The rack used to hover flat pastel primitives
+      // (a box blade, a four-sided cone spear-head) over each plinth — the
+      // first thing a player sees, and nothing like what they then hold. The
+      // hovering piece is now the identical authored, slot-baked model the
+      // hand mounts (entities/player-weapons.js), stood on its point at
+      // display scale and centred on the hover point.
+      const arm = createArmDisplay(id);
+      if (arm) {
+        const g = arm.group;
+        g.name = `infernal-arm.${id}.model`;
+        g.rotation.z = Math.PI;                      // hand-space -y (the blade) becomes up
+        g.scale.setScalar(2.35);
+        hover.add(g);
+        g.updateWorldMatrix(true, true);
+        const box = new THREE.Box3().setFromObject(g);
+        if (!box.isEmpty()) g.position.y -= (box.min.y + box.max.y) * 0.5 - hover.position.y - station.position.y;
+        g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+        this._armDisplays.push(arm);
+      }
 
       const light = new THREE.PointLight(weapon.palette.glow, 2.6, 6.5, 2);
       light.position.y = 2.15; station.add(light);
@@ -395,6 +340,8 @@ export class HomeBase {
 
   _clearArmory() {
     for (const arm of this.armory) arm.station.removeFromParent();
+    for (const d of this._armDisplays) d.dispose();
+    this._armDisplays.length = 0;
     this.armory.length = 0;
     this.selectedWeapon = null;
   }
@@ -539,7 +486,8 @@ export class HomeBase {
     this.root.removeFromParent();
     for (const geometry of this._geo) geometry.dispose?.();
     for (const material of this._ownedMats) material.dispose?.();
-    this._geo.length = 0; this._ownedMats.length = 0;
+    for (const d of this._armDisplays) d.dispose();
+    this._geo.length = 0; this._ownedMats.length = 0; this._armDisplays.length = 0;
   }
 }
 
