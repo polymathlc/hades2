@@ -225,10 +225,14 @@ export const SHADE = {
     name: 'erebus.shade', height: 1.88,
     build: { shoulder: 0.84, limb: 0.82, bulk: 0.86 },
     palette: SHADE_PALETTE,
+    // A WRAITH, not a bald man with a sword: a cowl over a faceless dark with
+    // two lit eyes in it, a torn shroud off the shoulders, and the xiphos.
     features: {
-      pauldron: 'none', crown: 'none', cape: false, skirt: 0, greaves: false,
-      bracers: true, harness: false, hair: 'swept', eyes: true, weapon: 'xiphos',
+      pauldron: 'none', crown: 'none', cape: true, capeStyle: 'tattered', hood: 'cowl',
+      skirt: 0, greaves: false, bracers: true, harness: false, hair: 'none', eyes: true,
+      weapon: 'xiphos', armlet: 'none',
     },
+    gait: { idle: 'idleHunch', run: 'shamble' },
     glowIntensity: 0.5,
   },
   brain: makeMeleeBrain({
@@ -436,10 +440,14 @@ export const BRUTE = {
     name: 'erebus.brute', height: 2.42,
     build: { shoulder: 1.46, limb: 1.14, bulk: 1.42 },
     palette: BRUTE_PALETTE,
+    // THE WALL: a crested Corinthian helm, spiked pauldrons and a heraldic
+    // tabard over the pteruges. Wide, tall, and armoured at every edge.
     features: {
       pauldron: 'both', crown: 'none', cape: false, skirt: 6, greaves: true,
       bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'xiphos',
+      helm: 'corinthian', spikes: true, tabard: true, armlet: 'none',
     },
+    gait: { idle: 'idleBrace', run: 'runHeavy' },
     glowIntensity: 0.55,
   },
   onSpawn(a, ctx) {

@@ -24,6 +24,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { clamp, clamp01, TAU } from '../../core/math.js';
 import { TELEGRAPH } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
+import * as PR from './props.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HEXER — ranged ground AOE
@@ -40,31 +41,28 @@ const HEXER_PALETTE = {
 };
 
 function buildStaff(ctx) {
-  const shaft = new THREE.CylinderGeometry(0.045, 0.06, 2.6, 8);
-  shaft.translate(0, 0.75, 0);
-  const grip = new THREE.TorusGeometry(0.075, 0.028, 6, 16); grip.rotateX(Math.PI / 2); grip.translate(0, 0.2, 0);
-  const wood = mergeGeometries([shaft, grip], false);
-  paintGeo(wood, '#2b1a3f', { y0: -0.6, y1: 2.1, aoLow: 0.5, top: '#5c3f7a' });
-
-  // the RING — the silhouette hook, deliberately outside the body outline
-  const ring = new THREE.TorusGeometry(0.36, 0.045, 8, 30); ring.translate(0, 2.12, 0);
-  const inner = new THREE.TorusGeometry(0.19, 0.028, 6, 20); inner.rotateY(Math.PI / 2); inner.translate(0, 2.12, 0);
-  const claw = [];
-  for (let i = 0; i < 3; i++) {
-    const a = i / 3 * TAU;
-    const c = new THREE.ConeGeometry(0.055, 0.30, 6);
-    c.translate(0, 1.86, 0);
-    c.rotateY(a); c.translate(Math.cos(a) * 0.16, 0, Math.sin(a) * 0.16);
-    claw.push(c);
-  }
-  const metal = mergeGeometries([ring, inner, ...claw], false);
-  paintGeo(metal, '#dcc46a', { y0: 1.7, y1: 2.4, aoLow: 0.62, top: '#fff0c0' });
+  // A ROD, not a cylinder: an octagonal haft with a wrapped grip and iron
+  // ferrules, a three-claw finial holding the ring, and the ring itself as a
+  // chamfered band with a lit arris rather than a torus sausage.
+  const P = HEXER_PALETTE;
+  const wood = PR.merge([
+    PR.tint(PR.shaft({ y0: -0.60, y1: 1.98, r0: 0.048, r1: 0.040, radial: 8 }),
+      (x, y) => (y > 1.2 ? '#4a3468' : '#2b1a3f'), { y0: -0.6, y1: 2.1, aoLow: 0.5 }),
+    PR.tint(PR.grip({ y0: -0.05, y1: 0.38, r: 0.056 }), PR.wrapped('#241838', '#0f0a1c', 7)),
+  ]);
+  const metal = PR.merge([
+    PR.tint(PR.ring({ y: -0.56, R: 0.046, th: 0.010, hh: 0.050, seg: 12 }), P.metalDeep),
+    PR.tint(PR.ring({ y: 1.86, R: 0.054, th: 0.011, hh: 0.070, seg: 12 }), PR.chamfered(P.metalHot, P.metal, P.metalDeep)),
+    PR.tint(PR.claws({ n: 3, y: 1.90, R: 0.15, len: 0.40, r0: 0.046, tilt: 0.60, phase: 0.3 }),
+      (x, y) => (y > 2.16 ? P.metalHot : P.metal), { y0: 1.8, y1: 2.35, aoLow: 0.6 }),
+    PR.tint(PR.xf(PR.ring({ y: 0, R: 0.36, th: 0.030, hh: 0.062, seg: 36 }), { p: [0, 2.12, 0], r: [Math.PI / 2, 0, 0] }),
+      PR.chamfered(P.metalHot, P.metal, P.metalDeep)),
+    PR.tint(PR.xf(PR.ring({ y: 0, R: 0.20, th: 0.016, hh: 0.036, seg: 26 }), { p: [0, 2.12, 0], r: [0, 0, Math.PI / 2] }), P.metal),
+  ]);
 
   const g = new THREE.Group();
-  const mw = new THREE.Mesh(wood, charMaterial(ctx, 'hair', 'hexerwood'));
-  const mm = new THREE.Mesh(metal, charMaterial(ctx, 'metal', 'hexer'));
-  mw.castShadow = true; mm.castShadow = true;
-  mw.frustumCulled = false; mm.frustumCulled = false;
+  const mw = PR.mesh(ctx, wood, 'hair', 'hexerwood');
+  const mm = PR.mesh(ctx, metal, 'metal', 'hexer');
   g.add(mw, mm);
   // the caged sigil — the only emissive on the family, sitting in the ring
   const core = new THREE.IcosahedronGeometry(0.13, 1); core.translate(0, 2.12, 0);
@@ -89,10 +87,14 @@ export const HEXER = {
     name: 'erebus.hexer', height: 2.12,
     build: { shoulder: 0.9, limb: 0.98, bulk: 0.92 },
     palette: HEXER_PALETTE,
+    // THE TRIANGLE: a cowl, a floor-length folded robe over the skirt bones,
+    // and hanging sleeves. No legs, no bracers — a shape, then a staff.
     features: {
       pauldron: 'none', crown: 'none', cape: true, skirt: 10, greaves: false,
-      bracers: true, harness: false, hair: 'none', eyes: true, weapon: 'none',
+      bracers: false, harness: false, hair: 'none', eyes: true, weapon: 'none',
+      hood: 'cowl', robe: true, sleeves: true, armlet: 'none',
     },
+    gait: { idle: 'idleCaster' },
     glowIntensity: 0.62,
   },
   onSpawn(a, ctx) {
@@ -236,28 +238,20 @@ const HERALD_PALETTE = {
 };
 
 function buildHorns(ctx) {
+  // The CRESCENT. Two ridged horns sweeping out and up off a chamfered diadem,
+  // a central fin between them and a gem at the brow.
+  const P = HERALD_PALETTE;
   const parts = [];
-  for (const s of [1, -1]) {
-    const pts = [];
-    for (let i = 0; i <= 8; i++) {
-      const t = i / 8;
-      pts.push(new THREE.Vector3(
-        s * (0.10 + 0.62 * Math.sin(t * 1.5)),
-        0.06 + 0.46 * t - 0.30 * t * t,
-        -0.05 - 0.16 * t));
-    }
-    const curve = new THREE.CatmullRomCurve3(pts);
-    const g = new THREE.TubeGeometry(curve, 12, 0.062, 7, false);
-    // taper by hand: scale radius down along the tube
-    parts.push(g);
-  }
-  const band = new THREE.TorusGeometry(0.19, 0.032, 6, 24); band.rotateX(Math.PI / 2); band.translate(0, 0.05, 0);
-  const crest = new THREE.ConeGeometry(0.07, 0.34, 5); crest.translate(0, 0.30, -0.02);
-  const g = mergeGeometries([...parts, band, crest], false);
-  paintGeo(g, '#ffd24d', { y0: -0.1, y1: 0.6, aoLow: 0.55, top: '#fff6cf' });
-  const m = new THREE.Mesh(g, charMaterial(ctx, 'metal', 'herald'));
-  m.castShadow = true; m.frustumCulled = false;
-  return m;
+  for (const s of [1, -1]) parts.push(PR.horn({
+    from: [s * 0.11, 0.02, -0.04], ctrl: [s * 0.55, 0.20, -0.18], to: [s * 0.74, 0.64, -0.34],
+    r0: 0.072, ripples: 11, n: 13,
+  }));
+  parts.push(PR.ring({ y: 0.05, R: 0.19, th: 0.014, hh: 0.046, seg: 26 }));
+  parts.push(PR.feather({ from: [0, 0.08, 0.02], to: [0, 0.54, -0.18], w: 0.075, bow: 0.05 }));
+  parts.push(PR.gem(0.048, [0, 0.10, 0.20], [1, 1.4, 0.6]));
+  const g = PR.tint(PR.merge(parts), (x, y, z) => (y > 0.42 || z > 0.16 ? P.metalHot : (y < 0.09 ? P.metalDeep : P.metal)),
+    { y0: -0.1, y1: 0.7, aoLow: 0.55 });
+  return PR.mesh(ctx, g, 'metal', 'herald');
 }
 
 function buildShards(ctx) {
@@ -289,7 +283,9 @@ export const HERALD = {
     features: {
       pauldron: 'both', crown: 'none', cape: true, skirt: 8, greaves: false,
       bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'none',
+      tabard: true, armlet: 'none',
     },
+    gait: { idle: 'idleCaster' },
     glowIntensity: 0.7,
   },
   onSpawn(a, ctx) {

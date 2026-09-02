@@ -324,11 +324,17 @@ class HumanoidVisual {
     if (t.clips) { this.anim.clips = t.clips; this.anim.cur = { clip: t.clips.idle, t: 0, speed: 1 }; }
     else t.clips = this.anim.clips;
     this.anim.ikWeight = 0.55;
-    this.anim.play('idle', { fade: 0 });
+    // GAIT. A brain asks for 'idle' / 'run' by name; the family's spec maps
+    // those onto its own clips (anim.js: idleBrace / runHeavy for the wide
+    // bodies, idleCaster for the robes, idleHunch / shamble for the wraiths)
+    // so the roster moves as differently as it is shaped. Missing entries
+    // fall through to the hero's clips unchanged.
+    this.gait = spec.gait || null;
+    this.anim.play(this.gait?.idle || 'idle', { fade: 0 });
     this.baseMat = this.rig.mesh.material;
     this.height = this.rig.height;
   }
-  play(name, o) { this.anim.play(name, o); }
+  play(name, o) { const g = this.gait; this.anim.play((g && g[name]) || name, o); }
   freeze(name, t) { this.anim.freezeAt(name, t); }
   get clipName() { return this.anim.current; }
   duration(n) { return this.anim.duration(n); }

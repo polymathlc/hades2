@@ -22,6 +22,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { clamp, clamp01, lerp, damp, TAU } from '../../core/math.js';
 import { TELEGRAPH, inDisc } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
+import * as PR from './props.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // a tiny visual driver for hand-animated procedural bodies
@@ -94,20 +95,34 @@ function houndGeo() {
     const joint = new THREE.SphereGeometry(0.145, 10, 8); joint.scale(1.0, 1.15, 1.0); joint.translate(sx * 0.25, 0.55, z0);
     const paw = new THREE.SphereGeometry(0.12, 10, 7); paw.scale(1.18, 0.58, 1.55); paw.translate(sx * 0.35, 0.065, zend + 0.035);
     legs.push(limb, joint, paw);
+    // TOES: three per paw, splayed and curling to the ground — the difference
+    // between a foot and a bean at play distance is that a foot has an edge
+    for (let ti = -1; ti <= 1; ti++) {
+      const x = sx * 0.35 + ti * 0.062, z = zend + 0.035 + 0.15;
+      legs.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+        new THREE.Vector3(x, 0.065, z - 0.03), new THREE.Vector3(x + ti * 0.012, 0.045, z + 0.05), new THREE.Vector3(x + ti * 0.02, 0.012, z + 0.10),
+      ]), 4, 0.030, 6, false));
+    }
   }
   const leg = mergeGeometries(legs, false);
   paintGeo(leg, '#1d1218', { y0: 0, y1: 0.72, aoLow: 0.56, top: '#68241f' });
 
-  // SPINES: irregular layered keratin, tapered toward the tail.
+  // SPINES: a dorsal ridge of KERATIN PLATES — flattened, bowed, diamond-
+  // section vanes that lean back harder toward the tail, alternating a few
+  // degrees left and right so the crest breaks the outline as a saw rather
+  // than as a row of identical cones. The tail ends in a bone spade.
   const spikes = [];
-  for (let i = 0; i < 8; i++) {
-    const t = i / 7;
-    const h = 0.14 + 0.22 * Math.sin(t * Math.PI);
-    const c = new THREE.ConeGeometry(0.055 + 0.015 * Math.sin(t * Math.PI), h, 7);
-    c.rotateX(-0.30 + 0.18 * t);
-    c.translate(0, 0.89 + 0.07 * Math.sin(t * Math.PI), 0.52 - 1.16 * t);
-    spikes.push(c);
+  for (let i = 0; i < 9; i++) {
+    const t = i / 8;
+    const h = 0.16 + 0.26 * Math.sin(t * Math.PI);
+    const z0 = 0.56 - 1.20 * t, y0 = 0.86 + 0.07 * Math.sin(t * Math.PI);
+    const lean = 0.55 + 0.35 * t;
+    spikes.push(PR.feather({
+      from: [0, y0, z0], to: [(i % 2 ? 0.035 : -0.035), y0 + h, z0 - h * lean],
+      w: 0.058 + 0.022 * Math.sin(t * Math.PI), bow: 0.12, n: 5,
+    }));
   }
+  spikes.push(PR.blade({ len: 0.34, w: 0.075, th: 0.014, profile: 'leaf', base: [-0.178, 0.84, -1.39], dir: [-0.47, -0.08, -0.88], across: [0, 1, 0], stations: 7, radial: 8 }));
   const ridge = mergeGeometries(spikes, false);
   paintGeo(ridge, '#292126', { y0: 0.6, y1: 1.25, aoLow: 0.66, top: '#b9aa8e' });
 
@@ -120,13 +135,22 @@ function houndGeo() {
   paintGeo(earR, '#24171d', { y0: 0.95, y1: 1.40, aoLow: 0.60, top: '#715047' });
   const nose = new THREE.SphereGeometry(0.105, 12, 8); nose.scale(1.05, 0.75, 0.80); nose.translate(0, 0.87, 1.42);
   paintGeo(nose, '#08070d', { y0: 0.7, y1: 1.0, aoLow: 0.72, top: '#332735' });
-  const collar = new THREE.CylinderGeometry(0.245, 0.235, 0.105, 14, 1, true); collar.rotateX(1.12); collar.translate(0, 0.76, 0.70);
-  paintGeo(collar, '#6e4f2b', { y0: 0.45, y1: 1.05, aoLow: 0.60, top: '#b89555' });
+  // COLLAR: a chamfered bronze band studded with eight spikes — the one
+  // ornament on the family, and the ring of glints that says "kept beast"
+  const collarParts = [PR.ring({ y: 0, R: 0.245, th: 0.022, hh: 0.078, seg: 24 })];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + 0.2, cx = Math.cos(a), cz = Math.sin(a);
+    collarParts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+      new THREE.Vector3(cx * 0.24, 0, cz * 0.24), new THREE.Vector3(cx * 0.33, 0.02, cz * 0.33), new THREE.Vector3(cx * 0.40, 0.05, cz * 0.40),
+    ]), 4, 0.026, 6, false));
+  }
+  const collar = mergeGeometries(collarParts, false); collar.rotateX(1.12); collar.translate(0, 0.76, 0.70);
+  paintGeo(collar, '#6e4f2b', { y0: 0.45, y1: 1.05, aoLow: 0.60, top: '#d8b060' });
   const fangL = new THREE.ConeGeometry(0.034, 0.15, 7); fangL.rotateZ(Math.PI); fangL.translate(-0.075, 0.73, 1.25);
   const fangR = new THREE.ConeGeometry(0.034, 0.15, 7); fangR.rotateZ(Math.PI); fangR.translate(0.075, 0.73, 1.25);
   paintGeo(fangL, '#a99b80', { y0: 0.62, y1: 0.82, aoLow: 0.68, top: '#e1d3b4' });
   paintGeo(fangR, '#a99b80', { y0: 0.62, y1: 0.82, aoLow: 0.68, top: '#e1d3b4' });
-  const features = mergeGeometries([earL, earR, nose, collar, fangL, fangR], false);
+  const features = mergeGeometries([earL, earR, nose, collar, fangL, fangR].map((g) => (g.index ? g.toNonIndexed() : g)), false);
 
   // EYES
   const e1 = new THREE.SphereGeometry(0.042, 10, 7); e1.translate(-0.105, 0.99, 1.08);

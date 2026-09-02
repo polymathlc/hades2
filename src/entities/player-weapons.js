@@ -46,7 +46,7 @@
 
 import * as THREE from 'three';
 import { WEAPONS, WEAPON_IDS } from './weapons.js';
-import { HERO_PALETTE, SLOT_PAINT, linRGB } from './rig.js';
+import { HERO_PALETTE, SLOT_PAINT, linRGB, tubeGeo } from './rig.js';
 import { painterly, setPaint, paintParams, keyRef } from '../materials/painterly.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
@@ -436,6 +436,122 @@ function bakeArm(g, slotMat, geometries) {
  * seam between two meshes at a 20-degree dihedral shows as a crack the moment
  * the sword swings.
  */
+// ── SWEPT PARTS ─────────────────────────────────────────────────────────────
+// rig.js's tubeGeo with a superellipse section is how the body gets its
+// arrises; the arms use the same sweep for anything that is not a leaf blade
+// — bow staves, curved claws, crescents, cage ribs. `sectorGroups` then splits
+// the sweep's index by radial sector into material groups, so a swept blade
+// can carry the edge paint on its two edges and the ridge paint on its spine
+// exactly as bladeSection() does, and bake into the same slots.
+function superellipse(n) {
+  return (th) => {
+    const c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
+    return 1 / Math.pow(Math.pow(c, n) + Math.pow(s, n), 1 / n);
+  };
+}
+const DIAMOND = superellipse(1.25);
+const PLATE = superellipse(5);
+
+/** regroup a tubeGeo index by radial sector: groupOf(j, radial) -> group id */
+function sectorGroups(geo, radial, groupOf, nGroups = 3) {
+  const src = geo.index.array;
+  const by = Array.from({ length: nGroups }, () => []);
+  const quads = src.length / 6;
+  for (let q = 0; q < quads; q++) {
+    const j = q % radial;
+    const g = by[groupOf(j, radial)];
+    for (let k = 0; k < 6; k++) g.push(src[q * 6 + k]);
+  }
+  const out = [];
+  geo.clearGroups();
+  let start = 0;
+  for (let g = 0; g < nGroups; g++) {
+    for (const v of by[g]) out.push(v);
+    if (by[g].length) geo.addGroup(start, by[g].length, g);
+    start += by[g].length;
+  }
+  geo.setIndex(out);
+  return geo;
+}
+/** edges (sector 0 and radial/2) -> group 1, ridge (radial/4, 3radial/4) -> 2, faces -> 0 */
+const bladeSectors = (j, R) => {
+  const e = Math.min(j, Math.abs(j - R / 2), R - j);
+  if (e < 0.6) return 1;
+  const r = Math.min(Math.abs(j - R / 4), Math.abs(j - 3 * R / 4));
+  return r < 0.6 ? 2 : 0;
+};
+
+/**
+ * A swept blade with a diamond section along a spine of {p, r, sz} stations
+ * (r = half width, sz = thickness/width). Three groups: face / edge / ridge.
+ */
+function sweptBlade(spine, o = {}) {
+  const radial = o.radial ?? 10;
+  const g = tubeGeo(spine, { radial, capStart: o.capStart || 'flat', capEnd: 'round', capScale: o.tip ?? 0.3, up: o.up, shape: o.shape || DIAMOND });
+  return sectorGroups(g, radial, bladeSectors);
+}
+
+/** a chamfered ring around +y at height y (a ferrule, a collar, a rim) */
+function bandRing({ y, R, th = 0.008, hh = 0.02, seg = 20, radial = 8, ez = 1 }) {
+  const spine = [];
+  for (let i = 0; i < seg; i++) {
+    const a = (i / (seg - 1)) * Math.PI * 2;
+    spine.push({ p: [R * Math.sin(a), y, R * Math.cos(a) * ez], r: 1, sx: th, sz: hh });
+  }
+  return tubeGeo(spine, { radial, up: [0, 1, 0], capStart: 'flat', capEnd: 'flat', shape: PLATE });
+}
+
+/** a tapered tube through a list of Vector3s */
+function taper(points, r0, r1, o = {}) {
+  const n = points.length;
+  const spine = points.map((p, i) => ({ p: [p.x, p.y, p.z], r: r0 + (r1 - r0) * (i / (n - 1)), sx: o.sx ?? 1, sz: o.sz ?? 1 }));
+  return tubeGeo(spine, { radial: o.radial ?? 8, capStart: o.capStart || 'round', capEnd: o.capEnd || 'round', up: o.up, shape: o.shape });
+}
+
+/** a rounded-rectangle outline for bevelled plates */
+function roundedRect(w, h, r) {
+  const s = new THREE.Shape();
+  const hw = w * 0.5, hh = h * 0.5;
+  s.moveTo(-hw + r, -hh);
+  s.lineTo(hw - r, -hh); s.quadraticCurveTo(hw, -hh, hw, -hh + r);
+  s.lineTo(hw, hh - r); s.quadraticCurveTo(hw, hh, hw - r, hh);
+  s.lineTo(-hw + r, hh); s.quadraticCurveTo(-hw, hh, -hw, hh - r);
+  s.lineTo(-hw, -hh + r); s.quadraticCurveTo(-hw, -hh, -hw + r, -hh);
+  return s;
+}
+/** a bevelled plate: the chamfer is what makes a box read as forged */
+function bevelPlate(w, h, depth, r = 0.02, bevel = 0.008) {
+  const g = new THREE.ExtrudeGeometry(roundedRect(w, h, r), {
+    depth: Math.max(1e-3, depth - 2 * bevel), bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
+    bevelSegments: 1, curveSegments: 3, steps: 1,
+  });
+  g.translate(0, 0, -depth * 0.5);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** a crescent (moon) plate in the x-y plane, extruded in z, bevelled */
+function crescentPlate({ R, rIn, span, depth, bevel = 0.010, cx = 0, cy = 0, tipPull = 0.35 }) {
+  const s = new THREE.Shape();
+  const N = 16, a0 = -span * 0.5, a1 = span * 0.5;
+  s.moveTo(cx + Math.cos(a0) * R, cy + Math.sin(a0) * R);
+  for (let i = 1; i <= N; i++) { const a = a0 + (a1 - a0) * i / N; s.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); }
+  // the inner arc pulls toward the tips so the horns come to points
+  for (let i = N; i >= 0; i--) {
+    const a = a0 + (a1 - a0) * i / N;
+    const k = 1 - tipPull * Math.pow(Math.abs(a) / (span * 0.5), 2.2);
+    s.lineTo(cx + Math.cos(a) * rIn * k + (R - rIn) * (1 - k) * Math.cos(a), cy + Math.sin(a) * rIn * k + (R - rIn) * (1 - k) * Math.sin(a));
+  }
+  s.closePath();
+  const g = new THREE.ExtrudeGeometry(s, {
+    depth: Math.max(1e-3, depth - 2 * bevel), bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel,
+    bevelSegments: 2, curveSegments: 3, steps: 1,
+  });
+  g.translate(0, 0, -depth * 0.5);
+  g.computeVertexNormals();
+  return g;
+}
+
 function bladeSection({ stations, steps = 4 }) {
   // [x/halfWidth, z/halfThickness, materialGroup]
   //   group 1 = the bevel that meets the cutting edge (bright, narrow)
@@ -590,33 +706,44 @@ function spearModel(pal, geometries) {
   g.userData.design = 'dory-leaf-spear';
   const keep = (geo) => { geometries.add(geo); return geo; };
 
-  const shaftGeo = keep(new THREE.CylinderGeometry(0.021, 0.026, 1.42, 9));
+  // an octagonal ash shaft with two cord bindings along its length
+  const shaftGeo = keep(new THREE.CylinderGeometry(0.021, 0.027, 1.42, 8));
   const shaft = addMesh(g, shaftGeo, pal.wood, 'avatar.weapon.spear.shaft');
   shaft.position.y = -0.30;
+  for (const [i, y] of [-0.62, 0.30].entries()) {
+    const bindGeo = keep(bandRing({ y: 0, R: 0.0245, th: 0.006, hh: 0.030, seg: 12 }));
+    addMesh(g, bindGeo, pal.wrap, `avatar.weapon.spear.binding.${i}`).position.y = y;
+  }
 
-  const collarGeo = keep(new THREE.CylinderGeometry(0.048, 0.034, 0.11, 10));
-  const collar = addMesh(g, collarGeo, pal.gold, 'avatar.weapon.spear.collar');
-  collar.position.y = -1.02;
-  const collarArris = keep(new THREE.TorusGeometry(0.048, 0.007, 5, 14));
-  const ca = addMesh(g, collarArris, pal.goldHot, 'avatar.weapon.spear.collar.arris');
-  ca.position.y = -0.975; ca.rotation.x = Math.PI / 2;
+  // SOCKET: a tapered collar with a chamfered lip, then the LEAF — the same
+  // eight-sided lenticular section as the xiphos, with a waist below the
+  // widest point so it reads as a dory head and not a spike on a pole.
+  const collarGeo = keep(new THREE.CylinderGeometry(0.046, 0.034, 0.13, 10));
+  addMesh(g, collarGeo, pal.gold, 'avatar.weapon.spear.collar').position.y = -1.02;
+  const lipGeo = keep(bandRing({ y: 0, R: 0.048, th: 0.007, hh: 0.014, seg: 14 }));
+  addMesh(g, lipGeo, pal.goldHot, 'avatar.weapon.spear.collar.arris').position.y = -0.965;
+  const headGeo = keep(bladeSection({
+    stations: [
+      [0.000, 0.030, 0.014], [-0.070, 0.062, 0.016], [-0.160, 0.086, 0.016],
+      [-0.260, 0.084, 0.014], [-0.350, 0.064, 0.011], [-0.430, 0.036, 0.007], [-0.500, 0.002, 0.002],
+    ],
+    steps: 4,
+  }));
+  const head = addMesh(g, headGeo, [pal.steel, pal.edge, pal.steelLit], 'avatar.weapon.spear.head');
+  head.position.y = -1.07;
+  // two lugs under the socket, the dory's distinguishing mark
+  for (const sgn of [-1, 1]) {
+    const lugGeo = keep(new THREE.ConeGeometry(0.018, 0.09, 5));
+    const lug = addMesh(g, lugGeo, pal.gold, `avatar.weapon.spear.lug.${sgn < 0 ? 'l' : 'r'}`);
+    lug.position.set(sgn * 0.055, -1.05, 0); lug.rotation.z = sgn * 1.15;
+  }
 
-  // A leaf head with a socket, not a bare cone: the socket is what makes it a
-  // dory rather than a spike glued to a pole.
-  const headGeo = keep(new THREE.ConeGeometry(0.100, 0.40, 4));
-  const head = addMesh(g, headGeo, pal.steel, 'avatar.weapon.spear.head');
-  head.position.y = -1.27;
-  head.rotation.set(0, Math.PI / 4, Math.PI);
-  const headEdge = keep(new THREE.ConeGeometry(0.104, 0.41, 4, 1, true));
-  const he = addMesh(g, headEdge, pal.edge, 'avatar.weapon.spear.head.edge');
-  he.position.y = -1.272; he.rotation.set(0, Math.PI / 4, Math.PI); he.scale.set(1, 1, 0.34);
-  const spineGeo = keep(new THREE.BoxGeometry(0.014, 0.34, 0.028));
-  const spine = addMesh(g, spineGeo, pal.steelLit, 'avatar.weapon.spear.head.spine');
-  spine.position.y = -1.26;
-
-  const buttGeo = keep(new THREE.ConeGeometry(0.050, 0.22, 6));
+  // SAUROTER: a square-section butt spike on its own ferrule
+  const buttGeo = keep(new THREE.ConeGeometry(0.036, 0.26, 4));
   const butt = addMesh(g, buttGeo, pal.steelDeep, 'avatar.weapon.spear.butt');
-  butt.position.y = 0.51;
+  butt.position.y = 0.53; butt.rotation.y = Math.PI / 4;
+  const ferruleGeo = keep(bandRing({ y: 0, R: 0.030, th: 0.008, hh: 0.028, seg: 12 }));
+  addMesh(g, ferruleGeo, pal.goldDeep, 'avatar.weapon.spear.ferrule').position.y = 0.40;
 
   wrappedGrip(g, pal, { y: -0.035, r0: 0.031, r1: 0.033, len: 0.24, turns: 6, name: 'avatar.weapon.spear.grip' })
     .forEach(keep);
@@ -631,29 +758,45 @@ function bowModel(pal, geometries) {
   g.userData.design = 'recurve-heart-bow';
   const keep = (geo) => { geometries.add(geo); return geo; };
 
-  const curve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(0.08, -0.66, 0),
-    new THREE.Vector3(0.26, -0.48, 0),
-    new THREE.Vector3(0.31, -0.24, 0),
-    new THREE.Vector3(0.08, 0, 0),
-    new THREE.Vector3(0.31, 0.24, 0),
-    new THREE.Vector3(0.26, 0.48, 0),
+  // A RECURVE STAVE, not a noodle: the limb is a flat section (wide across
+  // the bow plane, thin through it) that thickens at the grip and tapers to
+  // the siyahs, with a gold belly inlay and gilt tips.
+  const pts = [
+    new THREE.Vector3(0.08, -0.66, 0), new THREE.Vector3(0.26, -0.48, 0), new THREE.Vector3(0.31, -0.24, 0),
+    new THREE.Vector3(0.08, 0, 0), new THREE.Vector3(0.31, 0.24, 0), new THREE.Vector3(0.26, 0.48, 0),
     new THREE.Vector3(0.08, 0.66, 0),
-  ]);
-  const limbGeo = keep(new THREE.TubeGeometry(curve, 24, 0.026, 7, false));
+  ];
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const samples = curve.getPoints(28);
+  const limbSpine = samples.map((p, i) => {
+    const t = i / (samples.length - 1);
+    const w = 0.016 + 0.018 * Math.sin(Math.PI * t) * (1 - 0.5 * Math.pow(Math.abs(t - 0.5) * 2, 4));
+    return { p: [p.x, p.y, p.z], r: w, sx: 0.55, sz: 1.35 };
+  });
+  const limbGeo = keep(tubeGeo(limbSpine, { radial: 8, capStart: 'round', capEnd: 'round', shape: PLATE }));
   addMesh(g, limbGeo, pal.wood, 'avatar.weapon.bow.limbs');
-  // A gold backing strip along the belly of the limb — the ornament that lets
-  // the recurve catch a line of light instead of reading as a dark noodle.
-  const backGeo = keep(new THREE.TubeGeometry(curve, 24, 0.010, 5, false));
+  const backGeo = keep(new THREE.TubeGeometry(curve, 24, 0.008, 5, false));
   const back = addMesh(g, backGeo, pal.gold, 'avatar.weapon.bow.limbs.inlay');
-  back.position.z = 0.020;
+  back.position.z = 0.018;
+  // siyahs: the stiff gilt tips that carry the string nocks
+  for (const [i, sgn] of [-1, 1].entries()) {
+    const tipGeo = keep(taper([new THREE.Vector3(0.14, sgn * 0.58, 0), new THREE.Vector3(0.09, sgn * 0.66, 0), new THREE.Vector3(0.02, sgn * 0.70, 0)], 0.020, 0.008, { radial: 7, sx: 0.7, sz: 1.3, shape: PLATE }));
+    addMesh(g, tipGeo, pal.goldHot, `avatar.weapon.bow.siyah.${i}`);
+    // limb bindings
+    const bindGeo = keep(bandRing({ y: 0, R: 0.022, th: 0.005, hh: 0.024, seg: 10, radial: 6 }));
+    const b = addMesh(g, bindGeo, pal.wrap, `avatar.weapon.bow.binding.${i}`);
+    b.position.set(0.285, sgn * 0.36, 0); b.rotation.z = sgn * 0.25;
+  }
 
-  const top = new THREE.Vector3(0.08, 0.66, 0);
+  const top = new THREE.Vector3(0.03, 0.70, 0);
   const nock = new THREE.Vector3(-0.13, 0, 0.006);
-  const bottom = new THREE.Vector3(0.08, -0.66, 0);
+  const bottom = new THREE.Vector3(0.03, -0.70, 0);
   const stringA = rod(g, top, nock, 0.005, pal.bone, 'avatar.weapon.bow.string.top', 5);
   const stringB = rod(g, nock, bottom, 0.005, pal.bone, 'avatar.weapon.bow.string.bottom', 5);
   keep(stringA.geometry); keep(stringB.geometry);
+  // the nocking point: a small serving on the string
+  const servGeo = keep(new THREE.CylinderGeometry(0.009, 0.009, 0.05, 6));
+  addMesh(g, servGeo, pal.wrap, 'avatar.weapon.bow.serving').position.copy(nock);
 
   wrappedGrip(g, pal, { y: 0, r0: 0.038, r1: 0.040, len: 0.20, turns: 5, name: 'avatar.weapon.bow.grip' })
     .forEach(keep);
@@ -662,10 +805,12 @@ function bowModel(pal, geometries) {
     const w = g.getObjectByName(`avatar.weapon.bow.grip.wrap.${i}`);
     if (w) w.position.x = 0.08;
   }
-
+  // arrow rest + the heart
+  const restGeo = keep(new THREE.BoxGeometry(0.05, 0.012, 0.03));
+  addMesh(g, restGeo, pal.gold, 'avatar.weapon.bow.rest').position.set(0.045, 0.115, 0.012);
   const heartGeo = keep(new THREE.OctahedronGeometry(0.046, 0));
   const heart = addMesh(g, heartGeo, pal.accent, 'avatar.weapon.bow.heart');
-  heart.position.set(0.10, 0, 0.038);
+  heart.position.set(0.10, 0, 0.040);
   heart.scale.set(1.05, 1.25, 0.7);
 
   g.position.set(0, -0.08, 0.035);
@@ -679,34 +824,64 @@ function shieldModel(pal, geometries) {
   g.userData.design = 'chaos-hoplite-shield';
   const keep = (geo) => { geometries.add(geo); return geo; };
 
-  const diskGeo = keep(new THREE.CylinderGeometry(0.36, 0.36, 0.060, 24));
+  // the wooden core, seen from the back and the edge
+  const diskGeo = keep(new THREE.CylinderGeometry(0.34, 0.36, 0.055, 28));
   const disk = addMesh(g, diskGeo, pal.wood, 'avatar.weapon.shield.disk');
   disk.rotation.x = Math.PI / 2;
-  // A bronze face over the boards, inset from the rim so the rim reads as a
-  // separate rolled edge rather than as a painted ring.
-  const faceGeo = keep(new THREE.CylinderGeometry(0.305, 0.305, 0.020, 24));
-  const face = addMesh(g, faceGeo, pal.gold, 'avatar.weapon.shield.face');
-  face.rotation.x = Math.PI / 2; face.position.z = 0.038;
+  // A DISHED bronze face — a lathe that rises toward the boss with two
+  // concentric steps, so the face carries three rings of light instead of one
+  // flat disc's worth. Axis onto +z (out of the face).
+  const dishGeo = keep(new THREE.LatheGeometry([
+    [0.000, 0.062], [0.120, 0.058], [0.150, 0.048], [0.152, 0.040], [0.230, 0.030],
+    [0.262, 0.024], [0.264, 0.014], [0.310, 0.004], [0.322, 0.000],
+  ].map(([r, y]) => new THREE.Vector2(Math.max(0.002, r), y)), 28));
+  dishGeo.rotateX(Math.PI / 2);
+  dishGeo.computeVertexNormals();
+  const face = addMesh(g, dishGeo, pal.gold, 'avatar.weapon.shield.face');
+  face.position.z = 0.030;
+  // the two step arrises, hot
+  for (const [i, r] of [0.151, 0.263].entries()) {
+    const arrisGeo = keep(new THREE.TorusGeometry(r, 0.006, 5, 36));
+    const a = addMesh(g, arrisGeo, pal.goldHot, `avatar.weapon.shield.step.${i}`);
+    a.position.z = 0.030 + (i === 0 ? 0.045 : 0.020);
+  }
 
-  const rimGeo = keep(new THREE.TorusGeometry(0.335, 0.034, 7, 28));
+  // rolled rim + its arris, and a bead course inside it
+  const rimGeo = keep(new THREE.TorusGeometry(0.335, 0.034, 7, 32));
   const rim = addMesh(g, rimGeo, pal.steel, 'avatar.weapon.shield.rim');
   rim.position.z = 0.046;
-  const rimArris = keep(new THREE.TorusGeometry(0.348, 0.009, 5, 30));
+  const rimArris = keep(new THREE.TorusGeometry(0.350, 0.009, 5, 36));
   const ra = addMesh(g, rimArris, pal.goldHot, 'avatar.weapon.shield.rim.arris');
-  ra.position.z = 0.050;
+  ra.position.z = 0.052;
+  const beadGeo = keep(new THREE.SphereGeometry(0.014, 6, 5));
+  for (let i = 0; i < 20; i++) {
+    const a = (i / 20) * Math.PI * 2;
+    const b = addMesh(g, beadGeo, i % 2 ? pal.goldHot : pal.gold, `avatar.weapon.shield.bead.${i}`);
+    b.position.set(Math.cos(a) * 0.294, Math.sin(a) * 0.294, 0.062);
+  }
 
-  const bossGeo = keep(new THREE.SphereGeometry(0.12, 14, 9));
+  // THE BOSS: a struck umbo on a collar, with eight radiating rays — the
+  // starburst is the Chaos blazon and the one shape you read at play scale.
+  const bossGeo = keep(new THREE.SphereGeometry(0.11, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5));
+  bossGeo.rotateX(Math.PI / 2);
   const boss = addMesh(g, bossGeo, pal.gold, 'avatar.weapon.shield.boss');
-  boss.scale.z = 0.42;
-  boss.position.z = 0.075;
+  boss.scale.z = 0.55;
+  boss.position.z = 0.090;
+  const collarGeo = keep(new THREE.TorusGeometry(0.112, 0.012, 6, 24));
+  addMesh(g, collarGeo, pal.goldDeep, 'avatar.weapon.shield.boss.collar').position.z = 0.090;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const rayGeo = keep(taper([new THREE.Vector3(Math.cos(a) * 0.115, Math.sin(a) * 0.115, 0), new THREE.Vector3(Math.cos(a) * 0.225, Math.sin(a) * 0.225, 0)], 0.018, 0.004, { radial: 6, sx: 1, sz: 0.4, capStart: 'flat' }));
+    addMesh(g, rayGeo, i % 2 ? pal.goldHot : pal.gold, `avatar.weapon.shield.ray.${i}`).position.z = 0.078;
+  }
   const eyeGeo = keep(new THREE.OctahedronGeometry(0.040, 0));
   const eye = addMesh(g, eyeGeo, pal.accent, 'avatar.weapon.shield.boss.eye');
-  eye.position.z = 0.118; eye.scale.set(1, 1, 0.5);
+  eye.position.z = 0.138; eye.scale.set(1, 1, 0.5);
 
-  const barGeo = keep(new THREE.BoxGeometry(0.30, 0.038, 0.026));
+  const barGeo = keep(new THREE.BoxGeometry(0.26, 0.030, 0.020));
   for (let i = 0; i < 3; i++) {
     const bar = addMesh(g, barGeo, i === 1 ? pal.goldHot : pal.steelDeep, `avatar.weapon.shield.chaos.${i}`);
-    bar.position.z = 0.120;
+    bar.position.z = 0.128;
     bar.rotation.z = (i - 1) * Math.PI / 3;
   }
 
@@ -714,6 +889,10 @@ function shieldModel(pal, geometries) {
     .forEach(keep);
   const handle = g.getObjectByName('avatar.weapon.shield.handle');
   handle.position.z = -0.075; handle.rotation.x = Math.PI / 2;
+  // the porpax: the arm band behind the face
+  const porpaxGeo = keep(new THREE.TorusGeometry(0.075, 0.012, 6, 16, Math.PI));
+  const px = addMesh(g, porpaxGeo, pal.goldDeep, 'avatar.weapon.shield.porpax');
+  px.position.set(0, 0.16, -0.06); px.rotation.set(Math.PI / 2, 0, 0);
 
   g.position.set(0, -0.16, 0.06);
   g.rotation.set(-0.08, 0.16, 0.02);
@@ -723,45 +902,77 @@ function shieldModel(pal, geometries) {
 function fistsModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.fists'; g.userData.design = 'malphon-lion-gauntlets';
   const keep = (geo) => { geometries.add(geo); return geo; };
-  const cuffG = keep(new THREE.CylinderGeometry(0.105, 0.085, 0.30, 10));
+  // the cuff, with a chamfered gold band at each end
+  const cuffG = keep(new THREE.CylinderGeometry(0.105, 0.085, 0.30, 12));
   const cuff = addMesh(g, cuffG, pal.leather, 'avatar.weapon.fists.cuff'); cuff.position.y = -0.05;
-  const bandG = keep(new THREE.TorusGeometry(0.100, 0.014, 6, 16));
-  const band = addMesh(g, bandG, pal.gold, 'avatar.weapon.fists.cuff.band');
-  band.position.y = -0.16; band.rotation.x = Math.PI / 2;
-  const knuckleG = keep(new THREE.BoxGeometry(0.30, 0.13, 0.16));
+  for (const [i, y] of [0.09, -0.185].entries()) {
+    const bandG = keep(bandRing({ y: 0, R: i ? 0.088 : 0.104, th: 0.010, hh: 0.024, seg: 18 }));
+    addMesh(g, bandG, pal.gold, `avatar.weapon.fists.cuff.band.${i}`).position.y = y;
+  }
+  // the LION'S MASK over the knuckles: a bevelled plate with a mane of four
+  // articulated lames behind it and a brow ridge of four studs
+  const knuckleG = keep(bevelPlate(0.30, 0.13, 0.16, 0.035, 0.012));
   const knuckle = addMesh(g, knuckleG, pal.gold, 'avatar.weapon.fists.knuckles'); knuckle.position.set(0, -0.23, 0.07);
-  const kArrisG = keep(new THREE.BoxGeometry(0.30, 0.016, 0.020));
-  const kA = addMesh(g, kArrisG, pal.goldHot, 'avatar.weapon.fists.knuckles.arris'); kA.position.set(0, -0.175, 0.140);
+  for (let i = 0; i < 4; i++) {
+    const lameG = keep(bevelPlate(0.30 - i * 0.02, 0.05, 0.02, 0.012, 0.005));
+    const lame = addMesh(g, lameG, i % 2 ? pal.goldDeep : pal.gold, `avatar.weapon.fists.lame.${i}`);
+    lame.position.set(0, -0.155 + i * 0.045, 0.125 - i * 0.012); lame.rotation.x = -0.35;
+  }
+  const studG = keep(new THREE.OctahedronGeometry(0.016, 0));
+  for (let i = 0; i < 4; i++) {
+    const st = addMesh(g, studG, pal.goldHot, `avatar.weapon.fists.stud.${i}`);
+    st.position.set(-0.105 + i * 0.07, -0.19, 0.152); st.scale.set(1, 1, 0.6);
+  }
+  // CLAWS: curved, tapered, and the three read as one paw from any angle
   for (let i = -1; i <= 1; i++) {
-    const clawG = keep(new THREE.ConeGeometry(0.033, 0.24, 5));
-    const claw = addMesh(g, clawG, pal.edge, `avatar.weapon.fists.claw.${i + 1}`);
-    claw.position.set(i * 0.085, -0.41, 0.09); claw.rotation.z = Math.PI;
+    const x = i * 0.085;
+    const clawG = keep(taper([
+      new THREE.Vector3(x, -0.29, 0.10), new THREE.Vector3(x * 1.1, -0.38, 0.13), new THREE.Vector3(x * 1.2, -0.47, 0.09), new THREE.Vector3(x * 1.25, -0.53, 0.03),
+    ], 0.030, 0.004, { radial: 7, capStart: 'flat', shape: DIAMOND }));
+    addMesh(g, clawG, pal.edge, `avatar.weapon.fists.claw.${i + 1}`);
   }
   const emberG = keep(new THREE.OctahedronGeometry(0.036, 0));
   const ember = addMesh(g, emberG, pal.accent, 'avatar.weapon.fists.ember');
-  ember.position.set(0, -0.235, 0.155); ember.scale.set(1, 1.2, 0.5);
+  ember.position.set(0, -0.235, 0.158); ember.scale.set(1, 1.2, 0.5);
   g.rotation.z = -0.05; return g;
 }
 
 function railModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.rail'; g.userData.design = 'adamant-rail-cannon';
   const keep = (geo) => { geometries.add(geo); return geo; };
-  const bodyG = keep(new THREE.BoxGeometry(0.18, 0.72, 0.16));
+  // RECEIVER: a bevelled block, not a box, with a raised spine and two side
+  // plates so the body carries four planes of light instead of one
+  const bodyG = keep(bevelPlate(0.18, 0.72, 0.16, 0.03, 0.014));
   const body = addMesh(g, bodyG, pal.steel, 'avatar.weapon.rail.body'); body.position.y = -0.30;
-  const railG = keep(new THREE.BoxGeometry(0.040, 0.68, 0.030));
-  for (const s of [-1, 1]) {
-    const r = addMesh(g, railG, pal.goldHot, `avatar.weapon.rail.rail.${s < 0 ? 'l' : 'r'}`);
-    r.position.set(s * 0.072, -0.30, 0.086);
+  const spineG = keep(bevelPlate(0.06, 0.66, 0.04, 0.012, 0.006));
+  addMesh(g, spineG, pal.steelLit, 'avatar.weapon.rail.spine').position.set(0, -0.30, 0.095);
+  for (const sgn of [-1, 1]) {
+    const plateG = keep(bevelPlate(0.30, 0.10, 0.03, 0.02, 0.006));
+    const pl = addMesh(g, plateG, pal.steelDeep, `avatar.weapon.rail.plate.${sgn < 0 ? 'l' : 'r'}`);
+    pl.position.set(sgn * 0.098, -0.34, 0); pl.rotation.y = sgn * Math.PI / 2;
+    const r = addMesh(g, keep(new THREE.BoxGeometry(0.040, 0.68, 0.030)), pal.goldHot, `avatar.weapon.rail.rail.${sgn < 0 ? 'l' : 'r'}`);
+    r.position.set(sgn * 0.072, -0.30, 0.086);
   }
-  const barrelG = keep(new THREE.CylinderGeometry(0.052, 0.070, 0.72, 12));
+  // BARREL with three chamfered bands and a vented muzzle brake
+  const barrelG = keep(new THREE.CylinderGeometry(0.052, 0.070, 0.72, 14));
   const barrel = addMesh(g, barrelG, pal.steelDeep, 'avatar.weapon.rail.barrel'); barrel.position.y = -0.82;
-  const bandG = keep(new THREE.TorusGeometry(0.062, 0.013, 6, 16));
-  const bnd = addMesh(g, bandG, pal.gold, 'avatar.weapon.rail.barrel.band');
-  bnd.position.y = -0.92; bnd.rotation.x = Math.PI / 2;
-  const muzzleG = keep(new THREE.TorusGeometry(0.074, 0.018, 6, 16));
+  for (const [i, y] of [-0.70, -0.92, -1.10].entries()) {
+    const bandG = keep(bandRing({ y: 0, R: 0.058 + i * 0.002, th: 0.010, hh: 0.028, seg: 18 }));
+    addMesh(g, bandG, i === 1 ? pal.goldHot : pal.gold, `avatar.weapon.rail.barrel.band.${i}`).position.y = y;
+  }
+  const muzzleG = keep(new THREE.TorusGeometry(0.074, 0.018, 6, 18));
   const muzzle = addMesh(g, muzzleG, pal.accent, 'avatar.weapon.rail.muzzle'); muzzle.rotation.x = Math.PI / 2; muzzle.position.y = -1.19;
-  const stockG = keep(new THREE.BoxGeometry(0.13, 0.30, 0.13));
+  const ventG = keep(new THREE.BoxGeometry(0.018, 0.06, 0.03));
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    const v = addMesh(g, ventG, pal.goldDeep, `avatar.weapon.rail.vent.${i}`);
+    v.position.set(Math.cos(a) * 0.078, -1.16, Math.sin(a) * 0.078); v.rotation.y = -a;
+  }
+  // STOCK: a bevelled wooden shoulder piece with a gold butt plate
+  const stockG = keep(bevelPlate(0.13, 0.30, 0.13, 0.03, 0.01));
   const stock = addMesh(g, stockG, pal.wood, 'avatar.weapon.rail.stock'); stock.position.set(0, 0.22, -0.03); stock.rotation.z = -0.18;
+  const buttG = keep(bevelPlate(0.14, 0.05, 0.14, 0.02, 0.006));
+  const butt = addMesh(g, buttG, pal.gold, 'avatar.weapon.rail.butt'); butt.position.set(0.03, 0.385, -0.03); butt.rotation.z = -0.18;
   return g;
 }
 
@@ -771,17 +982,30 @@ function staffModel(pal, geometries) {
   const shaftG = keep(new THREE.CylinderGeometry(0.024, 0.032, 1.58, 9));
   const shaft = addMesh(g, shaftG, pal.wood, 'avatar.weapon.staff.shaft'); shaft.position.y = -0.35;
   for (let i = 0; i < 3; i++) {
-    const ferG = keep(new THREE.TorusGeometry(0.030 + i * 0.002, 0.008, 5, 12));
-    const fer = addMesh(g, ferG, pal.gold, `avatar.weapon.staff.ferrule.${i}`);
-    fer.position.y = -0.08 - i * 0.42; fer.rotation.x = Math.PI / 2;
+    const ferG = keep(bandRing({ y: 0, R: 0.028 + i * 0.002, th: 0.007, hh: 0.022, seg: 14 }));
+    addMesh(g, ferG, pal.gold, `avatar.weapon.staff.ferrule.${i}`).position.y = -0.08 - i * 0.42;
   }
-  const crownG = keep(new THREE.TorusGeometry(0.17, 0.024, 7, 24, Math.PI * 1.55));
-  const crown = addMesh(g, crownG, pal.steel, 'avatar.weapon.staff.crescent'); crown.position.y = -1.18; crown.rotation.z = 0.72;
-  const crownEdgeG = keep(new THREE.TorusGeometry(0.186, 0.008, 5, 26, Math.PI * 1.55));
-  const ce = addMesh(g, crownEdgeG, pal.edge, 'avatar.weapon.staff.crescent.edge');
-  ce.position.y = -1.18; ce.rotation.z = 0.72;
+  // THE CRESCENT: a swept blade along an arc — a diamond section so the outer
+  // rim is a ground edge and the horns taper to points, not a torus sausage.
+  const arc = [];
+  const N = 14, a0 = -0.20, a1 = Math.PI * 1.55 - 0.20;
+  for (let i = 0; i < N; i++) {
+    const t = i / (N - 1), a = a0 + (a1 - a0) * t;
+    const w = 0.026 + 0.030 * Math.sin(Math.PI * t);
+    arc.push({ p: [Math.cos(a) * 0.17, Math.sin(a) * 0.17, 0], r: w, sx: 1, sz: 0.28 });
+  }
+  const crownG = keep(sectorGroups(tubeGeo(arc, { radial: 10, capStart: 'round', capEnd: 'round', capScale: 0.4, up: [0, 0, 1], shape: DIAMOND }), 10, bladeSectors));
+  const crown = addMesh(g, crownG, [pal.steel, pal.edge, pal.steelLit], 'avatar.weapon.staff.crescent'); crown.position.y = -1.18; crown.rotation.z = 0.72;
+  // the moonstone in a three-prong claw setting
   const gemG = keep(new THREE.OctahedronGeometry(0.080, 0));
   const gem = addMesh(g, gemG, pal.accent, 'avatar.weapon.staff.moonstone'); gem.position.y = -1.18;
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.5;
+    const prongG = keep(taper([new THREE.Vector3(Math.cos(a) * 0.03, -1.06, Math.sin(a) * 0.03), new THREE.Vector3(Math.cos(a) * 0.075, -1.14, Math.sin(a) * 0.075), new THREE.Vector3(Math.cos(a) * 0.05, -1.24, Math.sin(a) * 0.05)], 0.012, 0.003, { radial: 6, capStart: 'flat' }));
+    addMesh(g, prongG, pal.goldHot, `avatar.weapon.staff.prong.${i}`);
+  }
+  const capG = keep(new THREE.CylinderGeometry(0.036, 0.028, 0.06, 10));
+  addMesh(g, capG, pal.gold, 'avatar.weapon.staff.cap').position.y = -1.02;
   wrappedGrip(g, pal, { y: -0.30, r0: 0.030, r1: 0.031, len: 0.26, turns: 6, name: 'avatar.weapon.staff.grip' })
     .forEach(keep);
   return g;
@@ -791,23 +1015,33 @@ function bladesModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.blades'; g.userData.design = 'lim-oros-sister-knives';
   const keep = (geo) => { geometries.add(geo); return geo; };
   for (const [i, x] of [-0.065, 0.065].entries()) {
-    const bladeG = keep(new THREE.ConeGeometry(0.062, 0.62, 4));
-    const blade = addMesh(g, bladeG, pal.steel, `avatar.weapon.blades.sister.${i}`);
-    blade.position.set(x, -0.40, i ? -0.025 : 0.025); blade.rotation.set(0, Math.PI / 4, Math.PI + (i ? -0.08 : 0.08));
-    const edgeG = keep(new THREE.ConeGeometry(0.066, 0.63, 4, 1, true));
-    const e = addMesh(g, edgeG, pal.edge, `avatar.weapon.blades.sister.${i}.edge`);
-    e.position.copy(blade.position); e.rotation.copy(blade.rotation); e.scale.set(1, 1, 0.28);
-    const guardG = keep(new THREE.BoxGeometry(0.10, 0.020, 0.044));
+    const z = i ? -0.025 : 0.025;
+    // a waisted leaf knife with the same faceted section as the xiphos
+    const bladeG = keep(bladeSection({
+      stations: [
+        [0.000, 0.030, 0.011], [-0.080, 0.044, 0.011], [-0.200, 0.052, 0.010],
+        [-0.340, 0.058, 0.009], [-0.470, 0.042, 0.007], [-0.560, 0.022, 0.004], [-0.620, 0.002, 0.002],
+      ],
+      steps: 3,
+    }));
+    const blade = addMesh(g, bladeG, [pal.steel, pal.edge, pal.steelLit], `avatar.weapon.blades.sister.${i}`);
+    blade.position.set(x, -0.10, z); blade.rotation.z = i ? -0.08 : 0.08;
+    const guardG = keep(bevelPlate(0.11, 0.022, 0.044, 0.008, 0.004));
     const guard = addMesh(g, guardG, pal.gold, `avatar.weapon.blades.guard.${i}`);
-    guard.position.set(x, -0.096, i ? -0.025 : 0.025);
+    guard.position.set(x, -0.096, z);
+    const ferG = keep(bandRing({ y: 0, R: 0.030, th: 0.006, hh: 0.014, seg: 12 }));
+    addMesh(g, ferG, pal.goldHot, `avatar.weapon.blades.ferrule.${i}`).position.set(x, -0.082, z);
     wrappedGrip(g, pal, { y: 0.0, r0: 0.024, r1: 0.028, len: 0.17, turns: 4, name: `avatar.weapon.blades.grip.${i}` })
       .forEach(keep);
     const grip = g.getObjectByName(`avatar.weapon.blades.grip.${i}`);
-    grip.position.set(x, 0.0, i ? -0.025 : 0.025);
+    grip.position.set(x, 0.0, z);
     for (let w = 0; w < 4; w++) {
       const wr = g.getObjectByName(`avatar.weapon.blades.grip.${i}.wrap.${w}`);
-      if (wr) { wr.position.x = x; wr.position.z = i ? -0.025 : 0.025; }
+      if (wr) { wr.position.x = x; wr.position.z = z; }
     }
+    const pomG = keep(new THREE.OctahedronGeometry(0.026, 0));
+    const pom = addMesh(g, pomG, i ? pal.accent : pal.gold, `avatar.weapon.blades.pommel.${i}`);
+    pom.position.set(x, 0.10, z); pom.scale.set(1, 0.8, 1);
   }
   return g;
 }
@@ -815,18 +1049,30 @@ function bladesModel(pal, geometries) {
 function flamesModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.flames'; g.userData.design = 'ygnium-umbral-torches';
   const keep = (geo) => { geometries.add(geo); return geo; };
-  const handleG = keep(new THREE.CylinderGeometry(0.035, 0.05, 0.46, 9));
+  const handleG = keep(new THREE.CylinderGeometry(0.035, 0.05, 0.46, 10));
   const handle = addMesh(g, handleG, pal.leather, 'avatar.weapon.flames.handle'); handle.position.y = -0.08;
   for (let i = 0; i < 4; i++) {
-    const wrG = keep(new THREE.TorusGeometry(0.040 + i * 0.004, 0.010, 5, 12));
-    const wr = addMesh(g, wrG, pal.wrap, `avatar.weapon.flames.handle.wrap.${i}`);
-    wr.position.y = 0.04 - i * 0.075; wr.rotation.x = Math.PI / 2;
+    const wrG = keep(bandRing({ y: 0, R: 0.040 + i * 0.004, th: 0.006, hh: 0.016, seg: 12, radial: 6 }));
+    addMesh(g, wrG, pal.wrap, `avatar.weapon.flames.handle.wrap.${i}`).position.y = 0.04 - i * 0.075;
   }
-  for (let i = 0; i < 3; i++) {
-    const ringG = keep(new THREE.TorusGeometry(0.10 + i * 0.035, 0.015, 6, 18));
-    const ring = addMesh(g, ringG, i === 2 ? pal.goldHot : pal.gold, `avatar.weapon.flames.ring.${i}`);
-    ring.position.y = -0.38; ring.rotation.x = Math.PI / 2 + i * 0.22;
+  // the BOWL and the CAGE: a gold cup with four curved ribs meeting over the
+  // fire, so the torch has a lantern's silhouette and the core sits inside it
+  const bowlG = keep(new THREE.LatheGeometry([[0.02, 0], [0.06, 0.02], [0.10, 0.06], [0.13, 0.10], [0.125, 0.115]].map(([r, y]) => new THREE.Vector2(r, y)), 14));
+  bowlG.computeVertexNormals();
+  addMesh(g, bowlG, pal.gold, 'avatar.weapon.flames.bowl').position.y = -0.40;
+  const lipG = keep(bandRing({ y: 0, R: 0.128, th: 0.008, hh: 0.014, seg: 18 }));
+  addMesh(g, lipG, pal.goldHot, 'avatar.weapon.flames.bowl.lip').position.y = -0.29;
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2;
+    const c = Math.cos(a), sn = Math.sin(a);
+    const ribG = keep(taper([
+      new THREE.Vector3(c * 0.125, -0.29, sn * 0.125), new THREE.Vector3(c * 0.15, -0.44, sn * 0.15),
+      new THREE.Vector3(c * 0.11, -0.60, sn * 0.11), new THREE.Vector3(c * 0.03, -0.68, sn * 0.03),
+    ], 0.012, 0.006, { radial: 6, capStart: 'flat' }));
+    addMesh(g, ribG, i % 2 ? pal.goldHot : pal.gold, `avatar.weapon.flames.rib.${i}`);
   }
+  const finialG = keep(new THREE.OctahedronGeometry(0.030, 0));
+  addMesh(g, finialG, pal.goldHot, 'avatar.weapon.flames.finial').position.y = -0.70;
   const fireG = keep(new THREE.OctahedronGeometry(0.10, 1));
   const fire = addMesh(g, fireG, pal.core, 'avatar.weapon.flames.core'); fire.position.y = -0.48; fire.scale.set(0.8, 1.5, 0.8);
   return g;
@@ -837,18 +1083,34 @@ function axeModel(pal, geometries) {
   const keep = (geo) => { geometries.add(geo); return geo; };
   const shaftG = keep(new THREE.CylinderGeometry(0.032, 0.040, 1.52, 9));
   const shaft = addMesh(g, shaftG, pal.wood, 'avatar.weapon.axe.shaft'); shaft.position.y = -0.36;
-  const langetG = keep(new THREE.BoxGeometry(0.020, 0.34, 0.070));
-  const langet = addMesh(g, langetG, pal.gold, 'avatar.weapon.axe.langet');
-  langet.position.set(0.028, -1.00, 0);
-  const headG = keep(new THREE.BoxGeometry(0.52, 0.18, 0.10));
-  const head = addMesh(g, headG, pal.steel, 'avatar.weapon.axe.head'); head.position.set(0.16, -1.11, 0); head.rotation.z = 0.20;
-  const cheekG = keep(new THREE.BoxGeometry(0.50, 0.055, 0.030));
-  const cheek = addMesh(g, cheekG, pal.steelDeep, 'avatar.weapon.axe.head.cheek');
-  cheek.position.set(0.16, -1.09, 0.050); cheek.rotation.z = 0.20;
-  const edgeG = keep(new THREE.ConeGeometry(0.25, 0.48, 4));
-  const edge = addMesh(g, edgeG, pal.edge, 'avatar.weapon.axe.moon-edge'); edge.position.set(0.39, -1.09, 0); edge.rotation.set(0, Math.PI / 4, Math.PI / 2);
-  const gemG = keep(new THREE.OctahedronGeometry(0.072, 0));
-  const gem = addMesh(g, gemG, pal.accent, 'avatar.weapon.axe.gem'); gem.position.set(0.10, -1.11, 0.07);
+  const ferG = keep(bandRing({ y: 0, R: 0.041, th: 0.008, hh: 0.024, seg: 14 }));
+  addMesh(g, ferG, pal.goldDeep, 'avatar.weapon.axe.ferrule').position.y = 0.38;
+  // LANGETS: two gold straps down the haft under the head
+  for (const sgn of [-1, 1]) {
+    const langetG = keep(bevelPlate(0.020, 0.38, 0.070, 0.006, 0.004));
+    const l = addMesh(g, langetG, pal.gold, `avatar.weapon.axe.langet.${sgn < 0 ? 'l' : 'r'}`);
+    l.position.set(sgn * 0.034, -0.98, 0);
+  }
+  // THE MOON: a bevelled crescent plate with its outer arc rimmed in the edge
+  // paint, hung off a chamfered eye collar. The arris of the bevel is where
+  // the key catches; the rim is the sharpened edge.
+  const headG = keep(crescentPlate({ R: 0.46, rIn: 0.32, span: 1.70, depth: 0.075, bevel: 0.012, cx: 0.16, cy: -1.11, tipPull: 0.40 }));
+  addMesh(g, headG, [pal.steel], 'avatar.weapon.axe.head');
+  const edgeArc = [];
+  for (let i = 0; i < 16; i++) {
+    const t = i / 15, a = -0.85 + 1.70 * t;
+    edgeArc.push({ p: [0.16 + Math.cos(a) * 0.462, -1.11 + Math.sin(a) * 0.462, 0], r: 0.014 + 0.010 * Math.sin(Math.PI * t), sx: 1, sz: 0.5 });
+  }
+  const edgeG = keep(tubeGeo(edgeArc, { radial: 8, capStart: 'round', capEnd: 'round', capScale: 0.5, up: [0, 0, 1], shape: DIAMOND }));
+  addMesh(g, edgeG, pal.edge, 'avatar.weapon.axe.moon-edge');
+  const eyeG = keep(bandRing({ y: 0, R: 0.052, th: 0.012, hh: 0.16, seg: 12 }));
+  addMesh(g, eyeG, pal.gold, 'avatar.weapon.axe.eye').position.y = -1.11;
+  const eyeArrisG = keep(bandRing({ y: 0, R: 0.056, th: 0.006, hh: 0.012, seg: 14 }));
+  for (const [i, y] of [-1.19, -1.03].entries()) addMesh(g, eyeArrisG, pal.goldHot, `avatar.weapon.axe.eye.arris.${i}`).position.y = y;
+  const backG = keep(taper([new THREE.Vector3(-0.05, -1.11, 0), new THREE.Vector3(-0.16, -1.13, 0), new THREE.Vector3(-0.24, -1.17, 0)], 0.045, 0.006, { radial: 7, capStart: 'flat', shape: PLATE }));
+  addMesh(g, backG, pal.steelDeep, 'avatar.weapon.axe.spike');
+  const gemG = keep(new THREE.OctahedronGeometry(0.060, 0));
+  const gem = addMesh(g, gemG, pal.accent, 'avatar.weapon.axe.gem'); gem.position.set(0.15, -1.11, 0.045); gem.scale.set(1, 1.3, 0.6);
   wrappedGrip(g, pal, { y: -0.20, r0: 0.036, r1: 0.038, len: 0.28, turns: 6, name: 'avatar.weapon.axe.grip' })
     .forEach(keep);
   return g;
@@ -857,38 +1119,77 @@ function axeModel(pal, geometries) {
 function skullModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.skull'; g.userData.design = 'revaal-argent-skull';
   const keep = (geo) => { geometries.add(geo); return geo; };
-  const skullG = keep(new THREE.DodecahedronGeometry(0.22, 1));
-  const skull = addMesh(g, skullG, pal.bone, 'avatar.weapon.skull.cranium'); skull.position.y = -0.28; skull.scale.set(1, 1.1, 0.88);
-  const circletG = keep(new THREE.TorusGeometry(0.205, 0.020, 6, 20));
-  const circlet = addMesh(g, circletG, pal.gold, 'avatar.weapon.skull.circlet');
-  circlet.position.y = -0.20; circlet.rotation.x = Math.PI / 2;
-  for (const s of [-1, 1]) {
-    const eyeG = keep(new THREE.OctahedronGeometry(0.042, 0));
-    const eye = addMesh(g, eyeG, pal.accent, `avatar.weapon.skull.eye.${s}`); eye.position.set(s * 0.075, -0.30, 0.18);
+  // a CRANIUM, not a dodecahedron: a lathe with a brow ridge, cheekbones and
+  // two sunk sockets around the accent eyes; a jaw of teeth under it
+  const skullG = keep(new THREE.LatheGeometry([
+    [0.00, 0.250], [0.10, 0.245], [0.17, 0.205], [0.215, 0.125], [0.225, 0.030],
+    [0.205, -0.070], [0.165, -0.135], [0.110, -0.175], [0.03, -0.190],
+  ].map(([r, y]) => new THREE.Vector2(Math.max(0.002, r), y)), 18));
+  skullG.scale(1, 1.05, 0.90);
+  skullG.computeVertexNormals();
+  const skull = addMesh(g, skullG, pal.bone, 'avatar.weapon.skull.cranium'); skull.position.y = -0.28;
+  const browG = keep(new THREE.TorusGeometry(0.19, 0.022, 6, 18, Math.PI * 0.8));
+  const brow = addMesh(g, browG, pal.bone, 'avatar.weapon.skull.brow'); brow.position.set(0, -0.235, 0.04); brow.rotation.set(0.3, 0, -Math.PI * 0.4);
+  const cheekG = keep(new THREE.SphereGeometry(0.05, 8, 6));
+  for (const sgn of [-1, 1]) {
+    const ck = addMesh(g, cheekG, pal.bone, `avatar.weapon.skull.cheek.${sgn < 0 ? 'l' : 'r'}`);
+    ck.position.set(sgn * 0.13, -0.335, 0.13); ck.scale.set(1.1, 0.8, 1.0);
+    const sockG = keep(new THREE.SphereGeometry(0.052, 8, 6));
+    const so = addMesh(g, sockG, pal.steelDeep, `avatar.weapon.skull.socket.${sgn < 0 ? 'l' : 'r'}`);
+    so.position.set(sgn * 0.078, -0.295, 0.150); so.scale.set(1.1, 0.9, 0.5);
+    const eyeG = keep(new THREE.OctahedronGeometry(0.040, 0));
+    const eye = addMesh(g, eyeG, pal.accent, `avatar.weapon.skull.eye.${sgn}`); eye.position.set(sgn * 0.075, -0.295, 0.175);
   }
-  const jawG = keep(new THREE.BoxGeometry(0.24, 0.10, 0.17));
-  const jaw = addMesh(g, jawG, pal.bone, 'avatar.weapon.skull.jaw'); jaw.position.set(0, -0.48, 0.02);
+  const circletG = keep(bandRing({ y: 0, R: 0.212, th: 0.010, hh: 0.026, seg: 26, ez: 0.92 }));
+  addMesh(g, circletG, pal.gold, 'avatar.weapon.skull.circlet').position.y = -0.18;
+  const nasalG = keep(new THREE.ConeGeometry(0.022, 0.07, 5));
+  const nasal = addMesh(g, nasalG, pal.steelDeep, 'avatar.weapon.skull.nasal'); nasal.position.set(0, -0.36, 0.175); nasal.rotation.x = 0.4;
+  // JAW: a U of bone with a row of teeth
+  const jawArc = [];
+  for (let i = 0; i < 9; i++) { const a = -0.55 + (i / 8) * 1.1; jawArc.push({ p: [Math.sin(a) * 0.19, 0, Math.cos(a) * 0.19 - 0.06], r: 0.030, sx: 1, sz: 0.8 }); }
+  const jawG = keep(tubeGeo(jawArc, { radial: 8, capStart: 'round', capEnd: 'round', up: [0, 1, 0] }));
+  addMesh(g, jawG, pal.bone, 'avatar.weapon.skull.jaw').position.y = -0.47;
+  const toothG = keep(new THREE.ConeGeometry(0.012, 0.035, 4));
+  for (let i = 0; i < 7; i++) {
+    const a = -0.42 + (i / 6) * 0.84;
+    const t = addMesh(g, toothG, pal.steelDeep, `avatar.weapon.skull.tooth.${i}`);
+    t.position.set(Math.sin(a) * 0.165, -0.43, Math.cos(a) * 0.165 - 0.06); t.rotation.z = Math.PI;
+  }
   const teethG = keep(new THREE.BoxGeometry(0.22, 0.022, 0.030));
-  const teeth = addMesh(g, teethG, pal.steelDeep, 'avatar.weapon.skull.teeth');
-  teeth.position.set(0, -0.432, 0.088);
+  addMesh(g, teethG, pal.steelDeep, 'avatar.weapon.skull.teeth').position.set(0, -0.415, 0.10);
   return g;
 }
 
 function coatModel(pal, geometries) {
   const g = new THREE.Group(); g.name = 'avatar.weapon.coat'; g.userData.design = 'xinth-jet-gauntlet';
   const keep = (geo) => { geometries.add(geo); return geo; };
-  const armG = keep(new THREE.CylinderGeometry(0.12, 0.095, 0.48, 10));
+  const armG = keep(new THREE.CylinderGeometry(0.12, 0.095, 0.48, 12));
   const arm = addMesh(g, armG, pal.leather, 'avatar.weapon.coat.gauntlet'); arm.position.y = -0.12;
-  const plateG = keep(new THREE.BoxGeometry(0.32, 0.34, 0.10));
+  // ARTICULATED VAMBRACE: a bevelled shield plate over three curved lames
+  const plateG = keep(bevelPlate(0.32, 0.34, 0.10, 0.04, 0.012));
   const plate = addMesh(g, plateG, pal.steel, 'avatar.weapon.coat.shield-plate'); plate.position.set(0, -0.18, 0.10);
-  const plateArrisG = keep(new THREE.BoxGeometry(0.325, 0.014, 0.022));
+  const plateArrisG = keep(new THREE.BoxGeometry(0.325, 0.012, 0.020));
   for (const y of [-0.02, -0.34]) {
     const pa = addMesh(g, plateArrisG, pal.goldHot, `avatar.weapon.coat.shield-plate.arris.${y < -0.2 ? 'b' : 't'}`);
-    pa.position.set(0, y, 0.150);
+    pa.position.set(0, y, 0.152);
   }
-  for (const s of [-1, 1]) {
-    const jetG = keep(new THREE.ConeGeometry(0.052, 0.26, 8));
-    const jet = addMesh(g, jetG, pal.accent, `avatar.weapon.coat.jet.${s}`); jet.position.set(s * 0.10, 0.18, -0.05);
+  for (let i = 0; i < 3; i++) {
+    const lameG = keep(bandRing({ y: 0, R: 0.125 + i * 0.008, th: 0.010, hh: 0.040, seg: 14, radial: 6 }));
+    const lame = addMesh(g, lameG, i % 2 ? pal.steelDeep : pal.steel, `avatar.weapon.coat.lame.${i}`);
+    lame.position.y = 0.02 + i * 0.05;
+  }
+  const emblemG = keep(new THREE.OctahedronGeometry(0.05, 0));
+  const em = addMesh(g, emblemG, pal.gold, 'avatar.weapon.coat.emblem'); em.position.set(0, -0.18, 0.15); em.scale.set(1, 1.3, 0.5);
+  const coreG = keep(new THREE.OctahedronGeometry(0.026, 0));
+  addMesh(g, coreG, pal.accent, 'avatar.weapon.coat.emblem.core').position.set(0, -0.18, 0.168);
+  // JETS: two flared nozzles with a gold throat ring, angled back
+  for (const sgn of [-1, 1]) {
+    const jetG = keep(taper([new THREE.Vector3(sgn * 0.10, 0.06, -0.04), new THREE.Vector3(sgn * 0.11, 0.20, -0.07), new THREE.Vector3(sgn * 0.12, 0.31, -0.09)], 0.030, 0.052, { radial: 10, capStart: 'flat', capEnd: 'flat' }));
+    addMesh(g, jetG, pal.steelDeep, `avatar.weapon.coat.jet.${sgn}`);
+    const throatG = keep(bandRing({ y: 0, R: 0.050, th: 0.007, hh: 0.014, seg: 14 }));
+    const th = addMesh(g, throatG, pal.goldHot, `avatar.weapon.coat.jet.${sgn}.throat`); th.position.set(sgn * 0.12, 0.30, -0.09); th.rotation.x = 0.2;
+    const glowG = keep(new THREE.OctahedronGeometry(0.030, 0));
+    addMesh(g, glowG, pal.accent, `avatar.weapon.coat.jet.${sgn}.flame`).position.set(sgn * 0.12, 0.33, -0.095);
   }
   return g;
 }
