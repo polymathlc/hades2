@@ -523,7 +523,7 @@ export class MaterialLibrary {
       'variant', 'rimColor', 'rimPower', 'rimStrength', 'rimDir', 'rimGate', 'shadowTint',
       'shadowDepth', 'rampSoftness', 'rampStrength', 'rampSteps', 'rampLevels', 'keyRef',
       'contourColor', 'contourStrength', 'contourStart', 'repeat', 'size', 'painterly', 'tint', 'envMap',
-      'litGain', 'ambGain', 'specGain'];
+      'litGain', 'ambGain', 'specGain', 'vertexHue'];
     const three = {};
     for (const k in opts) {
       if (MINE.indexOf(k) >= 0) own[k] = opts[k];

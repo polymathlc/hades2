@@ -330,6 +330,7 @@ uniform float uRimTighten;    // fresnel exponent multiplier (1 = off)
 uniform vec3  uRimSuppress;
 uniform float uRimSuppressK;
 uniform float uShadowNeutral; // 0 = the authored shadow tint, 1 = its luminance
+uniform float uVertexHue;     // share of the vertex colour's CHROMA applied (its value always is)
 
 float gPaintLit = 1.0;
 // Set in the map fragment, consumed by the normal and roughness fragments,
@@ -615,6 +616,7 @@ export function painterly(mat, o = {}) {
     uRimSuppress:     { value: new THREE.Vector3(...(p.rimSuppress || ENVIRONMENT_LOOK.rimSuppress)) },
     uRimSuppressK:    { value: p.rimSuppressK ?? ENVIRONMENT_LOOK.rimSuppressK },
     uShadowNeutral:   { value: p.shadowNeutral ?? 0.0 },
+    uVertexHue:       { value: p.vertexHue ?? 1.0 },
   };
 
   // projection: 'uv' | 'planarY' (world XZ) | 'cylinderY' | 'triplanar'
@@ -823,6 +825,33 @@ export function painterly(mat, o = {}) {
       `;
     }
     if (!DBG.noMaps) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', mapFrag);
+
+    // ---- vertex colour: VALUE always, HUE by consent ----------------------
+    // A surface that receives vertex colours (the arena floor, the void skirt)
+    // gets them from the world as a value glaze AND a hue push. The value half
+    // is composition — pools, the island hump, the repoussoir crush — and it is
+    // always applied in full. The hue half is a per-material decision: on the
+    // Tartarus floor the world's k=0.88 push toward '#2b83c4' / '#ffb070'
+    // multiplied a crimson albedo into 2-5m cyan and salmon patches that the
+    // round-1 critique read as a colour blotch (§1.4 noise-slop) and that hid
+    // every per-flag stroke under it. `vertexHue` lets a recipe keep the value
+    // structure and take only a share of the chroma, so the painted per-stone
+    // colour variation owns the surface again. Identity at 1.0 (the default —
+    // no material moves unless its recipe asks).
+    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', /* glsl */`
+      #if defined( USE_COLOR_ALPHA )
+        vec3 pVC = vColor.rgb;
+        diffuseColor.a *= vColor.a;
+      #elif defined( USE_COLOR )
+        vec3 pVC = vColor.rgb;
+      #else
+        vec3 pVC = vec3( 1.0 );
+      #endif
+      {
+        float pVL = dot( pVC, vec3( 0.2126, 0.7152, 0.0722 ) );
+        diffuseColor.rgb *= mix( vec3( pVL ), pVC, uVertexHue );
+      }
+    `);
 
     if (worldProj && !DBG.noMaps) {
       // gPaintBump is the detail layer's micro-relief, added AFTER normalScale
