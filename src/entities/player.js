@@ -92,23 +92,23 @@ export const WEAPON_ANIM = {
   spear:  { _fallback: 'thrust1', _charge: 'throwWind', _block: 'guard', _rush: 'rush',
             poke1: 'thrust1', poke2: 'thrust2', dashthrust: 'dashThrust', spin: 'spin', loose: 'throw' },
   bow:    { _fallback: 'loose', _charge: 'draw', _block: 'guard', _rush: 'rush',
-            loose: 'loose', kick: 'special' },
+            loose: 'loose', kick: 'special', snapshot: 'loose' },
   shield: { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
             punch1: 'bash1', punch2: 'bash2' },
   fists:  { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
             jab1: 'bash1', jab2: 'bash2', jab3: 'attack1', jab4: 'bash2', dashupper: 'dashUpper', uppercut: 'special' },
   rail:   { _fallback: 'loose', _charge: 'draw', _block: 'guard', _rush: 'rush',
-            loose: 'loose', bombard: 'castSweep' },
+            loose: 'loose', bombard: 'castSweep', hipfire: 'loose' },
   staff:  { _fallback: 'thrust1', _charge: 'throwWind', _block: 'guard', _rush: 'rush',
-            staff1: 'thrust1', staff2: 'spin', staff3: 'castSweep', loose: 'throw' },
+            staff1: 'thrust1', staff2: 'spin', staff3: 'castSweep', loose: 'throw', dashstaff: 'dashThrust' },
   blades: { _fallback: 'attack1', _charge: 'draw', _block: 'guard', _rush: 'dash',
             knife1: 'attack1', knife2: 'attack2', knife3: 'attack3', shadowcut: 'dashSlash', loose: 'loose' },
   flames: { _fallback: 'loose', _charge: 'castRitual', _block: 'guard', _rush: 'rush',
-            loose: 'cast', orbit: 'castSweep' },
+            loose: 'cast', orbit: 'castSweep', dashflare: 'loose' },
   axe:    { _fallback: 'attack3', _charge: 'spin', _block: 'guard', _rush: 'rush',
-            hew1: 'attack3', hew2: 'spin', moonwall: 'special' },
+            hew1: 'attack3', hew2: 'spin', moonwall: 'special', dashhew: 'dashSlash' },
   skull:  { _fallback: 'loose', _charge: 'castRitual', _block: 'guard', _rush: 'rush',
-            loose: 'throw', skullrush: 'rush' },
+            loose: 'throw', skullrush: 'rush', dashskull: 'dashThrust' },
   coat:   { _fallback: 'bash1', _charge: 'guard', _block: 'guard', _rush: 'rush',
             gauntlet1: 'bash1', gauntlet2: 'bash2', gauntlet3: 'special', jetpunch: 'dashThrust', rockets: 'castSweep' },
 };
@@ -201,6 +201,10 @@ export class Player {
 
     ctx.events.on('damage.dealt', (info) => { if (info && info.target === this) this._onHurt(info); });
     ctx.events.on('entity.died', (info) => { if (info && info.entity === this) this._onDeath(); });
+    // PERFECT DODGE (combat.js decides; this file pays out the movement half):
+    // the dash cooldown is refunded so the ready ring snaps the instant the
+    // dash ends, and the hero reads as having earned another one.
+    ctx.events.on('player.perfectDodge', () => this._onPerfectDodge());
     ctx.events.on('capture.state', ({ name }) => this._captureState(name, ctx));
     // A biome change re-publishes the rig's rim constant over every character
     // material; re-assert our per-slot art direction a few frames later.
@@ -924,6 +928,15 @@ export class Player {
     if (this.dash.readyPulse <= 0) { this.readyRing.visible = false; this.readyMat.opacity = 0; }
   }
 
+  _onPerfectDodge() {
+    const T = this.tune;
+    if (!this.alive) return;
+    this.dash.cd = Math.min(this.dash.cd, Math.max(0.02, T.dashTime - this.dash.t + 0.02));
+    this.combatHeat = Math.min(1.6, this.combatHeat + 0.35);
+    this.squash = -0.05;
+    this.ctx?.ui?.toast?.('PERFECT DODGE', { color: this.characterRimHex || '#5fd0ff', dur: 0.8 });
+  }
+
   // ───────────────────────────────────────────────────────────── damage ────
   _onHurt(info) {
     const ctx = this.ctx, T = this.tune;
@@ -963,6 +976,7 @@ export class Player {
   /** used by AGENT-RUN between chambers */
   respawn(pos) {
     this.health = this.maxHealth; this.mana = this.maxMana;
+    this._perfectDodgeT = 0; this._perfectDodgeLock = 0; this.perfectDodges = 0;
     this.resetCastShards();
     this.alive = true; this.dead = false; this.state = 'move';
     this.weapon?.cancel?.(); this.blocking = null; this._animKey = null;

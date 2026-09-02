@@ -94,6 +94,10 @@ export class HitboxSystem {
       damage: 0, type: 'physical', knockback: 0, hitstop: 0, shake: 0,
       poiseDamage: 0, statusKind: null, statusStacks: 0, statusPower: 0, critBonus: 0,
       expose: 0, critMark: 0, boonGod: null, boonSlot: null,
+      // FEEL riders: `weight` scales hit-stop/shake in combat.hit(); a capsule
+      // with `tipBonus` rewards landing the far `tipFrom` fraction of its length
+      // (the Spear's spacing game); `dashStrike` marks a dash-attack hitbox.
+      weight: 1, tipBonus: 0, tipFrom: 0.6, dashStrike: false, finisher: false,
       tag: '', color: null, on: null, source: null,
       // memory
       hits: new Array(MAX_HIT_MEMORY).fill(null), nHits: 0,
@@ -187,6 +191,11 @@ export class HitboxSystem {
     h.critMark = d.critMark ?? 0;
     h.boonGod = d.boonGod || null;
     h.boonSlot = d.boonSlot || null;
+    h.weight = d.weight ?? 1;
+    h.tipBonus = d.tipBonus ?? 0;
+    h.tipFrom = d.tipFrom ?? 0.6;
+    h.dashStrike = !!d.dashStrike;
+    h.finisher = !!d.finisher;
     h.tag = d.tag || '';
     h.color = d.color || null;
     h.on = d.on || null;
@@ -286,9 +295,12 @@ export class HitboxSystem {
 
   /** normal from the hitbox toward the victim, written into _nx/_nz */
   _nx = 0; _nz = 1;
+  /** for capsules: where along the length (0 base .. 1 tip) the victim sat */
+  _frac = 0;
 
   _overlap(h, ex, ez, er) {
     const R = h.r + er;
+    this._frac = 0;
     switch (h.shape) {
       case SHAPE.CIRCLE: {
         // swept circle == capsule from the previous centre to the current one
@@ -302,6 +314,9 @@ export class HitboxSystem {
         const bx = h.x + h.ax * h.len, bz = h.z + h.az * h.len;
         const d2 = distSqPointSeg(ex, ez, h.x, h.z, bx, bz);
         if (d2 > R * R) return false;
+        // projection along the shaft: the Spear pays for the tip, not the haft
+        const vv = h.len > 1e-4 ? ((ex - h.x) * h.ax + (ez - h.z) * h.az) / h.len : 0;
+        this._frac = vv < 0 ? 0 : vv > 1 ? 1 : vv;
         this._normalFrom(h.x, h.z, ex, ez);
         return true;
       }

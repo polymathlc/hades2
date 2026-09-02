@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { BOONS, DUOS, BoonState, GOD_INFO, GOD_KEYS, emptyMods, valuesFor } from '../src/game/boons.js';
+import { BOONS, DUOS, BoonState, GOD_INFO, GOD_KEYS, emptyMods, valuesFor, SKILL_BOONS, SKILL_DUOS } from '../src/game/boons.js';
 import { CombatSystem } from '../src/entities/combat.js';
 import { VFX } from '../src/vfx/index.js';
 import { ProjectileSystem } from '../src/entities/projectiles.js';
@@ -348,4 +348,38 @@ for (const god of ['demeter', 'apollo', 'hera', 'hestia']) {
   assert.ok(h.player._boonSlamT > 0 && h.ctx.boons.mods.slamSpeed > 0, 'Rip Current did not start its post-slam speed window');
 }
 
-console.log(`boons ok: ${BOONS.length} core, ${DUOS.length} duo, runtime hooks verified`);
+// SKILL BOONS pay for how you fight. Each mechanic reaches combat.applyDamage.
+assert.ok(SKILL_BOONS.length >= 8, 'skill boon set is not substantial');
+assert.ok(SKILL_DUOS.length >= 4, 'skill duo set is not substantial');
+for (const b of [...SKILL_BOONS, ...SKILL_DUOS]) assert.ok(b.mechanic, `${b.id} is not tagged with its mechanic`);
+assert.ok(new Set([...SKILL_BOONS, ...SKILL_DUOS].map(b => b.mechanic)).size >= 4, 'skill boons cover too few mechanics');
+{
+  // backstab: the hit direction agrees with the victim's facing
+  let h = harness(); grant(h.ctx, 'artemis.passive.flank');
+  h.enemy.facing = { x: 1, z: 0 };
+  const behind = h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player, dir: new THREE.Vector3(1, 0, 0) });
+  const front = h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player, dir: new THREE.Vector3(-1, 0, 0) });
+  assert.ok(behind > front && behind >= 12, 'Exposed Flank did not pay for a backstab');
+  // execute: below the threshold
+  h = harness(); grant(h.ctx, 'ares.passive.merciless');
+  const healthy = h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player });
+  h.enemy.health = 100;
+  const dying = h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player });
+  assert.ok(dying > healthy, 'Merciless did not pay below the threshold');
+  // stagger: a staggered foe takes more
+  h = harness(); grant(h.ctx, 'athena.passive.riposte');
+  h.enemy.stagger = 0.4;
+  assert.ok(h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player }) > 12, 'Divine Riposte ignored the stagger');
+  // perfect dodge duo: the riposte strike is a guaranteed crit
+  h = harness(); grant(h.ctx, 'duo.hermes.ares');
+  h.player._perfectDodgeT = 1;
+  const crit = h.combat.applyDamage({ target: h.enemy, amount: 10, source: h.player, boonSlot: 'attack' });
+  assert.ok(crit >= 20, `Split Second did not crit the riposte (${crit})`);
+  h = harness(); grant(h.ctx, 'zeus.passive.static');
+  h.player.state = 'dash'; h.player.iframes = 0.2; h.player.dash = { t: 0.05 }; h.player.tune = { dashIFrames: [0.015, 0.215], hurtIFrames: 0 };
+  const hp = h.enemy.health;
+  h.combat.applyDamage({ target: h.player, amount: 10, source: h.enemy });
+  assert.ok(h.enemy.health < hp && h.combat._stack(h.enemy, 'shock') > 0, 'Static Step did not strike the attacker on a perfect dodge');
+}
+
+console.log(`boons ok: ${BOONS.length} core, ${DUOS.length} duo, ${SKILL_BOONS.length} skill boons, runtime hooks verified`);

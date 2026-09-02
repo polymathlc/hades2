@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { TAU } from '../../core/math.js';
-import { inDisc } from '../ai.js';
+import { inDisc, TELEGRAPH } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
 
 const LANCER_PALETTE = {
@@ -271,7 +271,7 @@ export const SIREN = {
           a.position.set(a.mem.tx, 0, a.mem.tz); ctx.world?.collide?.(a.position, a.radius); a.iframes = Math.max(a.iframes, 0.18);
           const p = ctx.player?.position; if (p) a.snapFace(p.x - a.position.x, p.z - a.position.z);
           ctx.vfx?.beam?.(from, a.position.clone().setY(1.0), { color: '#ff76ba', width: 0.22, life: 0.22, opacity: 0.75 });
-          a.telegraph('talon', 0.32, { shape: 'arc', radius: 2.6, arc: 150, follow: true, color: '#ff76ba' });
+          a.telegraph('talon', TELEGRAPH.blinkStrike, { shape: 'arc', radius: 2.6, arc: 150, follow: true, color: '#ff76ba' });
         },
         update(a, dt, ctx) {
           a.steer.begin(0).separation(a.mgr.list, 1.3); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
@@ -358,7 +358,7 @@ export const RIFT_STALKER = {
           a.iframes = Math.max(a.iframes, 0.16);
           const p = ctx.player?.position; if (p) a.snapFace(p.x - a.position.x, p.z - a.position.z);
           ctx.vfx?.beam?.(from, a.position.clone().setY(1.05), { color: '#74f0ff', width: 0.18, life: 0.26, opacity: 0.72 });
-          a.telegraph('rift-slash', 0.38, { shape: 'arc', radius: 2.85, arc: 165, follow: true, color: '#74f0ff' });
+          a.telegraph('rift-slash', Math.max(TELEGRAPH.blinkStrike, 0.38), { shape: 'arc', radius: 2.85, arc: 165, follow: true, color: '#74f0ff' });
         },
         update(a, dt, ctx) {
           a.steer.begin(0).separation(a.mgr.list, 1.4); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });

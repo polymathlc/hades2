@@ -389,6 +389,38 @@ for (const [weapon, spec] of Object.entries(EXTENDED_FORGE)) {
       { weapon, forgeAction: 'cast' }),
   );
 }
+// ── SKILL BOONS — cards that pay for HOW you fight, not just what you hold.
+//    Each one reads a combat.js mechanic (backstab arc, stagger state, the
+//    execute threshold, the perfect-dodge riposte window) so the offer screen
+//    can bend a run toward flanking, parrying or dodging on purpose. Tagged
+//    with `mechanic` so the test suite can count them.
+export const SKILL_BOONS = [
+  B('hermes.passive.flawless', 'hermes', 'passive', 'Flawless Step', { dmg: 20, window: 0.5 },
+    v => `A Perfect Dodge arms your next strike for +${v.dmg}% damage; the riposte window lasts ${v.window}s longer.`,
+    (m, v) => { m.perfectDodgeBonus += v.dmg / 100; m.perfectDodgeWindow += v.window; }, { mechanic: 'perfectDodge' }),
+  B('zeus.passive.static', 'zeus', 'passive', 'Static Step', { dmg: 26 },
+    v => `A Perfect Dodge strikes the attacker with ${v.dmg} lightning damage and Shock.`,
+    (m, v) => { m.perfectDodgeStrike += v.dmg; }, { mechanic: 'perfectDodge', status: 'shock' }),
+  B('athena.passive.riposte', 'athena', 'passive', 'Divine Riposte', { dmg: 25 },
+    v => `Staggered and exposed foes take +${v.dmg}% damage from you.`,
+    (m, v) => { m.staggerBonus += v.dmg / 100; }, { mechanic: 'stagger' }),
+  B('poseidon.passive.undertow', 'poseidon', 'passive', 'Undertow', { dmg: 15, knock: 1 },
+    v => `Foes you stagger take +${v.dmg}% damage; all knockback gains ${v.knock}m.`,
+    (m, v) => { m.staggerBonus += v.dmg / 100; m.knockback += v.knock; }, { mechanic: 'stagger' }),
+  B('ares.passive.merciless', 'ares', 'passive', 'Merciless', { dmg: 30, at: 30 },
+    v => `Foes below ${v.at}% life take +${v.dmg}% damage.`,
+    (m, v) => { m.executeBonus += v.dmg / 100; m.executeAt = Math.max(m.executeAt, v.at / 100); }, { mechanic: 'execute' }),
+  B('artemis.passive.flank', 'artemis', 'passive', 'Exposed Flank', { dmg: 22, crit: 4 },
+    v => `Hits from behind deal +${v.dmg}% damage and gain ${v.crit}% Critical chance.`,
+    (m, v) => { m.backstab += v.dmg / 100; m.critChance += v.crit / 100; }, { mechanic: 'backstab' }),
+  B('hecate.passive.shadowstep', 'hecate', 'passive', 'Shadow Step', { dmg: 18, window: 0.4 },
+    v => `A Perfect Dodge arms +${v.dmg}% damage and Chills the next foe struck; the window lasts ${v.window}s longer.`,
+    (m, v) => { m.perfectDodgeBonus += v.dmg / 100; m.perfectDodgeWindow += v.window; m.statusDuration.chill *= 1.1; }, { mechanic: 'perfectDodge', status: 'chill' }),
+  B('dionysus.passive.cheapshot', 'dionysus', 'passive', 'Cheap Shot', { dmg: 26, at: 25 },
+    v => `Foes below ${v.at}% life take +${v.dmg}% damage; Hangover ticks faster on them.`,
+    (m, v) => { m.executeBonus += v.dmg / 100; m.executeAt = Math.max(m.executeAt, v.at / 100); m.status.burn *= 1.06; }, { mechanic: 'execute' }),
+];
+BOONS.push(...SKILL_BOONS);
 BOONS.push(...HADES2_BOONS);
 const MELINOE_CORE_GODS = new Set(HADES2_BOONS.map(b => b.god));
 BOONS.push(...EXPANDED_BOONS);
@@ -423,6 +455,22 @@ export const DUOS = [
     base: { spd: 18 }, text: v => `Knockback carries you: move ${v.spd}% faster after a slam.`,
     apply: (m, v) => { m.slamSpeed += v.spd / 100; m.knockback += 1.5; } },
 ];
+// skill duos: the payoff for building around a mechanic from two gods
+export const SKILL_DUOS = [
+  { id: 'duo.hermes.ares', gods: ['hermes', 'ares'], name: 'Split Second', slot: 'passive', mechanic: 'perfectDodge',
+    base: { dmg: 15 }, text: v => `The strike after a Perfect Dodge is a guaranteed Critical and deals +${v.dmg}%.`,
+    apply: (m, v) => { m.perfectDodgeCrit = 1; m.perfectDodgeBonus += v.dmg / 100; } },
+  { id: 'duo.zeus.hermes', gods: ['zeus', 'hermes'], name: 'Storm Step', slot: 'passive', mechanic: 'perfectDodge',
+    base: { dmg: 40, spd: 8 }, text: v => `A Perfect Dodge calls ${v.dmg} lightning on the attacker; move ${v.spd}% faster.`,
+    apply: (m, v) => { m.perfectDodgeStrike += v.dmg; m.moveMul *= 1 + v.spd / 100; } },
+  { id: 'duo.artemis.athena', gods: ['artemis', 'athena'], name: 'Merciful Precision', slot: 'passive', mechanic: 'backstab',
+    base: { dmg: 18 }, text: v => `Hits from behind and hits on staggered foes each deal +${v.dmg}%.`,
+    apply: (m, v) => { m.backstab += v.dmg / 100; m.staggerBonus += v.dmg / 100; } },
+  { id: 'duo.ares.poseidon', gods: ['ares', 'poseidon'], name: 'Riptide Execution', slot: 'passive', mechanic: 'execute',
+    base: { dmg: 24, knock: 2 }, text: v => `Foes below 35% life take +${v.dmg}% damage and are hurled ${v.knock}m further.`,
+    apply: (m, v) => { m.executeBonus += v.dmg / 100; m.executeAt = Math.max(m.executeAt, 0.35); m.knockback += v.knock; } },
+];
+DUOS.push(...SKILL_DUOS);
 DUOS.push(...EXPANDED_DUOS);
 for (const duo of CANON_DUOS) if (!DUOS.some(existing => existing.id === duo.id)) DUOS.push(duo);
 
@@ -441,6 +489,9 @@ export function emptyMods() {
     hangoverAmp: 0, retaliate: 0, retaliateDmg: 0, callRefund: 0,
     seaStormDmg: 0, lightningCrit: 0, doomVsWeak: 0, critRiftDmg: 0,
     hangoverVsWeak: 0, moonlightShatter: 0, deflectDodge: 0, slamSpeed: 0,
+    // skill mechanics (read by combat.applyDamage / _perfectDodge)
+    backstab: 0, staggerBonus: 0, executeBonus: 0, executeAt: 0.3,
+    perfectDodgeBonus: 0, perfectDodgeWindow: 0, perfectDodgeCrit: 0, perfectDodgeStrike: 0,
     // per-slot riders
     rider: { attack: null, special: null, cast: null, dash: null, call: null },
     // status potency multipliers, keyed to the combat system's own statuses

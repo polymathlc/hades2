@@ -130,14 +130,48 @@ export class EnemyManager {
     e.knockLambda = 11;              // we integrate our own knockback
     e.mass = e.def.mass ?? (1 + e.radius);
     if (e.def.kind === 'brute') this._armShield(e);
+    if (ctx.run?.modifiers?.has?.('hardened') && !e.def.boss) { e.maxHealth = Math.round(e.maxHealth * 1.25); e.health = e.maxHealth; }
+    if (opts.elite && !e.def.boss) this._makeElite(e, opts.elite, opts.depth ?? 0);
     ctx.combat?.register?.(e);
     if (this.list.indexOf(e) < 0) this.list.push(e);
     this._spawnFX(e, opts);
-    ctx.events.emit('enemy.spawned', { entity: e, kind, pos: e.position.clone() });
+    ctx.events.emit('enemy.spawned', { entity: e, kind, pos: e.position.clone(), elite: e.elite });
     return e;
   }
 
-  /** the brute's frontal shield, wired into the combat system's block hook */
+  /**
+   * ELITES. One per elite wave from depth 3: bigger, tougher, and carrying
+   * exactly one affix the player has to answer differently —
+   *   armoured  flat damage reduction: small hits bounce, commit to the heavy
+   *   swift     faster body and quicker tells: dash sooner, not later
+   *   volatile  a bomb when it dies: kill it away from the pack, or kite it
+   *   warded    regenerates poise fast and cannot be stun-locked
+   */
+  _makeElite(e, affix, depth) {
+    e.elite = affix;
+    e.maxHealth = Math.round(e.maxHealth * 1.7);
+    e.health = e.maxHealth;
+    e.damageMul = (e.damageMul || 1) * 1.2;
+    e.visualScale = 1.14;
+    e.root.scale.setScalar(0.001);
+    e.mass = (e.mass || 1) * 1.35;
+    if (affix === 'armoured') e.armour = 4 + depth * 0.8;
+    else if (affix === 'swift') { e.speedMul = 1.22; e.tellMul = 0.9; }
+    else if (affix === 'warded') { e.poiseMax = Math.round((e.poiseMax || 24) * 2.2); e.poise = e.poiseMax; }
+    const c = e.def.identity || '#ffe14d';
+    this.ctx.vfx?.shockwave?.(_v.set(e.position.x, 0.05, e.position.z), { radius: 3.2, color: c, life: 0.6 });
+    this.ctx.ui?.toast?.(`ELITE · ${affix.toUpperCase()} ${(e.def.label || e.kind).toUpperCase()}`, { color: c, dur: 2.2 });
+    this.ctx.events.emit('enemy.elite', { entity: e, affix, pos: e.position });
+  }
+
+  /**
+   * The brute's frontal shield, wired into the combat system's block hook.
+   * THE GUARD PHASE: every blocked hit chips a hidden guard meter. When it
+   * empties, the shield drops — the brute is staggered, takes full damage
+   * from any angle for a few seconds, and its tell ring says so. Then the
+   * guard comes back. Flanking is still the fast answer; hammering the front
+   * is now a slow answer instead of no answer.
+   */
   _armShield(e) {
     e.blocking = {
       absorb: (info) => {
@@ -145,10 +179,34 @@ export class EnemyManager {
         if (mul < 1) {
           e.def.onDamaged?.(e, info, this.ctx);
           e.stagger = 0;
+          e.mem.guard = (e.mem.guard ?? e.mem.guardMax ?? 80) - (info.amount || 0);
+          if (e.mem.guard <= 0) this._guardBreak(e);
         }
         return (info.amount || 0) * mul;
       },
     };
+  }
+
+  _guardBreak(e) {
+    const ctx = this.ctx;
+    const dur = e.def.guardBreakTime ?? 3.4;
+    e.shielded = false;
+    e.mem.guard = 0;
+    e.mem.guardBroken = dur;
+    e.stagger = Math.max(e.stagger || 0, 0.9);
+    e.committed = false;
+    if (e.tell.active) e.endTell(false);
+    this.tokens.releaseAll(e);
+    this.telegraphs.spawn({ x: e.position.x, z: e.position.z, radius: 2.3, shape: 'ring', inner: 0.7,
+      dur, color: '#ffe9a8', core: '#ffffff', owner: e, follow: true, alpha: 0.75 });
+    ctx.vfx?.impact?.(_v.set(e.position.x + e.facing.x * 0.8, 1.3, e.position.z + e.facing.z * 0.8), new THREE.Vector3(-e.facing.x, 0, -e.facing.z), { type: 'physical', scale: 1.6, color: '#ffe9a8' });
+    ctx.vfx?.burst?.(_v.set(e.position.x, 1.2, e.position.z), { count: 26, color: '#ffe9a8', speed: 10, spread: 1.3, kind: 'shard' });
+    ctx.vfx?.shockwave?.(_v.set(e.position.x, 0.05, e.position.z), { radius: 2.6, color: '#ffe9a8', life: 0.4 });
+    ctx.events.emit('hit.stop', { ms: 70 });
+    ctx.events.emit('camera.shake', { amp: 0.16, dur: 0.3, freq: 26 });
+    ctx.events.emit('enemy.guardBreak', { entity: e, pos: e.position, dur });
+    ctx.ui?.toast?.('GUARD BROKEN', { color: '#ffe9a8', dur: 1.4 });
+    ctx.audio?.sfx?.('stagger', { pos: e.position, gain: 1 });
   }
 
   _spawnFX(e, opts) {
@@ -231,9 +289,12 @@ export class EnemyManager {
   update(dt, ctx) {
     if (!this.enabled) return;
     this.tokens.update(dt);
-    // token pressure scales with depth: deeper rooms let a third shade commit
+    // token pressure scales with depth: deeper rooms let a third shade commit,
+    // and the FRENZY pact adds one more on top
     const depth = ctx.run ? (ctx.run.depth || 0) : 0;
-    this.tokens.setSlots('melee', depth >= 8 ? 3 : 2);
+    const mods = ctx.run?.modifiers;
+    this.tokens.setSlots('melee', (depth >= 8 ? 3 : 2) + (mods?.has?.('frenzy') ? 1 : 0));
+    this.tellMul = mods?.has?.('swift') ? 0.85 : 1;
 
     for (let i = 0; i < this.all.length; i++) {
       const e = this.all[i];

@@ -18,7 +18,15 @@ import { chooseGraphicsTier, graphicsDprCap } from '../src/core/quality.js';
 import { TIERS } from '../src/render/renderer.js';
 import { GRADES } from '../src/render/shaders/grades.js';
 import { ROSTER, ROSTER_IDS } from '../src/entities/enemies/index.js';
-import { ENCOUNTER_POOLS, BOSS_SEQUENCE, FINAL_BOSSES, FINAL_BOSS_DEPTH, bossForDepth, Spawner } from '../src/entities/spawner.js';
+import { ENCOUNTER_POOLS, BOSS_SEQUENCE, FINAL_BOSSES, FINAL_BOSS_DEPTH, bossForDepth, Spawner, BIOME_THREAT, ELITE_AFFIXES, maxAliveFor } from '../src/entities/spawner.js';
+import { HitboxSystem } from '../src/entities/hitbox.js';
+import { FEEL } from '../src/entities/combat.js';
+import { TELEGRAPH, surroundSlot } from '../src/entities/ai.js';
+import { enrageBoss } from '../src/entities/enemies/base.js';
+import { EnemyManager } from '../src/entities/enemies/index.js';
+import { RUN_MODIFIERS, MetaProgression } from '../src/game/meta.js';
+import { TRIALS } from '../src/game/run.js';
+import { RNG } from '../src/core/rng.js';
 import { lockModalInput, releaseModalInput } from '../src/ui/modal-input.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from '../src/ui/boon-choice.js';
 import { CHARACTER_INFO, characterOwnsWeapon } from '../src/game/characters.js';
@@ -818,6 +826,271 @@ for (const weapon of ['blade', 'spear', 'bow', 'shield']) {
   if (weapon === 'shield') assert.ok(shot.kind === 'bounce' && shot.bounces > 0, 'Shield Cast did not ricochet');
 }
 
+// ═══════════════════════════════════════════════════ GAMEPLAY PASS ═══════
+// Every arm declares its feel: a weight per step, exactly one finisher per
+// combo, and a perfect-chain window. Six more arms now own a Dash-Strike; the
+// Shield deliberately still does not (its dash answer is the Rush).
+for (const id of WEAPON_IDS) {
+  const w = WEAPONS[id];
+  for (const st of [...(w.combo || []), w.special, w.dashAttack].filter(Boolean)) assert.ok(st.weight > 0, `${id}:${st.name} has no weight`);
+  if (w.combo) {
+    assert.equal(w.combo.filter(st => st.finisher).length, 1, `${id} must have exactly one finisher`);
+    assert.ok(w.combo.at(-1).finisher, `${id} finisher is not the last step`);
+    assert.ok(w.perfectChain && w.perfectChain.window > 0 && w.perfectChain.bonus > 0, `${id} has no perfect-chain window`);
+  }
+}
+for (const id of ['bow', 'rail', 'axe', 'staff', 'flames', 'skull']) assert.ok(WEAPONS[id].dashAttack, `${id} lost its Dash-Strike`);
+assert.ok(!WEAPONS.shield.dashAttack, 'the Shield answers a dash with the Rush, never a Dash-Strike');
+assert.deepEqual(WEAPONS.bow.charge.tiers, [0.36, 0.70, 1.0]);
+assert.ok(WEAPONS.spear.combo.every(st => st.hitbox.tipBonus >= 0.35 || st.hitbox.shape !== 'capsule'), 'Spear thrusts lost the tip bonus');
+assert.ok(WEAPONS.shield.block.parry.stagger > 0 && WEAPONS.shield.block.parry.riposte > 0);
+assert.ok(WEAPONS.fists.chainAccel > 0 && WEAPONS.blades.chainAccel > 0, 'flurry arms lost chain acceleration');
+assert.ok(WEAPONS.rail.lastRound.dmgMul >= 1.5);
+
+// PERFECT CHAIN: a press inside [chain, chain+window] plays the next step
+// faster with a damage bonus; a press mashed early chains at `chain` with
+// no bonus. Both still chain — timing is rewarded, never required.
+{
+  const { runtime, hitboxes } = harness('blade');
+  const cut1 = WEAPONS.blade.combo[0];
+  runtime.press('attack'); runtime.update(1 / 120);
+  assert.equal(runtime.step.name, 'cut1');
+  runtime.update(cut1.chain - runtime.t + 0.02);        // just inside the window
+  runtime.press('attack'); runtime.update(1 / 120);
+  assert.equal(runtime.step.name, 'cut2');
+  assert.equal(runtime.perfect, true, 'timed press was not a perfect chain');
+  assert.ok(runtime.stepSpeed > 1 && runtime.stepBonus > 0);
+  runtime.update(runtime.step.t0 / runtime.stepSpeed + 1 / 120);
+  const cut2 = hitboxes.find(h => h.tag === 'blade:cut2');
+  assert.ok(cut2 && cut2.damage > WEAPONS.blade.combo[1].damage, 'perfect chain did not raise the step damage');
+
+  const mashed = harness('blade');
+  mashed.runtime.press('attack'); mashed.runtime.update(1 / 120);
+  mashed.runtime.press('attack');                        // mashed during windup
+  mashed.runtime.update(cut1.chain + 0.02);
+  assert.equal(mashed.runtime.step.name, 'cut2', 'a buffered press must still chain');
+  assert.equal(mashed.runtime.perfect, false, 'a mashed press was rewarded as timed');
+  assert.equal(mashed.runtime.stepBonus, 0);
+}
+
+// FLURRY: the Fists accelerate through the string.
+{
+  const { runtime } = harness('fists');
+  runtime.press('attack'); runtime.update(1 / 120);
+  for (let i = 1; i < 4; i++) { runtime.press('attack'); runtime.update(WEAPONS.fists.combo[i - 1].chain + 0.05); }
+  assert.equal(runtime.step.name, 'jab4');
+  assert.ok(runtime.stepSpeed > 1.15, `flurry did not accelerate (${runtime.stepSpeed})`);
+}
+
+// Ranged Dash-Strikes fire real bolts through the Attack rider path.
+{
+  const { ctx, runtime, fired } = harness('bow');
+  ctx.boons.grant(ctx.boons.offer(BOONS.find(b => b.id === 'zeus.attack')));
+  runtime.state = 'dashAttack';
+  runtime._fire(WEAPONS.bow.dashAttack);
+  assert.equal(fired.length, 2, 'snap shot did not fire its twin bolts');
+  assert.ok(fired.every(p => p.boonGod === 'zeus' && p.boonSlot === 'attack' && p.tag === 'bow:snapshot'));
+  const rail = harness('rail');
+  rail.runtime.state = 'dashAttack'; rail.runtime._fire(WEAPONS.rail.dashAttack);
+  assert.equal(rail.fired.length, 2);
+  assert.equal(rail.runtime.ammo, rail.runtime.ammoMax, 'hip-fire must not spend the magazine');
+}
+
+// CHARGE TIERS quantise the release: a half draw is the middle tier, not a
+// point on a slider; the full draw is untouched.
+{
+  const { runtime, fired } = harness('bow');
+  runtime.press('attack');
+  runtime.update(WEAPONS.bow.charge.windup + (WEAPONS.bow.charge.fullHold - WEAPONS.bow.charge.windup) * 0.5);
+  runtime.release('attack');
+  const mid = fired.at(-1);
+  const P = WEAPONS.bow.charge.projectile;
+  const expected = P.damage + (P.damageFull - P.damage) * (0.36 * 0.92);
+  assert.ok(Math.abs(mid.damage - expected) < 1e-6, `half draw was not quantised to the first tier (${mid.damage} vs ${expected})`);
+}
+
+// THE LAST ROUND: the sixth Rail shell is the heavy one.
+{
+  const { runtime, fired } = harness('rail');
+  for (let shot = 0; shot < runtime.ammoMax; shot++) {
+    runtime.press('attack'); runtime.update(runtime.weapon.charge.fullHold + 0.01); runtime.release('attack');
+    runtime.update(runtime.weapon.charge.recoveryFull + 0.01);
+  }
+  assert.ok(fired[5].damage >= fired[0].damage * 1.5 - 1e-6, 'last round did not carry its bonus');
+  assert.ok(fired[5].hitstop >= 70);
+}
+
+// THE PARRY staggers the attacker and arms a riposte the next punch spends.
+{
+  const { runtime, hitboxes } = harness('shield');
+  const shade = { position: new THREE.Vector3(2, 0, 0), stagger: 0, def: { poise: 12 }, dead: false };
+  runtime.state = 'block'; runtime.t = 0.01;
+  assert.equal(runtime.absorb({ amount: 20, dir: { x: -1, z: 0 }, source: shade }), 0);
+  assert.ok(shade.stagger >= WEAPONS.shield.block.parry.stagger, 'parried attacker was not staggered');
+  assert.ok(runtime._riposte > 0);
+  runtime.state = 'idle'; runtime.t = 0;
+  runtime._fire(WEAPONS.shield.combo[0]);
+  const punch = hitboxes.find(h => h.tag === 'shield:punch1');
+  assert.ok(punch.damage > WEAPONS.shield.combo[0].damage * 1.4, 'riposte bonus did not reach the punch');
+  assert.equal(runtime._riposte, 0, 'riposte was not consumed');
+}
+
+// THE TIP: a capsule reports where along its length the victim sat, and the
+// combat authority pays for the far part.
+{
+  const hb = Object.create(HitboxSystem.prototype);
+  hb._nx = 0; hb._nz = 1; hb._frac = 0;
+  const h = { shape: 1, x: 0, z: 0, ax: 1, az: 0, len: 4, r: 0.6, rIn: 0, swept: false, px: 0, pz: 0 };
+  assert.equal(hb._overlap(h, 3.6, 0, 0.5), true);
+  assert.ok(hb._frac >= 0.85, 'tip fraction not computed');
+  assert.equal(hb._overlap(h, 0.8, 0, 0.5), true);
+  assert.ok(hb._frac < 0.3);
+}
+
+// HIT WEIGHT: crits, poise breaks and finishers hold the frame longer, the
+// second victim of one swing holds it a fraction, and nothing exceeds the cap.
+{
+  const combat = Object.create(CombatSystem.prototype);
+  combat._last = { crit: false, staggered: false, killed: false, amount: 0 };
+  const base = combat.hitstopFor(60, 1, combat._last, false);
+  assert.equal(base, 60);
+  assert.ok(combat.hitstopFor(60, 1, { crit: true, staggered: false }, false) > base);
+  assert.ok(combat.hitstopFor(60, 1.3, { crit: false, staggered: true }, true) > combat.hitstopFor(60, 1, { crit: false, staggered: true }, false));
+  assert.ok(combat.hitstopFor(400, 2, { crit: true, staggered: true }, true) <= FEEL.maxHitstopMs);
+}
+
+// PERFECT DODGE: a real attack arriving inside the dash i-frames pays out a
+// riposte window; the next Attack inside it deals +25% and the window closes.
+{
+  const events = new Bus();
+  const bus = [];
+  events.on('player.perfectDodge', e => bus.push(e));
+  const player = { team: 'player', position: new THREE.Vector3(), radius: 0.5, health: 100, maxHealth: 100, alive: true, dead: false,
+    iframes: 0.2, state: 'dash', dash: { t: 0.05, cd: 0.6 }, tune: { dashIFrames: [0.015, 0.215], dashTime: 0.19, hurtIFrames: 0 }, poiseMax: 0, poise: 0 };
+  const enemy = { team: 'enemy', position: new THREE.Vector3(2, 0, 0), radius: 0.5, health: 500, maxHealth: 500, alive: true, dead: false, iframes: 0, poiseMax: 0, poise: 0 };
+  const ctx = { player, events, rng: { f: () => 0 }, ui: { setHealth: noop, damageNumber: noop }, vfx: { burst: noop, shockwave: noop, impact: noop, beam: noop }, audio: { sfx: noop }, engine: { hitstop: noop, slowmo: noop }, CAPTURE: true };
+  ctx.boons = new BoonState(ctx);
+  const combat = Object.create(CombatSystem.prototype);
+  Object.assign(combat, { ctx, entities: new Set([player, enemy]), _list: [player, enemy], _dirty: false, _status: new Map(), _expose: new Map(), _critMark: new Map(), _knock: [], _boonPulses: [], _recentDamage: 0, rng: { f: () => 0 }, _last: { crit: false, staggered: false, killed: false, amount: 0 }, hitboxes: { cancelByOwner: noop }, projectiles: {} });
+  assert.equal(combat.applyDamage({ target: player, amount: 20, source: enemy, dir: new THREE.Vector3(-1, 0, 0) }), 0);
+  assert.equal(bus.length, 1, 'perfect dodge did not fire');
+  assert.ok(player._perfectDodgeT > 0);
+  assert.equal(combat.applyDamage({ target: player, amount: 20, source: enemy }), 0);
+  assert.equal(bus.length, 1, 'one dash paid out twice');
+  const dealt = combat.applyDamage({ target: enemy, amount: 20, source: player, boonSlot: 'attack' });
+  assert.equal(dealt, 25, `riposte bonus missing (${dealt})`);
+  assert.equal(player._perfectDodgeT, 0, 'riposte window did not close after the strike');
+  // hurt i-frames outside the dash window never count
+  player.state = 'move'; player.iframes = 0.5;
+  combat.applyDamage({ target: player, amount: 20, source: enemy });
+  assert.equal(bus.length, 1);
+  // the knockback curve: a near-dead foe is thrown further than a fresh one
+  const fresh = { ...enemy, position: new THREE.Vector3(2, 0, 0), knock: new THREE.Vector3(), _combatKnock: true, health: 500 };
+  const dying = { ...enemy, position: new THREE.Vector3(2, 0, 0), knock: new THREE.Vector3(), _combatKnock: true, health: 20 };
+  combat.applyDamage({ target: fresh, amount: 5, source: player, knockback: 4, dir: new THREE.Vector3(1, 0, 0) });
+  combat.applyDamage({ target: dying, amount: 5, source: player, knockback: 4, dir: new THREE.Vector3(1, 0, 0) });
+  assert.ok(dying.knock.x > fresh.knock.x, 'knockback curve ignores remaining life');
+}
+
+// ENEMY AI: readable follow-ups, a second brute pattern, casters with two
+// patterns, the herald never idle, flanking slots, and a boss clock.
+{
+  const shade = ROSTER.shade.brain.states, brute = ROSTER.brute.brain.states, hexer = ROSTER.hexer.brain.states, herald = ROSTER.herald.brain.states;
+  for (const st of ['windupFollow', 'strike', 'recover']) assert.ok(shade[st], `shade lost ${st}`);
+  for (const st of ['shieldCharge', 'shieldChargeGo', 'chargeRecover', 'windup']) assert.ok(brute[st], `brute lost ${st}`);
+  for (const st of ['bolt', 'boltRelease', 'cast', 'release', 'kite']) assert.ok(hexer[st], `hexer lost ${st}`);
+  for (const st of ['volley', 'volleyRelease', 'summon']) assert.ok(herald[st], `herald lost ${st}`);
+  assert.ok(TELEGRAPH.comboFollow >= 0.28 && TELEGRAPH.blinkStrike >= 0.34 && TELEGRAPH.shieldCharge >= 0.75, 'telegraph floors regressed');
+  assert.ok(ROSTER.brute.guardBreakTime >= 3);
+  for (const kind of ['warden', 'minotaur', 'heracles', 'hades', 'chronos']) assert.ok(ROSTER[kind].enrage && ROSTER[kind].enrage.after >= 120 && ROSTER[kind].enrage.tell < 1, `${kind} has no enrage`);
+
+  // surround slots: three bodies fan out behind the hero, never on one point
+  const list = [1, 2, 3].map(id => ({ id, position: new THREE.Vector3(), alive: true, dead: false, def: { tokenPool: 'melee' } }));
+  const slots = list.map(a => surroundSlot(a, list, 0, 0, 0, 1, 3, { x: 0, z: 0 }));
+  for (let i = 0; i < 3; i++) for (let j = i + 1; j < 3; j++) assert.ok(Math.hypot(slots[i].x - slots[j].x, slots[i].z - slots[j].z) > 1.5, 'surround slots collapsed');
+  for (const s of slots) assert.ok(s.z < 0, 'a flank slot sat in front of the hero');
+
+  // enrage: tells shorten, damage rises, the event fires once
+  const fired = [];
+  const bctx = { events: { emit: (n, e) => fired.push(n) }, ui: { toast: noop }, engine: { slowmo: noop }, vfx: { shockwave: noop, burst: noop } };
+  const boss = { def: ROSTER.warden, mem: {}, position: new THREE.Vector3(), damageMul: 1, attackCd: 2, dead: false, enraged: false, height: 3 };
+  assert.equal(enrageBoss(boss, bctx), true);
+  assert.equal(enrageBoss(boss, bctx), false);
+  assert.ok(boss.enraged && boss.damageMul > 1.2 && boss.tellMul < 1 && boss.speedMul > 1 && fired.includes('boss.enraged'));
+
+  // elites carry exactly one answerable affix and a real stat change
+  const mgr = Object.create(EnemyManager.prototype);
+  mgr.ctx = { vfx: { shockwave: noop }, ui: { toast: noop }, events: { emit: noop } };
+  const e = { def: { identity: '#fff', label: 'Shade' }, kind: 'shade', maxHealth: 100, health: 100, damageMul: 1, position: new THREE.Vector3(), root: { scale: new THREE.Vector3(1, 1, 1) }, poiseMax: 24, poise: 24, mass: 1 };
+  mgr._makeElite(e, 'armoured', 4);
+  assert.equal(e.elite, 'armoured'); assert.equal(e.maxHealth, 170); assert.ok(e.armour > 4 && e.visualScale > 1);
+  const s2 = { ...e, elite: null, speedMul: 1, tellMul: 1 };
+  mgr._makeElite(s2, 'swift', 4);
+  assert.ok(s2.speedMul > 1.2 && s2.tellMul < 1);
+}
+
+// ENCOUNTER DIRECTOR: beats, mixed compositions, elites, timed reinforcements,
+// biome threat and an alive cap — all deterministic from (biome, depth, seed).
+{
+  const director = new Spawner();
+  director.rng = new RNG(7);
+  assert.ok(BIOME_THREAT.elysium > BIOME_THREAT.asphodel && BIOME_THREAT.asphodel > BIOME_THREAT.tartarus);
+  assert.ok(director.budget(6, 'elysium') > director.budget(6, 'tartarus'));
+  assert.equal(maxAliveFor(1), 4); assert.ok(maxAliveFor(12) <= 9);
+  const compose = (biome, depth, trial, mods) => { director.rng.reseed('t:' + biome + depth); return director.compose(biome, depth, trial, mods); };
+  const shallow = compose('tartarus', 1);
+  assert.equal(shallow[0].beat, 'opener');
+  assert.ok(shallow[0].list.length <= 4 && shallow[0].list.every(k => k === 'shade' || k === 'hound'), 'the opener must be cheap melee only');
+  const a = compose('tartarus', 4), b = compose('tartarus', 4);
+  assert.deepEqual(a.map(w => w.list), b.map(w => w.list), 'composition is not deterministic');
+  assert.deepEqual(a.map(w => w.beat), ['opener', 'pressure', 'elite']);
+  assert.ok(a[1].list.some(k => ['hexer', 'herald', 'oracle'].includes(k)), 'the pressure wave has no ranged priority target');
+  assert.ok(a[2].elite >= 0 && ELITE_AFFIXES.includes(a[2].affix), 'the elite wave has no elite');
+  assert.ok(a[1].trickle.length >= 1 && a[1].trickle[0].at > 5, 'pressure wave lost its timed reinforcement');
+  assert.ok(a[2].delay > a[1].delay && a[1].delay > a[0].delay, 'breathers are not paced by beat');
+  const deep = compose('elysium', 9);
+  assert.equal(deep.length, 4); assert.equal(deep[3].beat, 'surge');
+  const ambush = compose('asphodel', 6, 'ambush');
+  assert.ok(ambush.slice(1).every(w => w.trickle.length >= 2), 'ambush trial did not add reinforcements');
+  const restless = compose('asphodel', 6, null, new Set(['restless']));
+  assert.ok(restless[1].trickle.length >= 2, 'Restless Dead pact did not trickle');
+  const twoElites = compose('asphodel', 6, 'elite');
+  assert.equal(twoElites.filter(w => w.elite >= 0).length, 2, 'elite trial did not add a second elite');
+}
+
+// RUN STRUCTURE: trials are a pure function of (seed, depth), door rewards
+// shape the next chamber, and the Pact is persisted and paid.
+{
+  const run = new RunState();
+  run.seed = 424242;
+  const t1 = run.trialFor(3), t2 = run.trialFor(3);
+  assert.equal(t1, t2);
+  assert.equal(run.trialFor(1), null, 'the teaching rooms carry no trial');
+  assert.equal(run.trialFor(5), null, 'boss chambers carry no trial');
+  const seen = new Set(); for (let d = 2; d < 40; d++) if (d % 5) seen.add(run.trialFor(d));
+  assert.ok(seen.has('ambush') && seen.has('elite') && seen.has(null), 'trial roll never produces every outcome');
+  assert.equal(run.trialFor(7, 'ambush'), 'ambush');
+  run.ctx = { player: { maxHealth: 100, health: 10 }, ui: { setHealth: noop, toast: noop, setResources: noop } };
+  run.depth = 3;
+  run._applyReward('gold');
+  assert.equal(run.nextTrial, 'ambush', 'greed is not answered');
+  run._applyReward('health');
+  assert.equal(run.nextTrial, null, 'a heart did not buy a quiet chamber');
+  run.modifiers = new Set(['lean']); run.ctx.player.health = 10;
+  run._applyReward('health');
+  assert.ok(run.ctx.player.health < 40, 'Lean Rations did not halve the heart');
+  assert.ok(RUN_MODIFIERS.length >= 5 && new Set(RUN_MODIFIERS.map(m => m.id)).size === RUN_MODIFIERS.length);
+  for (const m of RUN_MODIFIERS) assert.ok(m.heat > 0 && m.name && m.text);
+  assert.ok(Object.keys(TRIALS).length >= 2);
+  const storage = { data: new Map(), getItem(k) { return this.data.has(k) ? this.data.get(k) : null; }, setItem(k, v) { this.data.set(k, String(v)); } };
+  const meta = new MetaProgression(null, storage).load();
+  assert.equal(meta.togglePact('hardened').on, true);
+  assert.equal(meta.togglePact('swift').on, true);
+  assert.equal(meta.heat(), 3);
+  assert.equal(meta.togglePact('bogus').ok, false);
+  assert.deepEqual(new MetaProgression(null, storage).load().pacts, ['hardened', 'swift'], 'the Pact did not persist');
+}
+
 // Displayed controls are all live actions; dead debug/map bindings stay out.
 const controlText = CONTROL_ROWS.flat().join(' ').toLowerCase();
 for (const action of ['move', 'aim', 'attack', 'special', 'cast', 'dash', 'call', 'interact', 'pause']) assert.ok(controlText.includes(action));
@@ -908,4 +1181,4 @@ assert.ok(!controlText.includes('x/c cycle') && !controlText.includes('1–4'));
 
 assert.equal(GOD_KEYS.length, 17);
 for (const god of ['demeter', 'apollo', 'hera', 'hestia', 'chaos', 'hades']) assert.ok(GOD_INFO[god], `missing expanded god ${god}`);
-console.log('features ok: 15 enemies, 5 unique bosses, heir-specific finales, 17 gods, 12 arms, 44 Attack/Special/Cast forges, audio bridge');
+console.log('features ok: 15 enemies, 5 unique bosses, heir-specific finales, 17 gods, 12 arms, 44 Attack/Special/Cast forges, audio bridge, gameplay pass (perfect chain, tiers, tip, parry, perfect dodge, elites, beats, trials, pact)');

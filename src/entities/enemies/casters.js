@@ -140,13 +140,60 @@ export const HEXER = {
           const p = a.perc;
           a.mem.t += dt;
           if (a.mem.t > 2.8) { a.mem.t = 0; a.orbitDir *= -1; }
+          // SPACING: hold the far ring, but a hexer that has been pushed out
+          // past its range walks back in rather than casting at nothing
           a.steer.begin(a.def.speed)
-            .orbit(p.aimX, p.aimZ, 8.6, a.orbitDir, 1.0, 0.7)
+            .orbit(p.aimX, p.aimZ, p.dist > 14 ? 9.5 : 8.6, a.orbitDir, 1.0, 0.7)
             .separation(a.mgr.list, 2.0)
             .avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ, turn: 9 });
           a.setRunSpeed(0.9);
-          if (a.attackCd <= 0 && p.dist > 5.0 && p.dist < 17 && a.wantToken('ranged', -p.dist * 0.2)) return 'cast';
+          if (a.attackCd <= 0 && p.dist > 5.0 && p.dist < 17 && a.wantToken('ranged', -p.dist * 0.2)) {
+            // TWO PATTERNS, chosen by the geometry: a direct bolt at mid range
+            // (dodge sideways), the planted circle at long range (walk out).
+            // Never the same one twice in a row.
+            const mid = p.dist < 11;
+            const pick = a.mem.last === 'bolt' ? 'cast' : a.mem.last === 'cast' ? (mid ? 'bolt' : 'cast') : (mid && a.mgr.rng.f() < 0.55 ? 'bolt' : 'cast');
+            a.mem.last = pick;
+            return pick;
+          }
+        },
+      },
+      // THE BOLT: a lane drawn from the staff, then a seeking bolt down it.
+      // The seeking is weak on purpose — it curves toward where you WERE.
+      bolt: {
+        enter(a, ctx) {
+          a.committed = true;
+          a.play('cast', { fade: 0.08, restart: true, speed: 0.6 / TELEGRAPH.bolt });
+          const p = a.perc;
+          a.snapFace(p.dirX, p.dirZ);
+          a.telegraph('bolt', TELEGRAPH.bolt, { shape: 'line', radius: 11, inner: 0.10, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: a.tellColor, alpha: 0.8 });
+        },
+        update(a, dt, ctx) {
+          const p = a.perc;
+          a.steer.begin(a.def.speed * 0.12).separation(a.mgr.list, 2.0);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          a.faceTowards(p.aimX - a.position.x, p.aimZ - a.position.z, dt, 5);
+          if (a.tell.k >= 1) return 'boltRelease';
+        },
+      },
+      boltRelease: {
+        enter(a, ctx) {
+          a.endTell(true);
+          const p = a.perc;
+          const dx = p.aimX - a.position.x, dz = p.aimZ - a.position.z;
+          ctx.combat?.enemyProjectile?.(a, {
+            x: a.position.x + a.facing.x * 0.9, y: 1.55, z: a.position.z + a.facing.z * 0.9, dx, dz,
+            kind: 'homing', homing: 1.3, target: ctx.player, speed: 13.5, radius: 0.32, life: 2.8,
+            damage: 15, type: 'arcane', knockback: 6, hitstop: 30, color: a.tellColor, size: 1.15, coreSize: 1.1, tag: 'enemy:hex-bolt',
+          });
+          ctx.vfx?.burst?.(new THREE.Vector3(a.position.x + a.facing.x * 0.9, 1.6, a.position.z + a.facing.z * 0.9), { count: 12, color: a.tellColor, speed: 6, spread: 0.5, kind: 'rune' });
+          a.committed = false;
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 0.2).flee(a.perc.aimX, a.perc.aimZ, 0.6).separation(a.mgr.list, 2.0);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          if (a.brain.t > 0.42) { a.dropToken('ranged'); a.attackCd = 1.5; return 'reposition'; }
         },
       },
       kite: {
@@ -341,7 +388,50 @@ export const HERALD = {
             .avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ, turn: 8 });
           a.setRunSpeed(0.92);
-          if (a.attackCd <= 0 && a.mgr.canSummon(a) && a.wantToken('ranged', 3)) return 'summon';
+          if (a.attackCd <= 0 && (a.mgr.canSummon(a) || p.dist < 18) && a.wantToken('ranged', 3)) {
+            // summon while the room has space; when it is saturated (or every
+            // other call) the shards it carries become a homing VOLLEY, so
+            // the herald is never a passenger
+            if (a.mgr.canSummon(a) && (a.mem.calls || 0) % 2 === 0) return 'summon';
+            if (p.dist < 18) return 'volley';
+          }
+        },
+      },
+      volley: {
+        enter(a, ctx) {
+          a.committed = true;
+          a.mem.shots = 0; a.mem.shotT = 0;
+          a.play('cast', { fade: 0.1, restart: true, speed: 0.6 / TELEGRAPH.volley });
+          a.snapFace(a.perc.dirX, a.perc.dirZ);
+          a.telegraph('volley', TELEGRAPH.volley, { shape: 'arc', radius: 3.0, arc: 70, follow: true, color: '#ffe14d', alpha: 0.85 });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 0.1).separation(a.mgr.list, 1.8);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 5);
+          if (a.tell.k >= 1) return 'volleyRelease';
+        },
+      },
+      volleyRelease: {
+        enter(a) { a.endTell(true); a.mem.shots = 0; a.mem.shotT = 0; },
+        update(a, dt, ctx) {
+          a.mem.shotT += dt;
+          // three shards, one every 0.16s, fanned so the middle one is the
+          // honest guess and the outer two punish standing still
+          if (a.mem.shots < 3 && a.mem.shotT >= a.mem.shots * 0.16) {
+            const i = a.mem.shots++;
+            const ang = (i - 1) * 0.30;
+            const ca = Math.cos(ang), sa = Math.sin(ang);
+            const dx = a.facing.x * ca - a.facing.z * sa, dz = a.facing.x * sa + a.facing.z * ca;
+            ctx.combat?.enemyProjectile?.(a, {
+              x: a.position.x + dx * 1.0, y: 1.85, z: a.position.z + dz * 1.0, dx, dz,
+              kind: 'homing', homing: 1.6, target: ctx.player, speed: 10.5, radius: 0.28, life: 3.4,
+              damage: 9, type: 'arcane', knockback: 4, hitstop: 22, color: '#ffe14d', size: 1.0, coreSize: 1.0, tag: 'enemy:herald-shard',
+            });
+          }
+          a.steer.begin(a.def.speed * 0.2).flee(a.perc.aimX, a.perc.aimZ, 0.8).separation(a.mgr.list, 2.0);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          if (a.mem.shots >= 3 && a.mem.shotT > 0.85) { a.committed = false; a.dropToken('ranged'); a.attackCd = 3.2; a.mem.calls = (a.mem.calls || 0) + 1; return 'reposition'; }
         },
       },
       kite: {
@@ -385,7 +475,7 @@ export const HERALD = {
         update(a, dt, ctx) {
           a.steer.begin(a.def.speed * 0.2).flee(a.perc.aimX, a.perc.aimZ, 1).separation(a.mgr.list, 2.0);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
-          if (a.brain.t > 0.7) { a.dropToken('ranged'); a.attackCd = a.def.summonCooldown ?? 7.5; return 'reposition'; }
+          if (a.brain.t > 0.7) { a.dropToken('ranged'); a.attackCd = a.def.summonCooldown ?? 6.0; a.mem.calls = (a.mem.calls || 0) + 1; return 'reposition'; }
         },
       },
       hurt: {

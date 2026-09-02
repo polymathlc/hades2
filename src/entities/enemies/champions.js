@@ -7,7 +7,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { TAU } from '../../core/math.js';
 import { inDisc } from '../ai.js';
-import { charMaterial, paintGeo } from './base.js';
+import { charMaterial, paintGeo, tickEnrage } from './base.js';
 
 const MINOTAUR_PALETTE = {
   skin: '#75412f', skinDeep: '#2c1716', hair: '#20151a', hairTip: '#5d3428',
@@ -212,6 +212,7 @@ function spawnBoss(a, ctx) {
 }
 
 function tickBoss(a, dt, ctx) {
+  tickEnrage(a, dt, ctx);
   const phase = phaseFor(a);
   if (phase !== a.mem.phase) {
     a.mem.phase = phase;
@@ -243,7 +244,7 @@ function exposedState(color, next = 'hunt') {
   return {
     enter(a, ctx) {
       a.committed = false; a.vulnerable = true; a.resist = WEAK;
-      a.mem.exposeDur = 2.05 - 0.20 * a.mem.phase;
+      a.mem.exposeDur = (2.05 - 0.20 * a.mem.phase) * (a.enraged ? 0.72 : 1);
       a.play('hurt', { fade: 0.12, restart: true, speed: 0.46 });
       ctx.events.emit('boss.exposed', { entity: a, pos: a.position.clone(), dur: a.mem.exposeDur });
       ctx.vfx?.burst?.(a.position.clone().setY(a.height * 0.62), { count: 22, color: '#fff5d4', speed: 6, spread: 1.25, kind: 'ember' });
@@ -272,6 +273,7 @@ export const MINOTAUR = {
   hp: 1140, radius: 1.28, speed: 3.9, accel: 18, turn: 4.0,
   poise: 999, poiseMax: 290, staggerTime: 0, knockResist: 0.97, crowdPad: 0.9,
   tokenPool: 'boss', threat: 24, cost: 24, boss: true, captureState: 'sweepTell',
+  enrage: { after: 140, below: 0.10, damage: 1.25, tell: 0.82, speed: 1.18, line: 'ASTERIUS SEES RED' },
   deathScale: 2.8, deathShake: 0.34, deathTime: 1.55, spawnTime: 1.2,
   perception: { range: 60, reaction: 0.22, aimLambda: 4.4 },
   spec: {
@@ -361,6 +363,7 @@ export const HERACLES = {
   hp: 1020, radius: 1.12, speed: 4.5, accel: 24, turn: 6.2,
   poise: 999, poiseMax: 260, staggerTime: 0, knockResist: 0.94, crowdPad: 0.8,
   tokenPool: 'boss', threat: 28, cost: 28, boss: true, captureState: 'clubTell',
+  enrage: { after: 140, below: 0.10, damage: 1.22, tell: 0.80, speed: 1.16, line: 'THE CHAMPION UNLEASHED' },
   deathScale: 2.7, deathShake: 0.34, deathTime: 1.6, spawnTime: 1.2,
   perception: { range: 60, reaction: 0.18, aimLambda: 5.5 },
   spec: {
@@ -562,6 +565,7 @@ export const HADES = {
   hp: 1480, radius: 1.14, speed: 4.25, accel: 22, turn: 5.8,
   poise: 999, poiseMax: 330, staggerTime: 0, knockResist: 0.97, crowdPad: 0.9,
   tokenPool: 'boss', threat: 32, cost: 32, boss: true, captureState: 'sweepTell',
+  enrage: { after: 160, below: 0.12, damage: 1.3, tell: 0.78, speed: 1.2, line: 'THE KING OF THE DEAD RISES' },
   deathScale: 2.9, deathShake: 0.38, deathTime: 1.7, spawnTime: 1.3,
   phaseLines: ['THE DEAD ANSWER THEIR KING', 'THERE IS NO ESCAPE'],
   perception: { range: 64, reaction: 0.16, aimLambda: 5.4 },
@@ -591,6 +595,7 @@ export const CHRONOS = {
   hp: 1580, radius: 1.16, speed: 4.45, accel: 23, turn: 6.1,
   poise: 999, poiseMax: 350, staggerTime: 0, knockResist: 0.98, crowdPad: 0.9,
   tokenPool: 'boss', threat: 34, cost: 34, boss: true, captureState: 'castTell',
+  enrage: { after: 160, below: 0.12, damage: 1.3, tell: 0.76, speed: 1.22, line: 'TIME RUNS OUT' },
   deathScale: 3.0, deathShake: 0.40, deathTime: 1.75, spawnTime: 1.35,
   phaseLines: ['THE HOUR IS MINE', 'TIME DEVOURS ALL'],
   perception: { range: 66, reaction: 0.14, aimLambda: 5.8 },
