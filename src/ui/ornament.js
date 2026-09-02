@@ -47,6 +47,14 @@ export const RARITY = {
   rare:    { name: 'Rare',    ring: ['#8fa3bd', '#e6f0ff', '#4d5b70'], text: '#cfdcee' },
   epic:    { name: 'Epic',    ring: ['#c98f2b', '#ffe9a8', '#6d4416'], text: '#f2c14e' },
   heroic:  { name: 'Heroic',  ring: ['#ff8ad2', '#a8f0ff', '#ffe08a'], text: '#ffd6f0', prismatic: true },
+  legendary: { name: 'Legendary', ring: ['#ff7a2a', '#ffe08a', '#8a2a06'], text: '#ffb070' },
+  duo:     { name: 'Duo',     ring: ['#3fd9a0', '#8ef0d0', '#1a6a4e'], text: '#9af2d4', prismatic: true },
+};
+
+/** Colour-blind-safe alternates: hue AND value separated, per §2 registers. */
+export const STATUS_COLORS = {
+  normal: { life: '#c81d3c', lifeHi: '#e8506a', magick: '#5fd0ff', magickHi: '#9fe6ff', ghost: '#ff7a44', heal: '#9dffc0', danger: '#ff5a3c', ready: '#ffe9a8' },
+  safe:   { life: '#e4572e', lifeHi: '#ffb27a', magick: '#3f8fff', magickHi: '#bfe0ff', ghost: '#ffffff', heal: '#ffffff', danger: '#ffd23f', ready: '#ffffff' },
 };
 
 // ── type ───────────────────────────────────────────────────────────────────
@@ -627,6 +635,123 @@ export function frameElement(el, opts = {}) {
   el.style.backgroundImage = `url(${c.toDataURL('image/png')})`;
   el.style.backgroundSize = '100% 100%';
   return el;
+}
+
+// ── KEY CAP — a carved bronze key with its label, for prompts and hints ───
+export function keyCap(g, x, y, w, h, label, o = {}) {
+  const r = o.r != null ? o.r : Math.min(4, h * 0.22);
+  const pad = !!o.pad;                    // gamepad glyphs are round, keys are square
+  g.save();
+  if (pad) { g.beginPath(); g.arc(x + w / 2, y + h / 2, Math.min(w, h) / 2, 0, 6.2832); }
+  else plaqueRect(g, x, y, w, h, r);
+  const kg = g.createLinearGradient(x, y, x, y + h);
+  kg.addColorStop(0, o.top || '#3a2b16'); kg.addColorStop(1, o.bot || '#160e08');
+  g.fillStyle = kg; g.fill();
+  g.strokeStyle = o.edge || rgba(PAL.gold, o.edgeAlpha != null ? o.edgeAlpha : 0.8); g.lineWidth = o.lineWidth || 1.1; g.stroke();
+  // a lit top arris so the cap reads as raised
+  g.save(); g.clip();
+  g.fillStyle = rgba(PAL.goldHi, 0.22); g.fillRect(x, y, w, Math.max(1, h * 0.12));
+  g.restore();
+  const size = o.size || Math.min(h * 0.58, w * 0.9 / Math.max(1, String(label).length * 0.62));
+  tracked(g, String(label), x + w / 2, y + h * 0.5 + size * 0.36, {
+    size, track: 0.02, weight: 700, align: 'center', color: o.color || '#ffe9a8', font: o.font,
+  });
+  g.restore();
+  return w;
+}
+
+/**
+ * A cooldown ring: a full gold ring when ready, otherwise a dark wedge that
+ * empties clockwise as `frac` (remaining 0..1) falls. `ready` pulses once.
+ */
+export function cooldownRing(g, cx, cy, r, frac, o = {}) {
+  const w = o.width || Math.max(1.5, r * 0.16);
+  g.save();
+  g.beginPath(); g.arc(cx, cy, r, 0, 6.2832);
+  g.strokeStyle = 'rgba(5,2,10,0.85)'; g.lineWidth = w * 1.8; g.stroke();
+  if (frac > 0.002) {
+    // the spent arc, dim bronze
+    g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + 6.2832 * frac);
+    g.strokeStyle = rgba(PAL.bronze, 0.75); g.lineWidth = w; g.stroke();
+    // the recovered arc in the accent colour
+    g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2 + 6.2832 * frac, -Math.PI / 2 + 6.2832);
+    g.strokeStyle = o.color || PAL.gold; g.lineWidth = w; g.stroke();
+    // the leading edge, bright
+    const a = -Math.PI / 2 + 6.2832 * frac;
+    g.beginPath(); g.arc(cx + Math.cos(a) * r, cy + Math.sin(a) * r, w * 0.55, 0, 6.2832);
+    g.fillStyle = rgba(o.hi || PAL.goldHi, 0.95); g.fill();
+  } else {
+    g.beginPath(); g.arc(cx, cy, r, 0, 6.2832);
+    g.strokeStyle = o.readyGradient || goldGradient(g, cx - r, cy - r, cx + r, cy + r, o.sweep); g.lineWidth = w; g.stroke();
+    if (o.pulse > 0) {
+      g.save(); g.globalCompositeOperation = 'lighter'; g.globalAlpha *= o.pulse;
+      g.beginPath(); g.arc(cx, cy, r + w * (1 + (1 - o.pulse) * 3), 0, 6.2832);
+      g.strokeStyle = rgba(o.hi || PAL.goldHi, 0.8); g.lineWidth = w * 0.8; g.stroke();
+      g.restore();
+    }
+  }
+  g.restore();
+}
+
+/** Small UI icons for toasts and banners, drawn in one colour at radius r. */
+export function uiIcon(g, kind, cx, cy, r, color) {
+  g.save(); g.translate(cx, cy);
+  g.fillStyle = color; g.strokeStyle = color; g.lineWidth = Math.max(1, r * 0.18); g.lineJoin = 'round'; g.lineCap = 'round';
+  switch (kind) {
+    case 'skull':
+      g.beginPath(); g.arc(0, -r * 0.15, r * 0.62, Math.PI, 0); g.lineTo(r * 0.45, r * 0.5); g.lineTo(-r * 0.45, r * 0.5); g.closePath(); g.fill();
+      g.fillStyle = 'rgba(5,2,10,0.9)';
+      g.beginPath(); g.arc(-r * 0.25, -r * 0.15, r * 0.16, 0, 6.2832); g.fill();
+      g.beginPath(); g.arc(r * 0.25, -r * 0.15, r * 0.16, 0, 6.2832); g.fill();
+      g.fillRect(-r * 0.3, r * 0.5, r * 0.6, r * 0.32);
+      g.fillStyle = color; for (let i = -1; i <= 1; i++) g.fillRect(i * r * 0.2 - r * 0.06, r * 0.5, r * 0.12, r * 0.32);
+      break;
+    case 'laurel':
+      for (const s of [-1, 1]) {
+        for (let i = 0; i < 4; i++) {
+          const a = -Math.PI / 2 + s * (0.35 + i * 0.42);
+          const px = Math.cos(a) * r * 0.75, py = Math.sin(a) * r * 0.75 + r * 0.2;
+          g.save(); g.translate(px, py); g.rotate(a + s * 0.9);
+          g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(r * 0.22, -r * 0.16, r * 0.42, 0); g.quadraticCurveTo(r * 0.22, r * 0.16, 0, 0); g.fill();
+          g.restore();
+        }
+      }
+      break;
+    case 'coin':
+      g.beginPath(); g.arc(0, 0, r * 0.8, 0, 6.2832); g.fill();
+      g.strokeStyle = 'rgba(5,2,10,0.7)'; g.beginPath(); g.arc(0, 0, r * 0.45, 0, 6.2832); g.stroke();
+      break;
+    case 'heart':
+      g.beginPath(); g.moveTo(0, r * 0.85); g.bezierCurveTo(-r * 1.0, r * 0.05, -r * 0.6, -r * 0.85, 0, -r * 0.3);
+      g.bezierCurveTo(r * 0.6, -r * 0.85, r * 1.0, r * 0.05, 0, r * 0.85); g.closePath(); g.fill();
+      break;
+    case 'bolt':
+      g.beginPath(); g.moveTo(-r * 0.1, -r * 0.9); g.lineTo(r * 0.45, -r * 0.2); g.lineTo(r * 0.1, -r * 0.14); g.lineTo(r * 0.5, r * 0.9);
+      g.lineTo(-r * 0.45, r * 0.05); g.lineTo(0, 0); g.lineTo(-r * 0.4, -r * 0.45); g.closePath(); g.fill();
+      break;
+    case 'door':
+      g.beginPath(); g.moveTo(-r * 0.6, r * 0.9); g.lineTo(-r * 0.6, -r * 0.3); g.arc(0, -r * 0.3, r * 0.6, Math.PI, 0); g.lineTo(r * 0.6, r * 0.9); g.closePath(); g.stroke();
+      g.beginPath(); g.arc(r * 0.25, r * 0.25, r * 0.1, 0, 6.2832); g.fill();
+      break;
+    case 'star':
+      g.beginPath();
+      for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + i * Math.PI / 5; const rr = i % 2 ? r * 0.4 : r * 0.95; i ? g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : g.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+      g.closePath(); g.fill();
+      break;
+    case 'hammer':
+      g.save(); g.rotate(-0.6); g.fillRect(-r * 0.1, -r * 0.1, r * 0.2, r * 1.0); g.fillRect(-r * 0.55, -r * 0.55, r * 1.1, r * 0.36); g.restore();
+      break;
+    case 'gear':
+      g.beginPath(); g.arc(0, 0, r * 0.5, 0, 6.2832); g.stroke();
+      for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4; g.beginPath(); g.moveTo(Math.cos(a) * r * 0.55, Math.sin(a) * r * 0.55); g.lineTo(Math.cos(a) * r * 0.9, Math.sin(a) * r * 0.9); g.stroke(); }
+      break;
+    case 'info':
+    default:
+      g.beginPath(); g.arc(0, 0, r * 0.85, 0, 6.2832); g.stroke();
+      g.fillRect(-r * 0.1, -r * 0.15, r * 0.2, r * 0.65); g.beginPath(); g.arc(0, -r * 0.42, r * 0.12, 0, 6.2832); g.fill();
+      break;
+  }
+  g.restore();
 }
 
 // ── offscreen layer cache ──────────────────────────────────────────────────

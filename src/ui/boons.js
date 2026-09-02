@@ -11,10 +11,11 @@
 import {
   PAL, RARITY, frame, panelBody, plaqueRect, roundRect, goldGradient, meander,
   beadRule, laurel, laurelBranch, palmette, tracked, trackedWidth, wrap, rgba, mix, shade, lift,
-  displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
+  displayFont, bodyFont, ease, clamp01, lerp, LayerCache, keyCap,
 } from './ornament.js';
-import { GOD_INFO, SLOTS, RARITY_LABEL, BoonState } from '../game/boons.js';
+import { GOD_INFO, SLOTS, RARITY_LABEL, BoonState, valuesFor } from '../game/boons.js';
 import { boonOfferComparison, advanceCardFocus, releaseGatedEdge } from './boon-choice.js';
+import { statChips } from './hud-boons.js';
 // Cards never display these atlases at source resolution. Compact browser
 // editions keep the reward screen quick to open on integrated GPUs while the
 // full-resolution files remain available as art masters.
@@ -345,6 +346,11 @@ export class BoonOverlay {
     this.rects = [];
     this._inputWasEnabled = true;
     this._gamepadAcceptArmed = false;
+    this.rerolls = 0;                   // reroll charges the run has granted
+    this._onReroll = null;              // fn() -> options[] | Promise<options[]>
+    this.rerollRect = null;
+    this.rerollHover = false;
+    this.rerollT = -9;
   }
 
   /** ARCHITECTURE §2.9 — ui.showBoonChoice(options) -> Promise<chosenBoon> */
@@ -359,6 +365,13 @@ export class BoonOverlay {
     this.t0 = this.ui.now();
     this.hover = -1; this.chosen = -1; this.chosenT = 0;
     this._gamepadAcceptArmed = false;
+    // Reroll affordance: only drawn when the run actually supports it, so a
+    // dead button never sits on the screen. The run may pass a count and a
+    // handler, or expose `rerolls` on itself.
+    this._onReroll = typeof o.reroll === 'function' ? o.reroll : null;
+    this.rerolls = Math.max(0, (o.rerolls ?? this.ui.ctx?.run?.rerolls ?? 0) | 0);
+    if (!this._onReroll && this.rerolls > 0) this._onReroll = () => this._fallback(o);
+    this.rerollRect = null; this.rerollHover = false;
     const gods = [...new Set(this.options.map(x => x.god))];
     this.title = gods.length === 1 ? `A Boon of ${GOD_INFO[gods[0]]?.name || 'the Gods'}` : 'A Boon of the Gods';
     this.subtitle = gods.length === 1 ? (GOD_INFO[gods[0]]?.title || '') : 'The gods are watching';
@@ -399,6 +412,30 @@ export class BoonOverlay {
     input.enabled = this._inputWasEnabled && !anotherModal;
   }
 
+  /** Spend a reroll charge and swap the offer, keeping the modal open. */
+  async reroll() {
+    if (!this.active || this.chosen >= 0 || this.rerolls <= 0 || !this._onReroll) return false;
+    this.rerolls--;
+    this.rerollT = this.ui.now();
+    this.ui.ctx?.audio?.sfx?.('ui.select', { gain: 0.6 });
+    let next = null;
+    try { next = await this._onReroll(); } catch (e) { next = null; }
+    if (!this.active) return false;
+    if (next && next.length) {
+      const list = next.slice(0, 3);
+      this.options = list.map(x => normalise(x, this.ui.boonState));
+      this.raw = list;
+      this.t0 = this.ui.now() - 0.05;
+      this.hover = this.hover < 0 ? -1 : Math.min(this.hover, list.length - 1);
+      const gods = [...new Set(this.options.map(x => x.god))];
+      this.title = gods.length === 1 ? `A Boon of ${GOD_INFO[gods[0]]?.name || 'the Gods'}` : 'A Boon of the Gods';
+      this.subtitle = gods.length === 1 ? (GOD_INFO[gods[0]]?.title || '') : 'The gods are watching';
+      this.ui.ctx?.events?.emit?.('boon.rerolled', { remaining: this.rerolls });
+    }
+    this.ui.dirty = true;
+    return true;
+  }
+
   cancel() {
     this.ui.hud?.alpha?.set?.(1);
     const r = this._resolve; this._resolve = null; this.active = false;
@@ -424,6 +461,10 @@ export class BoonOverlay {
     }
     return -1;
   }
+  hitReroll(px, py) {
+    const r = this.rerollRect;
+    return !!r && px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h;
+  }
 
   /** One navigation path for keyboard and gamepad, including first focus. */
   moveSelection(dir) {
@@ -439,6 +480,7 @@ export class BoonOverlay {
     if (action === 'left') this.moveSelection(-1);
     else if (action === 'right') this.moveSelection(1);
     else if (action === 'accept') this.choose(this.hover < 0 ? 0 : this.hover);
+    else if (action === 'reroll') this.reroll();
   }
 
   pollGamepadAccept(down, edge) {
@@ -532,13 +574,45 @@ export class BoonOverlay {
       g.restore();
     }
 
-    // ── footer hint ──
+    // ── footer: input hints, in the vocabulary of the device in the hand ──
     const fa = ease.out(clamp01((age - 0.55) / 0.4));
-    g.save(); g.globalAlpha = fa * 0.8;
-    tracked(g, '1 · 2 · 3  OR CLICK   ·   ARROWS + ENTER   ·   GAMEPAD A', W / 2, L.y + L.ch + 42 * S, {
-      size: 10.5 * S, track: 0.28, weight: 600, align: 'center', color: rgba('#e8d8b6', 0.86), shadow: '#06030c', shadowDy: 1.4 * S,
+    const pad = this.ui.padGlyphs ? this.ui.padGlyphs() : false;
+    const fy = L.y + L.ch + 42 * S;
+    g.save(); g.globalAlpha = fa * 0.85;
+    const hints = pad
+      ? [['◀ ▶', 'CHOOSE'], ['A', 'CLAIM'], ...(this.rerolls > 0 ? [['Y', 'REROLL']] : [])]
+      : [['1 2 3', 'CLAIM'], ['← →', 'CHOOSE'], ['ENTER', 'CONFIRM'], ...(this.rerolls > 0 ? [['R', 'REROLL']] : [])];
+    let total = 0;
+    const parts = hints.map(([k, l]) => {
+      const kw = Math.max(20 * S, 7.2 * S * k.length + 10 * S);
+      const lw = trackedWidth(g, l, { size: 9.6 * S, track: 0.26, weight: 600 });
+      total += kw + 8 * S + lw + 30 * S; return { k, l, kw, lw };
     });
+    let hx = W / 2 - total / 2 + 15 * S;
+    for (const p of parts) {
+      keyCap(g, hx, fy - 13 * S, p.kw, 17 * S, p.k, { pad: pad && p.k.length <= 2, size: 8.6 * S, edgeAlpha: 0.7 });
+      tracked(g, p.l, hx + p.kw + 8 * S, fy, { size: 9.6 * S, track: 0.26, weight: 600, align: 'left', color: rgba('#e8d8b6', 0.86), shadow: '#06030c', shadowDy: 1.4 * S });
+      hx += p.kw + 8 * S + p.lw + 30 * S;
+    }
     g.restore();
+
+    // ── reroll plate (only when the run has granted charges) ──
+    if (this.rerolls > 0 && this.chosen < 0) {
+      const rw = 214 * S, rh = 30 * S, rx = W / 2 - rw / 2, ry = fy + 22 * S;
+      this.rerollRect = { x: rx, y: ry, w: rw, h: rh };
+      const flash = clamp01(1 - (t - this.rerollT) / 0.5);
+      g.save(); g.globalAlpha = fa;
+      plaqueRect(g, rx, ry, rw, rh, 6 * S);
+      g.fillStyle = rgba(this.rerollHover ? '#2a1840' : '#120b1e', 0.92); g.fill();
+      g.strokeStyle = goldGradient(g, rx, ry, rx + rw, ry + rh, this.rerollHover ? (t * 0.5) % 1 : 0.35); g.lineWidth = 1.3 * S; g.stroke();
+      palmette(g, rx + 13 * S, ry + rh / 2, 8 * S, { rot: Math.PI / 2, lobes: 5 });
+      palmette(g, rx + rw - 13 * S, ry + rh / 2, 8 * S, { rot: -Math.PI / 2, lobes: 5 });
+      tracked(g, `REROLL  ·  ${this.rerolls} LEFT`, W / 2, ry + rh * 0.68, {
+        size: 10 * S, track: 0.26, weight: 700, align: 'center', color: this.rerollHover ? '#fff3c7' : rgba(PAL.goldHi, 0.9), shadow: '#06030c', shadowDy: 1.2 * S,
+      });
+      if (flash > 0) { g.globalCompositeOperation = 'lighter'; g.fillStyle = rgba('#ffe9a8', 0.35 * flash); plaqueRect(g, rx, ry, rw, rh, 6 * S); g.fill(); }
+      g.restore();
+    } else this.rerollRect = null;
   }
 
   _card(g, x, y, w, h, o, S, t, st) {
@@ -699,16 +773,45 @@ export class BoonOverlay {
       effectTop = by + bh;
     }
 
+    // ── stat chips: the numbers, and the delta when this improves a boon ──
+    const chips = o.chips || [];
+    const chipH = chips.length ? 22 * S : 0;
     // ── effect text, optically centred in whatever room is left ──
     const tw2 = w - 44 * S;
-    const lines = wrap(g, o.text, tw2, { size: 14.4 * S, weight: 400, font: bodyFont() });
-    const lh = 20 * S;
-    const availTop = effectTop, availBot = y + h - 52 * S;
+    const availTop = effectTop, availBot = y + h - 52 * S - chipH;
+    // fit the copy to the room that is left: a replacement plaque plus a chip
+    // row can leave three lines with space for two, so the type steps down
+    // rather than a line vanishing behind the chips
+    let fs = 14.4 * S, lh = 20 * S;
+    let lines = wrap(g, o.text, tw2, { size: fs, weight: 400, font: bodyFont() });
+    if (lines.length * lh > availBot - availTop - 8 * S) {
+      fs = 12.6 * S; lh = 16.5 * S;
+      lines = wrap(g, o.text, tw2 + 8 * S, { size: fs, weight: 400, font: bodyFont() });
+    }
     const shown = lines.slice(0, 4);
-    let ty = availTop + Math.max(6 * S, (availBot - availTop - shown.length * lh) / 2) + lh * 0.74;
-    g.font = `400 ${14.4 * S}px ${bodyFont()}`;
+    let ty = availTop + Math.max(4 * S, (availBot - availTop - shown.length * lh) / 2) + lh * 0.74;
+    g.font = `400 ${fs}px ${bodyFont()}`;
     g.textBaseline = 'alphabetic';
-    for (const ln of shown) { drawMixed(g, ln, cx, ty, 14.4 * S, tw2, col); ty += lh; }
+    for (const ln of shown) { drawMixed(g, ln, cx, ty, fs, tw2, col); ty += lh; }
+    if (chips.length) {
+      const cy2 = y + h - 52 * S - chipH + 4 * S, ch2 = 18 * S;
+      const widths = chips.map(c => {
+        const valTxt = c.from != null && c.from !== c.to ? `${fmtStat(c.from)} → ${fmtStat(c.to)}` : fmtStat(c.to);
+        return { c, valTxt, w: trackedWidth(g, c.label, { size: 7.2 * S, track: 0.2, weight: 700 }) + trackedWidth(g, valTxt, { size: 9.6 * S, track: 0.04, weight: 700 }) + 22 * S };
+      });
+      const total = widths.reduce((a, b) => a + b.w, 0) + (widths.length - 1) * 6 * S;
+      let px = cx - Math.min(total, w - 20 * S) / 2;
+      for (const it of widths) {
+        const c = it.c, up = c.up, down = c.down;
+        const edge = up ? '#9dffc0' : down ? '#ff8a7a' : R.text;
+        plaqueRect(g, px, cy2, it.w, ch2, 4 * S);
+        g.fillStyle = rgba(up ? '#0f2a1c' : '#160e24', 0.92); g.fill();
+        g.strokeStyle = rgba(edge, 0.7); g.lineWidth = 1 * S; g.stroke();
+        tracked(g, c.label, px + 7 * S, cy2 + ch2 * 0.68, { size: 7.2 * S, track: 0.2, weight: 700, align: 'left', color: rgba(PAL.parchDim, 0.95) });
+        tracked(g, it.valTxt, px + it.w - 7 * S, cy2 + ch2 * 0.70, { size: 9.6 * S, track: 0.04, weight: 700, align: 'right', color: up ? '#c8ffdc' : down ? '#ffc4b8' : PAL.goldHi, shadow: '#05030a', shadowDy: 1 });
+        px += it.w + 6 * S;
+      }
+    }
 
     // ── rarity footer: label, arms, and one pip per tier ──
     const fy = y + h - 24 * S;
@@ -722,7 +825,7 @@ export class BoonOverlay {
       g.fillStyle = ag; g.fillRect(Math.min(ax, ax + sgn * armW), fy - 4 * S, armW, Math.max(1, 1.1 * S));
     }
     tracked(g, label, cx, fy, { size: 11 * S, track: 0.34, weight: 600, align: 'center', color: R.text, shadow: '#07040d', shadowDy: 1.4 * S });
-    const tier = ['common', 'rare', 'epic', 'heroic'].indexOf(o.rarity) + 1;
+    const tier = Math.max(1, ['common', 'rare', 'epic', 'heroic', 'legendary'].indexOf(o.rarity) + 1);
     const pipGap = 11 * S, pipY = fy + 13 * S;
     for (let k = 0; k < 4; k++) {
       const px2 = cx + (k - 1.5) * pipGap;
@@ -746,16 +849,41 @@ export class BoonOverlay {
     g.fillStyle = sg2; g.fillRect(x, y, w, h);
     g.restore();
 
-    // ── selection chevron ──
+    // ── focus ring + claim affordance ──
+    // Keyboard and pad users need to SEE which card has focus without a
+    // cursor: a double ring in the god colour with a running dash, and a
+    // CLAIM plate that names the confirm key. Mouse hover gets the same.
     if (st.hovered || st.picked) {
-      g.save(); g.globalCompositeOperation = 'lighter';
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      roundRect(g, x - 4 * S, y - 4 * S, w + 8 * S, h + 8 * S, 12 * S);
+      g.strokeStyle = rgba(lift(col, 0.35), st.picked ? 0.95 : 0.7); g.lineWidth = 2.2 * S; g.stroke();
+      roundRect(g, x - 9 * S, y - 9 * S, w + 18 * S, h + 18 * S, 15 * S);
+      g.setLineDash([10 * S, 7 * S]); g.lineDashOffset = -t * 40 * S;
+      g.strokeStyle = rgba(col, 0.55); g.lineWidth = 1.2 * S; g.stroke();
+      g.setLineDash([]);
       g.beginPath();
-      g.moveTo(cx - 9 * S, y - 15 * S); g.lineTo(cx, y - 5 * S); g.lineTo(cx + 9 * S, y - 15 * S);
+      g.moveTo(cx - 9 * S, y - 19 * S); g.lineTo(cx, y - 9 * S); g.lineTo(cx + 9 * S, y - 19 * S);
       g.strokeStyle = rgba(lift(col, 0.4), 0.9); g.lineWidth = 2.4 * S; g.lineJoin = 'round'; g.stroke();
       g.restore();
+      if (!st.picked) {
+        const pad = this.ui.padGlyphs ? this.ui.padGlyphs() : false;
+        const key = pad ? 'A' : 'ENTER';
+        const label = 'CLAIM';
+        const kw = pad ? 18 * S : 40 * S, kh = 16 * S;
+        const lw = trackedWidth(g, label, { size: 10 * S, track: 0.3, weight: 700 });
+        const pw = kw + lw + 34 * S, ph = 26 * S, px = cx - pw / 2, py = y + h + 10 * S;
+        plaqueRect(g, px, py, pw, ph, 5 * S);
+        g.fillStyle = rgba(shade(col, 0.72), 0.94); g.fill();
+        g.strokeStyle = rgba(lift(col, 0.3), 0.9); g.lineWidth = 1.2 * S; g.stroke();
+        keyCap(g, px + 9 * S, py + (ph - kh) / 2, kw, kh, key, { pad, size: 8.6 * S });
+        tracked(g, label, px + 9 * S + kw + 9 * S, py + ph * 0.68, { size: 10 * S, track: 0.3, weight: 700, align: 'left', color: '#fff3c7', shadow: '#06030c', shadowDy: 1.2 * S });
+      }
     }
   }
 }
+
+const fmtStat = (v) => typeof v === 'number' ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v);
 
 /** Body text with the numerals lifted into gold so the card reads as a stat block. */
 function drawMixed(g, line, cx, y, size, maxW, col) {
@@ -773,6 +901,22 @@ function drawMixed(g, line, cx, y, size, maxW, col) {
   }
 }
 
+/**
+ * Stat chips for the card: the offer's numeric values and, when the offer
+ * improves or replaces an owned boon, the values it improves FROM. Rarity
+ * math comes from the run's own tables so the chip never disagrees with the
+ * body text.
+ */
+function chipsFor(x, boonState, rarity) {
+  const boon = x.boon || x;
+  const values = x.values || (boon.base ? (() => { try { return valuesFor(boon, rarity); } catch (e) { return null; } })() : null);
+  if (!values) return [];
+  let prev = null;
+  const owned = boon.id && boonState?.byId?.get?.(boon.id);
+  if (owned && owned.values) prev = owned.values;
+  return statChips(values, prev, 3);
+}
+
 /** Accept whatever shape the run system hands us and make it renderable. */
 function normalise(x, boonState) {
   if (!x) return { name: 'Unknown', text: '', god: 'zeus', rarity: 'common', slot: 'passive', color: PAL.gold };
@@ -788,6 +932,7 @@ function normalise(x, boonState) {
     duo: !!(x.duo || (x.boon && x.boon.gods)),
     upgrade: !!x.upgrade,
     comparison: boonOfferComparison(x, boonState),
+    chips: chipsFor(x, boonState, rarity),
     rarity: RARITY[rarity] ? rarity : 'common',
     slot: x.slot || (x.boon && x.boon.slot) || 'passive',
     color: x.color || GOD_INFO[god]?.color || PAL.gold,
