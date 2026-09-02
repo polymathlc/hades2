@@ -14,19 +14,30 @@
 // The system defines render(), which the engine calls AFTER RenderSystem's own
 // render() (systems run in add order). In capture mode we additionally wrap
 // RenderSystem.render so the driver's explicit render() call carries the UI.
+//
+// WHAT LIVES HERE (and not in a module): everything that has to know about
+// more than one module — the settings that fan out to the camera, the input
+// layer and the post stack; the run lifecycle (death / victory screens); the
+// banners and toasts; the first-run controls card; the device-aware key
+// glyphs every module asks for through ui.keyFor().
 // ---------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette } from './ornament.js';
+import { PAL, LayerCache, rgba, clamp01, ease, tracked, trackedWidth, plaqueRect, goldGradient, palmette, laurelBranch, keyCap, uiIcon, frame, lift } from './ornament.js';
 import { HUD } from './hud.js';
-import { BoonOverlay } from './boons.js';
+import { BoonOverlay, godEmblem } from './boons.js';
 import { NectarOverlay } from './nectar.js';
 import { Menus } from './menus.js';
+import { PactScreen } from './pact.js';
 import { WorldLabels } from './worldlabels.js';
 import { BoonState, BOONS, DUOS, GOD_INFO } from '../game/boons.js';
 import { CHARACTER_INFO } from '../game/characters.js';
+import { loadSettings, saveSettings, wantPadGlyphs } from './settings.js';
+import { primaryKey, padLabel, ACTIONS } from '../core/controls.js';
+import { verbState, fitText } from './hud-boons.js';
 
 const REF_W = 1600, REF_H = 900;
+const IDLE_HZ = 30;                       // redraw rate when nothing changed
 
 export class UI {
   constructor() {
@@ -36,9 +47,13 @@ export class UI {
     this.scale = 1;
     this.W = 0; this.H = 0;
     this.toasts = [];
+    this.banners = [];
     this._rand = 0;
     this.enabled = true;
     this._padPrev = {};
+    this.runTime = 0;
+    this._lastDraw = -1;
+    this.onboard = null;                  // the first-run controls card
     // Constructed eagerly, not in init(): main.js adds UI after the player, and
     // Player.init() calls ctx.ui.setHealth() during initAll. Every contract
     // setter must be safe from the moment the object exists.
@@ -46,6 +61,8 @@ export class UI {
     this.boonUI = new BoonOverlay(this);
     this.nectarUI = new NectarOverlay(this);
     this.menus = new Menus(this);
+    this.pactUI = new PactScreen(this);   // the run-modifier screen, reached from the pause menu at home
+    this.settings = this.menus.settings;  // ONE object: audio writes menus.settings.master
     this.labels = new WorldLabels(this);
     this.boonState = new BoonState(null);
   }
@@ -58,10 +75,24 @@ export class UI {
     return this._rand / 4294967296;
   }
 
+  // ── device-aware glyphs, asked for by every module ─────────────────────
+  padGlyphs() { return wantPadGlyphs(this.settings, !!this.ctx?.input?.usingGamepad); }
+  /** The label to draw for an action: pad glyph, mouse button, or the live key. */
+  keyFor(action) {
+    if (this.padGlyphs()) return padLabel(action) || '';
+    if (action === 'attack') return 'LMB';
+    if (action === 'special') return 'RMB';
+    if (!ACTIONS[action]) return String(action).toUpperCase();
+    return primaryKey(action) || '';
+  }
+
   async init(ctx) {
     this.ctx = ctx;
-    this.menus.settings.quality = ctx.quality?.source === 'auto' ? 'auto' : (ctx.quality?.tier || 'med');
     this._rng = ctx.rng && ctx.rng.fork ? ctx.rng.fork('ui') : ctx.rng;
+
+    // ── settings: persisted in play, defaults under capture (determinism) ──
+    if (!ctx.CAPTURE) Object.assign(this.settings, loadSettings());
+    this.settings.quality = ctx.quality?.source === 'auto' ? 'auto' : (ctx.quality?.tier || 'med');
 
     // DOM host (kept: main.js's capture.hud() toggles #ui, and it hosts the
     // play-mode canvas so we pay no texture upload outside capture)
@@ -104,21 +135,61 @@ export class UI {
       }
     }
 
+    // ── input layer: bindings, device changes, accessibility latches ──
+    const input = ctx.input;
+    if (input) {
+      if (!ctx.CAPTURE && input.loadBindings) input.loadBindings();
+      input.onDevice = () => { this.dirty = true; };
+      if (input.setToggle) input.setToggle('special', !!this.settings.holdToggle);
+    }
+    // fan the comfort settings out to their owners once, at boot
+    this._applyAll();
+
     // ── events ──
     const E = ctx.events;
     E.on('damage.number', (i) => {
       if (!i || !i.pos) return;
       if (i.target === ctx.player) return;                 // no numbers on the hero
-      this.labels.damageNumber(i.pos, i.amount, { crit: i.crit, type: i.type });
+      this.labels.damageNumber(i.pos, i.amount, { crit: i.crit, type: i.type, target: i.target });
     });
     E.on('damage.dealt', (i) => {
       if (!i || !i.target || i.target === ctx.player) return;
       const t = i.target;
-      if (t.maxHealth) this.labels.enemyHealth(t, t.health, t.maxHealth, t.def && (t.def.title || t.def.name));
-      if (t.def && t.def.boss) this.labels.setBoss({ name: t.def.title || t.def.name || 'The Warden', hp: t.health, max: t.maxHealth, phases: t.def.phases || 3, phase: Math.max(1, Math.ceil((t.health / t.maxHealth) * (t.def.phases || 3))) });
+      if (t.def && t.def.boss) {
+        // the plate is already up from boss.spawned; this only moves the fill.
+        // (If a boss reached us without a spawn event, land it now.)
+        if (!this.labels.boss) this.labels.setBoss({ name: t.def.title || t.def.label || t.def.name || 'The Warden', phases: t.def.phases || 3 });
+        this.labels.setBoss({ hp: t.health, max: t.maxHealth, enraged: !!t.enraged });
+      } else if (t.maxHealth) this.labels.enemyHealth(t, t.health, t.maxHealth, t.def && (t.def.title || t.def.label || t.def.name));
     });
     E.on('entity.died', (i) => { if (i && i.entity) { this.labels.removeEnemy(i.entity); if (i.entity.def && i.entity.def.boss) this.labels.setBoss(null); } });
-    E.on('boon.granted', (i) => { if (i) this.hud.addBoon(i.record || i); });
+    // ── the boss plate lands on the spawn, not on the first hit ──
+    E.on('boss.spawned', (i) => {
+      if (!i) return;
+      const e = i.entity, def = e && e.def;
+      const name = i.name || (def && (def.title || def.label)) || 'The Warden';
+      const phases = i.phases || (def && def.phases) || 3;
+      this.labels.setBoss({ name, hp: e?.health ?? i.maxHealth, max: i.maxHealth || e?.maxHealth || 1, phases });
+      // the intro moment is a banner in the top band, never a toast across the
+      // body (not under capture: the enemy scenarios frame the boss itself)
+      if (!ctx.CAPTURE) this.banner(name, `${phases} PHASES · ${ctx.run?.heat > 0 ? `HEAT ${ctx.run.heat} · ` : ''}BREAK THE GUARD, STRIKE THE OPENING`, { icon: 'skull', color: '#ff9a8a', dur: 3.0 });
+    });
+    E.on('boss.health', (i) => { if (i) this.labels.setBoss({ name: i.name, hp: i.health, max: i.maxHealth, phase: i.phase, phases: i.phases }); });
+    E.on('boss.phase', (i) => { if (i && this.labels.boss) this.labels.setBoss({ phase: i.phase, hp: i.health, max: i.maxHealth }); });
+    E.on('boss.enraged', (i) => { if (this.labels.boss) this.labels.setBoss({ enraged: true }); });
+    E.on('boss.defeated', () => this.labels.setBoss(null));
+    // ── the Pact's heat, on the depth plaque ──
+    E.on('run.modifiers', (i) => this.hud.setHeat(i?.heat || 0));
+    E.on('home.entered', () => this.hud.setHeat(ctx.run?.heat || 0));
+    E.on('boon.granted', (i) => {
+      if (!i) return;
+      const rec = i.record || i;
+      this.hud.addBoon(rec);
+      // the reward is a moment: name it, in the god's colour, with the emblem
+      const boon = rec.boon || rec, god = rec.god || boon.god || (boon.gods && boon.gods[0]);
+      const info = GOD_INFO[god];
+      if (info && !ctx.CAPTURE) this.toast(`${boon.name || info.name + ' boon'} · ${String(rec.rarity || 'common')}`, { icon: god, color: lift(info.color, 0.3), dur: 3.2 });
+    });
     E.on('nectar.changed', (i) => { if (i && i.total != null) this.setResources(null, i.total); });
     E.on('titanBlood.changed', (i) => { if (i && i.total != null) this.setResources(null, null, i.total); });
     E.on('darkness.changed', (i) => { if (i && i.total != null) this.setResources(null, null, null, i.total); });
@@ -134,6 +205,45 @@ export class UI {
     E.on('player.dashed', () => { this.hud.setDash(Math.max(0, this.hud.dash - 1)); });
     E.on('capture.state', ({ name, args }) => this._captureState(name, args, ctx));
 
+    // ── the run lifecycle: the screens the contract promises ──
+    E.on('run.started', (i) => {
+      this._runStart = ctx.time?.t || 0;
+      this.runTime = 0;
+      this.banners.length = 0;
+      this.hud.setHeat(i?.heat ?? ctx.run?.heat ?? 0);
+      if (!ctx.CAPTURE && !this.settings.onboarded) this.showOnboarding();
+    });
+    E.on('room.cleared', (e) => {
+      if (ctx.CAPTURE) return;
+      this.banner('Chamber Cleared', e?.boss ? 'THE WAY FORWARD IS OPEN' : 'THE GATES ARE OPEN · CHOOSE YOUR REWARD', { icon: 'laurel' });
+    });
+    E.on('boss.defeated', (i) => {
+      if (ctx.CAPTURE) return;
+      const name = i?.entity?.def?.title || i?.entity?.def?.label || 'The Warden';
+      this.banner(`${name} Falls`, 'CLAIM THE SPOILS', { icon: 'skull', color: '#ffb070' });
+    });
+    E.on('run.ended', (i) => {
+      const s = this._collectSummary(i);
+      s.killedBy = s.killedBy || 'the Underworld';
+      this.setSummary(s);
+      // let the death VFX play before the plate lands
+      this._sched = this._sched || [];
+      this._sched.push({ at: this.t + 1.6, fn: () => { if (ctx.run?.state === 'dead') this.screen('death'); } });
+    });
+    E.on('run.victory', (i) => {
+      const s = this._collectSummary(i);
+      s.boss = i?.boss || s.boss;
+      this.setSummary(s);
+      this._sched = this._sched || [];
+      this._sched.push({ at: this.t + 2.4, fn: () => { if (ctx.run?.state === 'victory') this.screen('victory'); } });
+    });
+    E.on('damage.dealt', (i) => {
+      // who is killing us — for the death plate's "slain by" line
+      if (i && i.target === ctx.player && i.source && i.source !== ctx.player) {
+        const d = i.source.def; this._lastAttacker = (d && (d.title || d.label || d.name)) || this._lastAttacker;
+      }
+    });
+
     // ── input (pointer + keys) — only intercepts while a modal is open ──
     this._onMove = (e) => {
       if (!this._modal()) return;
@@ -141,7 +251,11 @@ export class UI {
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
       if (this.nectarUI.active) this.nectarUI.move(x, y);
-      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i !== this.boonUI.hover) { this.boonUI.hover = i; this.dirty = true; } }
+      else if (this.boonUI.active) {
+        const i = this.boonUI.hitTest(x, y);
+        const rr = this.boonUI.hitReroll(x, y);
+        if (i !== this.boonUI.hover || rr !== this.boonUI.rerollHover) { this.boonUI.hover = i; this.boonUI.rerollHover = rr; this.dirty = true; }
+      }
       else this.menus.move(x, y);
     };
     this._onDown = (e) => {
@@ -150,16 +264,21 @@ export class UI {
       const x = (e.clientX - r.left) * (this.W / (r.width || innerWidth));
       const y = (e.clientY - r.top) * (this.H / (r.height || innerHeight));
       if (this.nectarUI.active) { if (this.nectarUI.click(x, y)) e.preventDefault(); }
-      else if (this.boonUI.active) { const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); } }
+      else if (this.boonUI.active) {
+        if (this.boonUI.hitReroll(x, y)) { this.boonUI.reroll(); e.preventDefault(); return; }
+        const i = this.boonUI.hitTest(x, y); if (i >= 0) { this.boonUI.choose(i); e.preventDefault(); }
+      }
       else if (this.menus.click(x, y)) e.preventDefault();
     };
     this._onKey = (e) => {
+      if (this.ctx?.input?.capturing) return;              // a rebind is listening
       if (this.nectarUI.active) { this.nectarUI.key(e); return; }
       if (this.boonUI.active) {
         if (e.key === '1' || e.key === '2' || e.key === '3') this.boonUI.choose(+e.key - 1);
-        else if (e.key === 'ArrowLeft') this.boonUI.moveSelection(-1);
-        else if (e.key === 'ArrowRight') this.boonUI.moveSelection(1);
+        else if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') this.boonUI.moveSelection(-1);
+        else if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') this.boonUI.moveSelection(1);
         else if (e.key === 'Enter' || e.key === ' ') this.boonUI.choose(this.boonUI.hover < 0 ? 0 : this.boonUI.hover);
+        else if (e.key === 'r' || e.key === 'R') this.boonUI.reroll();
         return;
       }
       if (e.key === 'h' || e.key === 'H') {
@@ -170,20 +289,21 @@ export class UI {
       if (e.key === 'b' || e.key === 'B' || e.key === 'Tab') {
         e.preventDefault();
         if (!this._modal()) this.screen('pause');
-        if (this.menus.screen === 'pause') this.menus.activate(this.menus.boonsOpen ? 'back' : 'boons');
+        if (this.menus.modal) this.menus.activate(this.menus.boonsOpen ? 'back' : 'boons');
         return;
       }
       if (e.key === 'Escape') {
-        if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
+        if (this.menus.subOpen) this.menus.activate('back');
+        else if (this.menus.screen === 'death' || this.menus.screen === 'victory') this.retry();
         else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
         return;
       }
       if (!this._modal()) return;
       if (e.key === 'ArrowDown' || e.key === 's') this.menus.key(1);
       else if (e.key === 'ArrowUp' || e.key === 'w') this.menus.key(-1);
-      else if (e.key === 'ArrowRight' || e.key === 'd') { const h = this.menus.hit[this.menus.sel]; if (h && h.act === 'setting') this.menus._bump(h.key, 1); }
-      else if (e.key === 'ArrowLeft' || e.key === 'a') { const h = this.menus.hit[this.menus.sel]; if (h && h.act === 'setting') this.menus._bump(h.key, -1); }
-      else if (e.key === 'Enter' || e.key === ' ') { const h = this.menus.hit[this.menus.sel]; if (h) { if (h.act === 'setting') this.menus._bump(h.key, 1); else this.menus.activate(h.act); } }
+      else if (e.key === 'ArrowRight' || e.key === 'd') this.menus.horizontal(1);
+      else if (e.key === 'ArrowLeft' || e.key === 'a') this.menus.horizontal(-1);
+      else if (e.key === 'Enter' || e.key === ' ') this.menus.confirm();
     };
     if (!ctx.CAPTURE) {
       addEventListener('pointermove', this._onMove, { passive: true });
@@ -209,13 +329,15 @@ export class UI {
     // cap the UI raster so a 4K screen does not pay for a 4K interface
     const cap = 2200;
     if (w > cap) { h = Math.round(h * cap / w); w = cap; }
-    if (this.W === w && this.H === h) return;
+    const ts = this.settings?.textScale || 1;
+    if (this.W === w && this.H === h && this._textScale === ts) return;
+    this._textScale = ts;
     this.W = w; this.H = h;
     this.canvas.width = w; this.canvas.height = h;
     this.canvas.style.width = '100%'; this.canvas.style.height = '100%';
     this.scale = Math.min(w / REF_W, h / REF_H);
     // never let the UI shrink below legibility or grow into a billboard
-    this.scale = Math.max(0.62, Math.min(1.5, this.scale));
+    this.scale = Math.max(0.62, Math.min(1.5, this.scale)) * ts;
     this.cache.clear(); this.hud.cache.clear(); this.menus.cache.clear();
     if (this.tex) this.tex.needsUpdate = true;
     this.dirty = true;
@@ -231,9 +353,21 @@ export class UI {
   damageNumber(worldPos, amount, o) { this.labels.damageNumber(worldPos, amount, o); }
   showBoonChoice(options, o) { return this.boonUI.open(options, o); }
   showHomeUpgrades(meta, page) { this.nectarUI.open(meta || this.ctx?.meta, page); }
+  /** icon: a god key (emblem) or a ui icon name ('skull','laurel','coin','heart','bolt','door','star','hammer','gear','info'). */
   toast(text, o = {}) {
+    // A boss announces itself with its own toast right after boss.spawned;
+    // the plate and the banner already carry the name, so that toast would
+    // only be a third copy struck across the body.
+    const boss = this.labels?.boss;
+    if (boss && this.t - boss.t0 < 1.5 && String(text).trim().toUpperCase() === String(boss.name).trim().toUpperCase()) return;
     this.toasts.push({ text: String(text), color: o.color || PAL.gold, icon: o.icon || null, t0: this.t, dur: o.dur || 2.4 });
     if (this.toasts.length > 4) this.toasts.shift();
+    this.dirty = true;
+  }
+  /** A centre-screen moment: room cleared, boss down, reward. One at a time. */
+  banner(title, sub, o = {}) {
+    this.banners.push({ title: String(title), sub: sub ? String(sub) : '', color: o.color || PAL.goldHi, icon: o.icon || null, t0: -1, dur: o.dur || 2.6 });
+    if (this.banners.length > 3) this.banners.shift();
     this.dirty = true;
   }
   screen(name) {
@@ -244,6 +378,20 @@ export class UI {
       if (this.ctx.input) this.ctx.input.enabled = name === 'game';
     }
     this.dirty = true;
+  }
+  /**
+   * Retry from the death / victory plate: back to the Crossroads, at once.
+   * run.js no longer restarts on its own after a death, so this is THE way
+   * home: run.restart() after a death, run.enterHome() after a victory.
+   */
+  retry() {
+    const run = this.ctx?.run;
+    if (run) {
+      if (run.state === 'victory' && typeof run.enterHome === 'function') run.enterHome();
+      else if (typeof run.restart === 'function') run.restart();
+      else if (typeof run.enterHome === 'function') run.enterHome();
+    }
+    this.screen('game');
   }
   // ── extensions (all optional for other systems) ──
   setDash(n, max) { this.hud.setDash(n, max); }
@@ -263,6 +411,66 @@ export class UI {
   }
   setSummary(o) { Object.assign(this.menus.summary, o || {}); this.dirty = true; }
 
+  _collectSummary(i) {
+    const ctx = this.ctx;
+    const list = (this.boonState?.list?.() || []).map(r => ({ god: r.god, rarity: r.rarity, slot: r.slot, name: r.boon?.name || r.name, level: r.level }));
+    const weapon = ctx?.combat?.runtimes?.get?.(ctx.player)?.weapon?.name || this.hud.weapon?.name || '';
+    return {
+      depth: i?.depth ?? ctx?.run?.depth ?? 1, biome: i?.biome || ctx?.run?.biome || 'tartarus',
+      kills: i?.kills ?? ctx?.run?.kills ?? 0, rooms: i?.rooms ?? 0,
+      time: i?.time ?? this.runTime, boons: list,
+      killedBy: this._lastAttacker || null,
+      character: CHARACTER_INFO?.[ctx?.run?.selectedCharacter || ctx?.player?.characterId]?.name || this.hud.character?.name || 'Zagreus',
+      weapon,
+    };
+  }
+
+  // ── settings fan-out ──────────────────────────────────────────────────
+  applySettings(key) {
+    const s = this.settings, ctx = this.ctx, E = ctx?.events;
+    switch (key) {
+      case 'textScale': this._sizeTo(ctx); break;
+      case 'shakeAmount': case 'shake': E?.emit?.('settings.shake', { on: s.shake, amount: s.shakeAmount }); break;
+      case 'reduceMotion': E?.emit?.('settings.motion', { reduce: s.reduceMotion }); break;
+      case 'reduceFlash': this._wrapFlash(); break;
+      case 'holdToggle': ctx?.input?.setToggle?.('special', !!s.holdToggle); break;
+      default: break;
+    }
+    this.dirty = true;
+  }
+  _applyAll() { for (const k of ['textScale', 'shakeAmount', 'reduceMotion', 'reduceFlash', 'holdToggle']) this.applySettings(k); }
+  /**
+   * Flash reduction has to reach the post stack, which is not ours. Rather
+   * than edit render/, we wrap ctx.post.flash once (guarded, reversible) and
+   * scale the intensity by the setting at call time.
+   */
+  _wrapFlash() {
+    const post = this.ctx?.post;
+    if (!post || typeof post.flash !== 'function') return;
+    if (!post.__uiFlashWrapped) {
+      const orig = post.flash.bind(post);
+      const self = this;
+      post.flash = function (p = {}) {
+        const k = self.settings.reduceFlash ? 0.35 : 1;
+        return orig({ ...p, intensity: (p.intensity != null ? p.intensity : 1) * k });
+      };
+      post.__uiFlashWrapped = true;
+    }
+  }
+
+  // ── onboarding ────────────────────────────────────────────────────────
+  showOnboarding() {
+    this.onboard = { t0: this.t, shownAt: (typeof performance !== 'undefined' ? performance.now() : 0), dismissT: -1 };
+    this.dirty = true;
+  }
+  dismissOnboarding() {
+    if (!this.onboard || this.onboard.dismissT >= 0) return;
+    this.onboard.dismissT = this.t;
+    this.settings.onboarded = true;
+    if (!this.ctx?.CAPTURE) saveSettings(this.settings);
+    this.dirty = true;
+  }
+
   // ═══════════════════════════════════════════════════════════ LOOP ═══════
   update(dt, ctx) {
     this.t += dt;
@@ -278,7 +486,21 @@ export class UI {
       for (let i = this.toasts.length - 1; i >= 0; i--) if (this.t - this.toasts[i].t0 > this.toasts[i].dur) this.toasts.splice(i, 1);
       this.dirty = true;
     }
-    // live values from the player, cheaply
+    if (this.banners.length) {
+      const b = this.banners[0];
+      if (b.t0 < 0) b.t0 = this.t;
+      if (this.t - b.t0 > b.dur) this.banners.shift();
+      this.dirty = true;
+    }
+    if (this.onboard) {
+      const ob = this.onboard;
+      const now = (typeof performance !== 'undefined' ? performance.now() : 0);
+      const inputSeen = ctx.input && ctx.input.anyInputT > ob.shownAt + 900;
+      if (ob.dismissT < 0 && (inputSeen || this.t - ob.t0 > 16)) this.dismissOnboarding();
+      if (ob.dismissT >= 0 && this.t - ob.dismissT > 0.5) this.onboard = null;
+      this.dirty = true;
+    }
+    // live values from the player, cheaply — and only when they changed
     const p = ctx.player;
     if (p) {
       if (p.health !== this._lastHp) { this._lastHp = p.health; this.hud.setHealth(p.health, p.maxHealth); }
@@ -287,14 +509,35 @@ export class UI {
         const d = p.dash.ready ? this.hud.dashMax : Math.max(0, this.hud.dashMax - 1);
         if (d !== this.hud.dash) this.hud.setDash(d);
       }
+      const rt = ctx.combat?.runtimes?.get?.(p);
+      this.hud.setVerb('special', verbState('special', { weaponState: rt?.state, reloadRemaining: rt?.reloadT, reloadTotal: rt?.weapon?.magazine?.reload, stuck: rt?.stuck }));
+      this.hud.setVerb('cast', verbState('cast', { cast: this.hud.cast, castMax: this.hud.castMax }));
+      this.hud.setVerb('call', verbState('call', { callRemaining: p._boonCallCd || 0, callTotal: 14 }));
     }
+    // the run clock only runs while a descent is live
+    const run = ctx.run;
+    if (run && run.state && run.state !== 'home' && run.state !== 'dead' && run.state !== 'victory') {
+      this.runTime = Math.max(0, (ctx.time?.t || 0) - (run.startedAt || 0));
+    }
+    this.hud.setRunTime(this.runTime);
     if (this.nectarUI.active || this.boonUI.active || this.menus.modal) this.dirty = true;
   }
 
   lateUpdate(alpha, ctx) {
     if (ctx.paused) this.t += ctx.time?.unscaledDt || 0;
     this._pollGamepad(ctx);
-    if (this._modal() || this.labels.nums.length) this.dirty = true;
+    const modal = this._modal();
+    if (modal !== this._wasModal) {          // the cursor follows the mode (style.css)
+      this._wasModal = modal;
+      try { document.body.classList.toggle('ui-modal', modal); } catch (e) { /* headless */ }
+    }
+    if (modal || this.labels.nums.length) this.dirty = true;
+    // Idle throttle: the gold sweeps animate, so the HUD is never truly
+    // static, but nothing the player is waiting on changes between frames.
+    // 30 Hz when clean, every frame when dirty, every frame under capture.
+    const wall = ctx.time?.unscaledT ?? this.t;
+    if (!ctx.CAPTURE && !this.dirty && wall - this._lastDraw < 1 / IDLE_HZ) return;
+    this._lastDraw = wall;
     this.draw();
   }
 
@@ -313,9 +556,11 @@ export class UI {
     // cannot go stale while the player is dashing toward a reward gate.
     const acceptDown = down(0);
     const accept = edge('accept', acceptDown);
+    const yBtn = edge('y', down(3));
     if (this.boonUI.active) {
       if (edge('left', lf)) this.boonUI.gamepad('left');
       else if (edge('right', rt)) this.boonUI.gamepad('right');
+      else if (yBtn) this.boonUI.gamepad('reroll');
       else this.boonUI.pollGamepadAccept(acceptDown, accept);
       return; // the offer is a required decision; Start must not open behind it
     }
@@ -329,17 +574,18 @@ export class UI {
       return;
     }
     if (pause) {
-      if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
+      if (this.menus.subOpen) this.menus.activate('back');
+      else if (this.menus.screen === 'death' || this.menus.screen === 'victory') this.retry();
       else this.screen(this.menus.screen === 'pause' ? 'game' : 'pause');
     }
     if (!this.menus.modal || this.boonUI.active) return;
     if (edge('up', up)) this.menus.key(-1);
     if (edge('down', dn)) this.menus.key(1);
-    if (edge('left', lf)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, -1); }
-    if (edge('right', rt)) { const h = this.menus.hit[this.menus.sel]; if (h?.act === 'setting') this.menus._bump(h.key, 1); }
-    if (accept) { const h = this.menus.hit[this.menus.sel]; if (h) h.act === 'setting' ? this.menus._bump(h.key, 1) : this.menus.activate(h.act); }
+    if (edge('left', lf)) this.menus.horizontal(-1);
+    if (edge('right', rt)) this.menus.horizontal(1);
+    if (accept) this.menus.confirm();
     if (edge('back', down(1))) {
-      if (this.menus.settingsOpen || this.menus.controlsOpen || this.menus.boonsOpen) this.menus.activate('back');
+      if (this.menus.subOpen) this.menus.activate('back');
       else if (this.menus.screen === 'pause') this.screen('game');
     }
   }
@@ -360,7 +606,6 @@ export class UI {
     if (!this.enabled) return;
     if (this.root && this.root.style.display === 'none') return;   // capture.hud(false)
     const r = ctx.renderer; if (!r) return;
-    if (this._texDirty !== false) { this.tex.needsUpdate = true; this._texDirty = false; }
     this.tex.needsUpdate = true;
     const prevTarget = r.getRenderTarget();
     if (prevTarget !== null) r.setRenderTarget(null);
@@ -390,7 +635,8 @@ export class UI {
         g.restore();
       }
       this.hud.draw(g, W, H, S, t);
-      if (la > 0.4) this._toasts(g, W, H, S, t);
+      if (la > 0.4) { this._banners(g, W, H, S, t); this._toasts(g, W, H, S, t); }
+      if (this.onboard && la > 0.4 && !this.boonUI.active) this._onboarding(g, W, H, S, t);
     }
     this.menus.draw(g, W, H, S, t);
     this.boonUI.draw(g, W, H, S, t);
@@ -403,21 +649,134 @@ export class UI {
       const to = this.toasts[i];
       const age = t - to.t0;
       const a = age < 0.25 ? ease.out(age / 0.25) : age > to.dur - 0.5 ? 1 - ease.out((age - (to.dur - 0.5)) / 0.5) : 1;
-      const y = H * 0.30 + i * 34 * S - ease.out(clamp01(age / 0.4)) * 8 * S;
+      // the toast column hangs under the banner band, clear of the boss plate
+      const y = this._bannerY(H, S) + 78 * S + i * 34 * S - ease.out(clamp01(age / 0.4)) * 8 * S;
       const size = 13 * S;
+      const icon = to.icon;
+      const iconW = icon ? 22 * S : 0;
       const tw = trackedWidth(g, to.text.toUpperCase(), { size, track: 0.24, weight: 600 });
-      const w = tw + 46 * S, h = 30 * S, x = W / 2 - w / 2;
+      const w = tw + 46 * S + iconW, h = 30 * S, x = W / 2 - w / 2;
       g.save(); g.globalAlpha = a;
       plaqueRect(g, x, y - h / 2, w, h, 5 * S);
       g.fillStyle = 'rgba(10,6,18,0.82)'; g.fill();
       g.strokeStyle = goldGradient(g, x, y - h / 2, x + w, y + h / 2, (t * 0.3) % 1); g.lineWidth = 1.3 * S; g.stroke();
-      palmette(g, x + 14 * S, y, 8 * S, { rot: Math.PI / 2, lobes: 5 });
+      // the colour of the news, as a thin left rule
+      g.fillStyle = rgba(to.color, 0.9); g.fillRect(x + 4 * S, y - h / 2 + 5 * S, 2 * S, h - 10 * S);
+      if (icon) {
+        const ix = x + 20 * S;
+        if (GOD_INFO[icon]) godEmblem(g, ix, y, 7.5 * S, icon, { glowA: 0.4, glowR: 1.8 });
+        else uiIcon(g, icon, ix, y, 7 * S, to.color);
+      } else palmette(g, x + 14 * S, y, 8 * S, { rot: Math.PI / 2, lobes: 5 });
       palmette(g, x + w - 14 * S, y, 8 * S, { rot: -Math.PI / 2, lobes: 5 });
-      tracked(g, to.text.toUpperCase(), W / 2, y + size * 0.36, {
+      tracked(g, to.text.toUpperCase(), W / 2 + iconW / 2 - 4 * S, y + size * 0.36, {
         size, track: 0.24, weight: 600, align: 'center', color: to.color, shadow: '#06030c', shadowDy: 1.6 * S,
       });
       g.restore();
     }
+  }
+
+  /**
+   * The banner's baseline: the top band of the screen (a fifth of the height
+   * is the boss's head at every play lens), pushed down only as far as the
+   * boss plate needs when one is up.
+   */
+  _bannerY(H, S) {
+    const bossBottom = this.labels?.bossBottom ? this.labels.bossBottom(S) : 0;
+    return Math.max(H * 0.155, bossBottom + 52 * S);
+  }
+
+  /** The top-band banner: laurels, a gold title with a sweep, a tracked subline. */
+  _banners(g, W, H, S, t) {
+    const b = this.banners[0];
+    if (!b || b.t0 < 0) return;
+    const age = t - b.t0;
+    const inA = ease.overshoot(clamp01(age / 0.45), 1.3);
+    const out = age > b.dur - 0.5 ? 1 - ease.out((age - (b.dur - 0.5)) / 0.5) : 1;
+    const a = clamp01(age / 0.25) * out;
+    const cx = W / 2, cy = this._bannerY(H, S);
+    const title = b.title.toUpperCase();
+    // the title is fitted to the width between the laurels, never clipped
+    const fit = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.22, weight: 700 }), title, W * 0.62, { size: Math.min(34 * S, W / 18), minSize: 20 * S });
+    const size = fit.size;
+    const tw = trackedWidth(g, fit.text, { size, track: 0.22, weight: 700 });
+    g.save(); g.globalAlpha = a;
+    g.translate(cx, cy); g.scale(0.9 + 0.1 * inA, 0.9 + 0.1 * inA); g.translate(-cx, -cy);
+    // a dark ribbon behind the title so it reads over any chamber
+    const rw = tw + 200 * S, rh = 62 * S;
+    const rg = g.createLinearGradient(cx - rw / 2, 0, cx + rw / 2, 0);
+    rg.addColorStop(0, 'rgba(0,0,0,0)'); rg.addColorStop(0.2, 'rgba(8,4,14,0.78)'); rg.addColorStop(0.8, 'rgba(8,4,14,0.78)'); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg; g.fillRect(cx - rw / 2, cy - rh * 0.62, rw, rh);
+    // the gold rules, sweeping outward
+    const lw = (tw / 2 + 70 * S) * inA;
+    const lg = g.createLinearGradient(cx - lw, 0, cx + lw, 0);
+    lg.addColorStop(0, 'rgba(0,0,0,0)'); lg.addColorStop(0.5, rgba(PAL.gold, 0.85)); lg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = lg; g.fillRect(cx - lw, cy + 10 * S, lw * 2, Math.max(1, 1.3 * S));
+    g.fillRect(cx - lw, cy - size * 0.95, lw * 2, Math.max(1, 1.0 * S));
+    laurelBranch(g, cx - tw / 2 - 18 * S, cy - size * 0.3, 70 * S * inA, -1, { leaves: 6, leafLen: 0.3, bow: 0.28 });
+    laurelBranch(g, cx + tw / 2 + 18 * S, cy - size * 0.3, 70 * S * inA, 1, { leaves: 6, leafLen: 0.3, bow: 0.28 });
+    tracked(g, fit.text, cx, cy, { size, track: 0.22, weight: 700, align: 'center', gold: true, sweep: clamp01(age / 1.2), shadow: '#06030c', shadowDy: 3 * S });
+    if (b.sub) {
+      const sf = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.36, weight: 600 }), b.sub.toUpperCase(), rw - 60 * S, { size: 10 * S, minSize: 8.4 * S });
+      tracked(g, sf.text, cx, cy + 27 * S, { size: sf.size, track: 0.36, weight: 600, align: 'center', color: rgba(b.color, 0.92), shadow: '#06030c', shadowDy: 1.5 * S });
+    }
+    if (b.icon) {
+      const iy = cy - size * 0.95 - 14 * S;
+      if (GOD_INFO[b.icon]) godEmblem(g, cx, iy, 10 * S, b.icon, { glowA: 0.5, glowR: 2 });
+      else uiIcon(g, b.icon, cx, iy, 9 * S, PAL.goldHi);
+    }
+    g.restore();
+  }
+
+  /** The first-run controls card: the seven verbs, in the device's glyphs. */
+  _onboarding(g, W, H, S, t) {
+    const ob = this.onboard;
+    const age = t - ob.t0;
+    const inA = ease.out(clamp01(age / 0.5));
+    const outA = ob.dismissT >= 0 ? 1 - ease.out(clamp01((t - ob.dismissT) / 0.45)) : 1;
+    const a = inA * outA;
+    if (a <= 0.01) return;
+    const pad = this.padGlyphs();
+    const rows = [
+      ['MOVE', pad ? 'L STICK' : `${this.keyFor('up')}${this.keyFor('left')}${this.keyFor('down')}${this.keyFor('right')}`],
+      ['AIM', pad ? 'R STICK' : 'MOUSE'],
+      ['ATTACK', this.keyFor('attack')],
+      ['SPECIAL', this.keyFor('special')],
+      ['CAST', this.keyFor('cast')],
+      ['DASH', this.keyFor('dash')],
+      ['CALL', this.keyFor('summon')],
+    ];
+    // The card is sized to its content: the widest label + cap pair and the
+    // footer hint decide the width, the row count and the footer the height.
+    // (It used to be a fixed 236 px box whose footer overran the frame and
+    // whose last rows sat under it.)
+    const hint = pad ? 'ANY BUTTON DISMISSES · MENU FOR THE FULL GUIDE' : 'ANY KEY DISMISSES · H FOR THE FULL GUIDE';
+    const hintSize = 7.6 * S;
+    const hintW = trackedWidth(g, hint, { size: hintSize, track: 0.18, weight: 600 });
+    const capW = (key) => Math.max(20 * S, trackedWidth(g, String(key), { size: 9 * S, track: 0.02, weight: 700 }) + 12 * S);
+    let rowW = 0;
+    for (const [label, key] of rows) rowW = Math.max(rowW, trackedWidth(g, label, { size: 10 * S, track: 0.24, weight: 700 }) + 16 * S + capW(key));
+    const rowStep = 26 * S, top = 58 * S, footer = 36 * S;
+    const w = Math.min(W * 0.4, Math.max(236 * S, hintW + 44 * S, rowW + 44 * S));
+    const h = top + rows.length * rowStep + footer;
+    const x = W - w - 28 * S, y = H * 0.5 - h / 2 + (1 - inA) * 20 * S;
+    g.save(); g.globalAlpha = a;
+    frame(g, { x, y, w, h, weight: 0.9 * S, r: 7 * S, pad: 5, meander: true, meanderH: 8, palmetteS: 11, sweep: (t * 0.2) % 1, glowAlpha: 0.22, fill: { top: '#1c1229', mid: '#120b1e', bot: '#0a0612' } });
+    tracked(g, 'THE VERBS', x + w / 2, y + 34 * S, { size: 13 * S, track: 0.3, weight: 700, align: 'center', gold: true, sweep: (t * 0.3) % 1, shadow: '#06030c', shadowDy: 2 * S });
+    for (let i = 0; i < rows.length; i++) {
+      const ry = y + top + i * rowStep;
+      const [label, key] = rows[i];
+      const reveal = ease.out(clamp01((age - 0.15 - i * 0.07) / 0.3));
+      g.save(); g.globalAlpha *= reveal;
+      const kw = capW(key);
+      const lf = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.24, weight: 700 }), label, w - 44 * S - kw - 12 * S, { size: 10 * S, minSize: 8.6 * S });
+      tracked(g, lf.text, x + 22 * S, ry + 5 * S, { size: lf.size, track: 0.24, weight: 700, align: 'left', color: rgba(PAL.parch, 0.9), shadow: '#05030b', shadowDy: 1 });
+      keyCap(g, x + w - 22 * S - kw, ry - 8 * S, kw, 17 * S, key, { pad: pad && String(key).length <= 2, size: 9 * S });
+      g.restore();
+    }
+    // a hairline over the footer so the hint reads as a caption, not a row
+    g.fillStyle = rgba(PAL.bronze, 0.55); g.fillRect(x + 22 * S, y + h - footer + 6 * S, w - 44 * S, Math.max(1, 0.8 * S));
+    tracked(g, hint, x + w / 2, y + h - 12 * S, { size: hintSize, track: 0.18, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.8) });
+    g.restore();
   }
 
   // ═══════════════════════════════════════ ARCHITECTURE §5 CAPTURE ════════
@@ -426,6 +785,11 @@ export class UI {
     else if (name === 'boons') this.setupCaptureBoons(ctx, args?.god || 'zeus');
     else if (name === 'forge') this.setupCaptureBoons(ctx, 'hephaestus');
     else if (name === 'loadout') this.setupCaptureLoadout(ctx);
+    else if (name === 'summary') this.setupCaptureDeath(ctx);   // 'death' belongs to VFX/ENEMY (§5)
+    else if (name === 'victory') this.setupCaptureDeath(ctx, 'victory');
+    else if (name === 'pact') this.setupCapturePact(ctx);
+    else if (name === 'onboarding') this.setupCaptureOnboarding(ctx);
+    else if (name === 'pause' || name === 'controls' || name === 'settings') this.setupCaptureMenu(ctx, name);
     else if (name === 'combat') {
       // the combat frame should carry the HUD too — it is what the player sees
       this.setupCaptureHUD(ctx, { quiet: true, character: args?.character, weapon: args?.weapon });
@@ -457,19 +821,22 @@ export class UI {
     h.roomT = -99;                                  // the plaque already says it; no banner
     h.boons.length = 0; h.boonPop.clear();
     const tray = character.id === 'melinoe' ? [
-      ['apollo', 'epic', 'attack'], ['hera', 'rare', 'special'],
-      ['hestia', 'heroic', 'cast'], ['demeter', 'common', 'dash'],
-      ['zeus', 'rare', 'gain'], ['hephaestus', 'common', 'passive'],
+      ['apollo', 'epic', 'attack', 2], ['hera', 'rare', 'special', 1],
+      ['hestia', 'heroic', 'cast', 1], ['demeter', 'common', 'dash', 1],
+      ['zeus', 'rare', 'gain', 1], ['hephaestus', 'common', 'passive', 1],
     ] : [
-      ['zeus', 'epic', 'attack'], ['aphrodite', 'rare', 'special'],
-      ['athena', 'heroic', 'cast'], ['hermes', 'common', 'dash'],
-      ['artemis', 'rare', 'passive'], ['poseidon', 'common', 'call'],
+      ['zeus', 'epic', 'attack', 2], ['aphrodite', 'rare', 'special', 1],
+      ['athena', 'heroic', 'cast', 3], ['hermes', 'common', 'dash', 1],
+      ['artemis', 'rare', 'passive', 1], ['poseidon', 'common', 'call', 1],
     ];
-    for (const [god, rarity, slot] of tray) h.addBoon({
-      id: `${god}.capture.${slot}`, god, rarity, slot,
+    for (const [god, rarity, slot, level] of tray) h.addBoon({
+      id: `${god}.capture.${slot}`, god, rarity, slot, level,
       name: `${GOD_INFO[god]?.name || god} ${slot}`,
     });
     h.boonPop.clear();
+    // the run clock and the verb rings: a call mid-recharge, two casts in hand
+    this.runTime = 7 * 60 + 42; this._runStart = null;
+    if (ctx.player) ctx.player._boonCallCd = 6.4 + 2.0;   // ~6.4 s left when the shot lands
 
     // the life bar caught mid damage-lag: drop life just before the shot
     this._sched = this._sched || [];
@@ -479,18 +846,35 @@ export class UI {
     // them would fight the real thing AGENT-ENEMY sets up.
     if (o.quiet) { this.dirty = true; return; }
 
-    // a boss mid-fight and a couple of numbers in flight
+    // a boss mid-fight (the plate lands on the spawn, as it does live), a
+    // couple of numbers in flight, and a stacked one
     this.labels.clear();
-    this.labels.setBoss({ name: 'The Bone Hydra', frac: 1, phases: 3, phase: 2 });
+    this.labels.setBoss({ name: 'The Warden of the Ninth Gate', frac: 1, phases: 3 });
     this.labels.boss.t0 = at - 1.4;
     this._sched.push({ at: at - 0.9, fn: () => this.labels.setBoss({ frac: 0.58, phase: 2, phases: 3 }) });
 
     const px = (ctx.player && ctx.player.position) ? ctx.player.position : { x: 0, y: 0, z: 0 };
     this._sched.push({ at: at - 0.46, fn: () => this.labels.damageNumber({ x: px.x + 1.9, y: 0.4, z: px.z - 2.1 }, 118, { crit: true, type: 'physical' }) });
     this._sched.push({ at: at - 0.28, fn: () => this.labels.damageNumber({ x: px.x - 2.4, y: 0.3, z: px.z - 1.2 }, 41, { type: 'lightning' }) });
-    this._sched.push({ at: at - 0.12, fn: () => this.labels.damageNumber({ x: px.x + 3.2, y: 0.5, z: px.z + 0.6 }, 27, { type: 'frost' }) });
+    this._sched.push({ at: at - 0.12, fn: () => this.labels.damageNumber({ x: px.x + 5.4, y: 0.5, z: px.z - 1.8 }, 27, { type: 'frost' }) });
+    // three quick hits on one foe fold into one growing number ("87 ×3")
+    const stackAt = { x: px.x - 3.4, y: 1.5, z: px.z + 1.4 };
+    this._sched.push({ at: at - 1.05, fn: () => this.labels.damageNumber(stackAt, 29, { type: 'physical' }) });
+    this._sched.push({ at: at - 0.86, fn: () => this.labels.damageNumber(stackAt, 29, { type: 'physical' }) });
+    this._sched.push({ at: at - 0.66, fn: () => this.labels.damageNumber(stackAt, 29, { type: 'physical' }) });
+    // two foes with bars: a shielded brute mid-guard and an armoured elite
+    this._capFoes = [
+      { position: { x: px.x - 3.4, y: 0, z: px.z + 1.4 }, height: 2.2, shielded: true, mem: { guardMax: 90, guard: 38 }, def: { label: 'Brute' } },
+      { position: { x: px.x + 3.2, y: 0, z: px.z + 0.6 }, height: 1.9, elite: 'armoured', armour: 6, def: { label: 'Wretch' } },
+    ];
+    this._sched.push({ at: at - 0.62, fn: () => this.labels.enemyHealth(this._capFoes[0], 140, 200, 'Brute') });
+    this._sched.push({ at: at - 0.24, fn: () => this.labels.enemyHealth(this._capFoes[0], 82, 200, 'Brute') });
+    this._sched.push({ at: at - 0.30, fn: () => this.labels.enemyHealth(this._capFoes[1], 46, 170, 'Wretch') });
+    this._sched.push({ at: at - 0.12, fn: () => this.labels.enemyHealth(this._capFoes[1], 31, 170, 'Wretch') });
 
-    this._sched.push({ at: at - 0.75, fn: () => this.toast('Chamber Cleared', { color: '#ffe9a8' }) });
+    // the chamber-cleared banner mid-hold, and a reward toast with its emblem
+    this._sched.push({ at: at - 1.1, fn: () => this.banner('Chamber Cleared', 'THE GATES ARE OPEN · CHOOSE YOUR REWARD', { icon: 'laurel', dur: 2.6 }) });
+    this._sched.push({ at: at - 0.75, fn: () => this.toast('Lightning Strike · Epic', { icon: 'zeus', color: lift(GOD_INFO.zeus.color, 0.3) }) });
     this.dirty = true;
   }
 
@@ -520,7 +904,8 @@ export class UI {
     }
     const rng = (ctx.rng && ctx.rng.fork) ? ctx.rng.fork('boonshot') : ctx.rng;
     const list = opts.length === 3 ? opts : bs.roll(rng, { count: 3, god, allowDuo: false });
-    this.boonUI.open(list);
+    // one reroll charge so the affordance is exercised in the reference frame
+    this.boonUI.open(list, { rerolls: 1, reroll: () => bs.roll(rng, { count: 3, god, allowDuo: false }) });
     this.boonUI.t0 = this.t - 1.35;                 // settled by the time we shoot
     this.boonUI.hover = 1;
     this.dirty = true;
@@ -544,6 +929,51 @@ export class UI {
     this.menus.activate('boons');
     this.menus.t0 = this.t - 1;
     this.menus.boonSel = 2;
+    this.dirty = true;
+  }
+
+  /** `summary`: the run-over plate over the chamber (the `death` state is AGENT-VFX's burst). */
+  setupCaptureDeath(ctx, kind = 'death') {
+    this.setupCaptureLoadout(ctx);
+    this.menus.set('game');
+    this.setSummary({
+      depth: 9, biome: 'asphodel', kills: 84, time: 11 * 60 + 8, killedBy: 'the Minotaur', boss: 'hades',
+      boons: (this.boonState.list?.() || []).map(r => ({ god: r.god, rarity: r.rarity, slot: r.slot, name: r.boon?.name, level: r.level })),
+      character: 'Zagreus', weapon: 'Stygian Blade',
+    });
+    this.screen(kind);
+    this.menus.t0 = this.t - 2.5;
+    this.dirty = true;
+  }
+
+  /** `pact`: the run-modifier screen with three pacts sealed, one focused. */
+  setupCapturePact(ctx) {
+    this.setupCaptureHUD(ctx, { quiet: true });
+    this.pactUI.preview = new Set(['hardened', 'swift', 'deadline']);
+    this.hud.setHeat(4);
+    this.screen('pause');
+    this.menus.activate('pact');
+    this.pactUI.sel = 3;
+    this.menus.t0 = this.t - 1;
+    this.dirty = true;
+  }
+
+  /** `onboarding`: the first-run verbs card, settled, over the populated HUD. */
+  setupCaptureOnboarding(ctx) {
+    this.setupCaptureHUD(ctx, { quiet: true });
+    this.showOnboarding();
+    this.onboard.t0 = this.t - 1.2;
+    this.onboard.shownAt = Infinity;              // never auto-dismissed by the driver's input
+    this.dirty = true;
+  }
+
+  /** `pause` / `controls` / `settings`: the pause plate and its sub-screens over a live run. */
+  setupCaptureMenu(ctx, which) {
+    this.setupCaptureHUD(ctx, { quiet: true });
+    this.screen('pause');
+    if (which === 'controls') { this.menus.activate('controls'); this.menus.controlSel = 4; }
+    else if (which === 'settings') { this.menus.activate('settings'); this.menus.sel = 5; }
+    this.menus.t0 = this.t - 1;
     this.dirty = true;
   }
 

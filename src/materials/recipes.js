@@ -53,6 +53,8 @@ const powField = (f, p) => {
   for (let i = 0; i < f.length; i++) { const v = f[i]; o[i] = v <= 0 ? 0 : v >= 1 ? t[256] : t[(v * 256) | 0]; }
   return o;
 };
+/** One table lookup for a scalar pow() inside a per-pixel loop (v clamped to 0..1). */
+const powAt = (t, v) => (v <= 0 ? 0 : v >= 1 ? t[256] : t[(v * 256) | 0]);
 /**
  * TOKSVIG normal-variance -> roughness.
  *
@@ -124,6 +126,52 @@ const combine = (n, parts) => {
 };
 
 const _ss = (a, b, x) => { const t = clamp01((x - a) / (b - a + 1e-9)); return t * t * (3 - 2 * t); };
+
+/**
+ * Fold a brush-relief field into a height field: zero-mean so the block's
+ * average level (and therefore its AO and its mean normal) does not move, and
+ * scaled so the ridges are a fraction of the carved relief, never its rival.
+ */
+function addRelief(h, relief, n, amount = 0.12) {
+  let mean = 0;
+  for (let i = 0; i < relief.length; i++) mean += relief[i];
+  mean /= relief.length;
+  for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + (relief[i] - mean) * amount);
+  return h;
+}
+
+/**
+ * THREE-LAYER EMISSIVE (ART_DIRECTION §1.6 / §5): a near-white CORE that is
+ * tiny, a saturated BODY in the material's own ramp, and a wide, soft, low
+ * GLOW. Every glowing surface used to be `ramp(v) * v^k` — one layer, so the
+ * hottest point and the halo were the same hue and the mask either bloomed as
+ * a fog or read as a flat orange decal. `heat` is the 0..1 driver.
+ */
+function glowLayers(heat, n, o = {}) {
+  const N = n * n;
+  const ramp = o.ramp || 'lava';
+  const coreC = o.core || [255, 240, 176];
+  const coreGate = o.coreGate ?? 0.72;
+  const bodyPow = o.bodyPow ?? 1.4;
+  const glowR = Math.max(2, Math.round((o.glowRadius ?? 0.02) * n));
+  const glowK = o.glow ?? 0.45;
+  const body = TG.applyRamp(clampField(biasField(scaleField(TG.copyField(heat), o.bodyScale ?? 0.9), o.bodyBias ?? 0.05)), n, ramp);
+  const halo = TG.blurWrap(heat, n, glowR, 2);
+  const haloC = TG.applyRamp(clampField(scaleField(TG.copyField(halo), 0.55)), n, ramp);
+  const out = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const hv = clamp01(heat[i]);
+    const b = Math.pow(hv, bodyPow);
+    const c = _ss(coreGate, 1.0, hv);
+    const g = clamp01(halo[i]) * glowK * (1 - b);
+    const j = i * 3;
+    out[j] = body[j] * b + coreC[0] * c * (1 - b * 0.4) + haloC[j] * g;
+    out[j + 1] = body[j + 1] * b + coreC[1] * c * (1 - b * 0.4) + haloC[j + 1] * g;
+    out[j + 2] = body[j + 2] * b + coreC[2] * c * (1 - b * 0.4) + haloC[j + 2] * g;
+  }
+  for (let i = 0; i < out.length; i++) out[i] = out[i] > 255 ? 255 : out[i];
+  return out;
+}
 
 /**
  * IRREGULAR FLAGSTONE BOND — the floor's whole reason for existing.
@@ -221,6 +269,11 @@ function flagBond(n, o = {}) {
   const lobe = new Float32Array(n * n);
   const arris = new Float32Array(n * n);
   const rise = new Float32Array(n * n);
+  // per-stone tooling direction (radians) and a face mask that excludes the
+  // joint AND the chamfer, so the brush engine can lay claw-chisel marks
+  // across each flag along its own axis without ever crossing a joint
+  const axisF = new Float32Array(n * n);
+  const face = new Float32Array(n * n);
   // the MORTAR GAP alone, with the chamfer excluded. seam covers gap+chamfer,
   // which is what the height field wants; the ink wants only the gap, or the
   // tint lands on the lit arris and the carved edge collapses back into a line.
@@ -289,6 +342,8 @@ function flagBond(n, o = {}) {
       height[i] = (1 - m) * (1 + riseV * 0.13);
       id[i] = toneV;
       rise[i] = riseV;
+      axisF[i] = axis + rotV;
+      face[i] = d <= 0 ? 0 : _ss(bevelPx * 1.2, bevelPx * 2.6, d);
       // the stone's OWN light/shade axis — a loaded stroke laid across it, with
       // a different direction on the stone next to it (§1.4 painted texture)
       lobe[i] = (fx - 0.5) * Math.cos(axis) + (fy - 0.5) * Math.sin(axis);
@@ -303,7 +358,7 @@ function flagBond(n, o = {}) {
       }
     }
   }
-  return { height, id, seam, joint, lobe, arris, rise };
+  return { height, id, seam, joint, lobe, arris, rise, axis: axisF, face };
 }
 
 /**
@@ -343,19 +398,35 @@ function paintValue(v, n, o = {}) {
   });
   const up = TG.resample(broad, lo, n);
   for (let i = 0; i < v.length; i++) v[i] += up[i];
+  // ── BRUSH RELIEF ──────────────────────────────────────────────────────────
+  // A loaded stroke leaves a RIDGE, and the light catches it. Every recipe
+  // used to paint strokes into value only, so the normal map — built from the
+  // height field — knew nothing about them: the brushwork was a value grain
+  // on a surface whose relief came from a different, noise-shaped field, and
+  // the paint and the lighting disagreed. `relief` accumulates the same
+  // strokes so the recipe can add them to its height field; the normal, AO
+  // and roughness then carry the brushwork the albedo shows (§1.4, and the
+  // brief's "lighting agrees with the paint").
+  const relief = o.relief;
+  if (relief) for (let i = 0; i < relief.length; i++) relief[i] += up[i] * (o.reliefBroad ?? 0.6);
 
   // --- a HUE glaze: the same brush, painted into the warm/cool selector ---
+  // `tempAmt` scales it: on a dressed masonry face a full-strength hue glaze
+  // swirls warm and cool INSIDE one block and the block reads as a marble
+  // print; a wall wants most of its temperature to change at the joint.
   if (o.temp) {
+    const ta = o.tempAmt ?? 1;
+    const tk = o.tempScale ?? 1;        // stroke-count scale for the hue glaze (cost knob)
     const th = new Float32Array(lo * lo);
     TG.strokes(th, lo, {
       rng, flow: TG.flowField(lo, { base: (o.flowBase ?? 0.35) - 0.8, swirl: swirl * 1.1, freq: 2, seed: (o.seed ?? 3) + 313 }),
-      count: Math.round(lo * 1.0), len: [lo * 0.09, lo * 0.34], width: [lo * 0.010, lo * 0.030],
-      value: [0.10, 0.34], curl: 0.35, bristle: 0.35, taper: 1.5, softness: 1.6,
+      count: Math.round(lo * 1.0 * tk), len: [lo * 0.09, lo * 0.34], width: [lo * 0.010, lo * 0.030],
+      value: [0.10 * ta, 0.34 * ta], curl: 0.35, bristle: 0.35, taper: 1.5, softness: 1.6,
     });
     TG.strokes(th, lo, {
       rng, flow: TG.flowField(lo, { base: (o.flowBase ?? 0.35) + 1.1, swirl: swirl * 1.1, freq: 3, seed: (o.seed ?? 3) + 511 }),
-      count: Math.round(lo * 0.7), len: [lo * 0.07, lo * 0.26], width: [lo * 0.008, lo * 0.024],
-      value: [-0.34, -0.10], curl: 0.35, bristle: 0.35, taper: 1.5, softness: 1.6,
+      count: Math.round(lo * 0.7 * tk), len: [lo * 0.07, lo * 0.26], width: [lo * 0.008, lo * 0.024],
+      value: [-0.34 * ta, -0.10 * ta], curl: 0.35, bristle: 0.35, taper: 1.5, softness: 1.6,
     });
     const tu = TG.resample(th, lo, n);
     for (let i = 0; i < o.temp.length; i++) o.temp[i] = clamp01(o.temp[i] + tu[i]);
@@ -368,19 +439,24 @@ function paintValue(v, n, o = {}) {
     rng, flow: flowHi,
     count: o.fineCount ?? Math.round(n * 0.9),
     len: [n * 0.014, n * 0.06],
-    width: [0.9, 2.3],
+    // LENS-SCALED (round-2). A 1-2 texel hatch is sub-pixel at the play camera
+    // once the plate is projected (measured 1.75-3.1cm per texel on the floor,
+    // ~1-2 screen px at 12m) and mipping erases it. Recipes seen at play
+    // distance pass a width in TEXELS OF N so the stroke is 3-8px on screen.
+    width: o.fineWidth || [0.9, 2.3],
     value: o.fine || [-0.07, 0.07],
     curl: 0.55, bristle: 0.8, taper: 2.1, softness: 1.05,
   });
   // Scale the hatching by local value: on a near-black material a fixed offset
   // is a chalk scratch, because the ramp is steep down there.
   for (let i = 0; i < v.length; i++) v[i] += fine[i] * (0.28 + 1.05 * clamp01(v[i]));
+  if (relief) for (let i = 0; i < relief.length; i++) relief[i] += fine[i] * (o.reliefFine ?? 1.0);
 
   // --- hand-placed highlights: a few confident bright licks on the crowns -
   if (o.edge && (o.highlight ?? 1) > 0) {
     TG.strokes(v, n, {
       rng, flow: flowHi, mask: o.edge,
-      count: Math.round(n * 0.30), len: [n * 0.008, n * 0.035], width: [0.9, 2.4],
+      count: o.hiCount ?? Math.round(n * 0.30), len: [n * 0.008, n * 0.035], width: o.hiWidth || [0.9, 2.4],
       value: [0.10, 0.26 * (o.highlight ?? 1)],
       curl: 0.6, bristle: 0.4, taper: 2.4, softness: 1.1,
     });
@@ -528,7 +604,11 @@ const RECIPES = {
     // HAND-PLACED HIGHLIGHT. highlight 1.2 is deliberately past the value used
     // on architecture: a garment is the one surface on a character allowed a
     // scrubbed, obviously-brushed top light.
-    paintValue(v, n, { rng, seed: seed + 9, temp, cavity: cav, cavityAmt: 0.30, edge, edgeAmt: 0.26, flowBase: 0.42, swirl: 2.6, flowFreq: 2.1, highlight: 1.20 });
+    const relief = F(n);
+    paintValue(v, n, { rng, seed: seed + 9, temp, cavity: cav, cavityAmt: 0.30, edge, edgeAmt: 0.26, flowBase: 0.42, swirl: 2.6, flowFreq: 2.1, highlight: 1.20, relief });
+    // the loaded strokes leave ridges in the nap, so the rim and the key
+    // catch the brushwork on the garment instead of a bare weave
+    addRelief(h, relief, n, 0.06);
     const rgb = TG.applyRamp2(v, temp, n, CLOTH_N, CLOTH_C);
     const rough = TG.artisticRoughness(n, {
       base: 0.90, height: h, cavity: cav, edge, polish: 0.10, dry: 0.26, variation: 0.20,
@@ -715,11 +795,51 @@ const RECIPES = {
   // TARTARUS — blood-dark carved stone with gold-inlaid meander seams
   // ======================================================================
   'stone.tartarus': { size: HERO, build(n, rng, seed, o = {}) {
-    const A = TG.ashlar(n, { rows: 3, cols: 2, rng, mortar: 0.016, bevel: 0.07, wobble: 0.015 });
-    let base = TG.fbm(n, { freq: 3, octaves: 6, seed, type: 'value' });
-    base = TG.warp2(base, n, { amp: 0.085, freq: 2, seed: seed + 11 });
+    // ── CHISELLED ASHLAR, NOT MARBLED BRICK ──────────────────────────────
+    // The previous bed was 3x2 blocks whose faces were a warped fBm — at
+    // inspection range that is a marble swirl, and the critic's word for it
+    // was "printed". A Greek wall block is DRESSED: a smooth drafted margin
+    // around the edge, and inside it a face worked over with a claw chisel in
+    // one direction per block (TG.ashlar now returns the margin, the face and
+    // the per-block tool angle). Three columns per tile instead of two puts a
+    // joint every ~2m at the wall's triScale, which is a block a mason could
+    // lift, and it is one more block of tone variation per period.
+    // ROUND-2, LENS-SCALED: at triScale 0.165 one texel is 1.35cm and the far
+    // wall stands ~18m from the play camera (~1 screen px per texel), so a 12
+    // texel mortar and a 22 texel margin were a hairline and a nothing. 0.021 /
+    // 0.105 is a 13cm joint and a 21cm drafted margin — a joint every 2m that a
+    // critic can count at 12m, which is what "reads as ashlar" means.
+    const A = TG.ashlar(n, { rows: 3, cols: 3, rng, mortar: 0.021, bevel: 0.065, wobble: 0.015, margin: 0.105, seed: seed + 5 });
+    // quarry drift and the coarse chisel ridges are both low-frequency next to
+    // the tooling: half resolution, upsampled (ROUND-2 bake-cost pass)
+    const base = warpLo(n, { freq: 3, octaves: 5, seed, type: 'value' }, { amp: 0.085, freq: 2, seed: seed + 11 });
     const grit = TG.fbm(n, { freq: 26, octaves: 3, seed: seed + 2, ppc: 3 });
-    const chisel = TG.ridged(n, { freq: 9, octaves: 4, seed: seed + 3, type: 'grad' });
+    const chisel = TG.lowFreq(n, (r) => TG.ridged(r, { freq: 9, octaves: 4, seed: seed + 3, type: 'grad' }), n >> 1);
+    // claw-chisel tooling: parallel tapered marks along each block's own
+    // angle, confined to the face, so every block carries its own direction
+    // and the margin around it stays smooth. curl 0: a tool mark does not bend
+    // toward its neighbour's angle across a joint.
+    const tool = F(n);
+    TG.strokes(tool, n, {
+      rng, flow: A.tool, mask: A.face, seedGrid: true,
+      // ROUND-2, LENS-SCALED: 1.1-2.6 texel marks vanished at 12m (see the floor).
+      // 5.5-12 texels of n is a claw mark 7-16cm wide — 3-8px on the far wall —
+      // at 40% of the stroke count.
+      count: Math.round(n * 1.1), len: [n * 0.030, n * 0.090], width: [n * 0.0055, n * 0.0120],
+      value: [0.12, 0.28], curl: 0.0, wobble: 0.015, bristle: 0.65, taper: 1.3, softness: 0.95,
+    });
+    // a sparser second pass, crossing at a shallow angle — a claw is dragged
+    // twice over a stubborn patch
+    {
+      const cross = new Float32Array(A.tool.length);
+      for (let i = 0; i < cross.length; i++) cross[i] = A.tool[i] + 0.55;
+      TG.strokes(tool, n, {
+        rng, flow: cross, mask: A.face,
+        count: Math.round(n * 0.32), len: [n * 0.020, n * 0.060], width: [n * 0.0040, n * 0.0080],
+        value: [0.05, 0.13], curl: 0.0, wobble: 0.02, bristle: 0.7, taper: 1.4, softness: 0.95,
+      });
+    }
+    clampField(tool);
 
     // Pitting must be CLUSTERED and varied in size. A plain inverted Worley is
     // a polka-dot grid, which is the loudest procedural tell at close range.
@@ -733,7 +853,7 @@ const RECIPES = {
       pits[i] = clamp01((size - pitRaw[i]) * 9.0) * cover;
     }
     // chipped block corners: erode the ashlar bevel where a noise says so
-    const chipMask = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 9, octaves: 5, seed: seed + 44 }), r, { amp: 0.07, freq: 4, seed: seed + 45 }), n >> 1);
+    const chipMask = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 9, octaves: 4, seed: seed + 44 }), r, { amp: 0.07, freq: 4, seed: seed + 45 }), n >> 2);
     const chips = F(n);
     for (let i = 0; i < chips.length; i++) chips[i] = clamp01((chipMask[i] - 0.60) * 3.4) * clamp01((A.mortar[i] - 0.05) * 1.9);
 
@@ -756,11 +876,21 @@ const RECIPES = {
     } else {
       TG.meanderBand(orn, n, { y: n * 0.5, height: n * 0.20, cells: 3, lineW: Math.max(3, n * 0.017), value: 1, soft: n * 0.0022 });
     }
-    const ornSoft = TG.blurWrap(orn, n, Math.max(1, n * 0.003), 1);
+    // The engraved channel has a ROUNDED bottom (a V-cut with a worn arris),
+    // not a flat trench: a wider blur with a soft power gives the cut a real
+    // cross-section so the gold inlay sits IN the stone with a lit lip.
+    const ornSoft = powField(TG.blurWrap(orn, n, Math.max(1, n * 0.0045), 1), 0.72);
 
     // ---- height ---------------------------------------------------------
-    const h = combine(n, [[A.height, 0.58], [base, 0.22], [chisel, 0.08], [grit, 0.035]]);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.09 - pits[i] * 0.10 - chips[i] * 0.30 - ornSoft[i] * 0.32);
+    // The tooled face is PROUD of the drafted margin (rusticated blocks more
+    // so — A.boss), the margin is flat, and the tool marks are relief on the
+    // face. The warped fBm drops to a minor role: it is now the quarry's own
+    // bedding drift, not the whole surface.
+    const h = combine(n, [[A.height, 0.52], [base, 0.12], [chisel, 0.05], [grit, 0.03]]);
+    for (let i = 0; i < h.length; i++) {
+      const proud = A.face[i] * (0.05 + A.boss[i] * 0.09) + A.dome[i] * A.boss[i] * 0.10;
+      h[i] = clamp01(h[i] + 0.10 + proud + tool[i] * 0.16 - pits[i] * 0.10 - chips[i] * 0.30 - ornSoft[i] * 0.32);
+    }
 
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 5.5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6.5);
@@ -781,23 +911,41 @@ const RECIPES = {
     //      warped 2-octave field at freq 7-9, which at triScale 0.165 lands at
     //      ~65cm, laid on at +-0.11. It is the difference between a wall that is
     //      textured and a wall that is painted.
-    const wash = TG.warp2(TG.fbm(n, { freq: 7, octaves: 2, seed: seed + 61, type: 'value' }), n,
-      { amp: 0.13, freq: 3, seed: seed + 62 });
+    // (round-2: freq 7 over the tile is a 65cm feature — baked at half res; the
+    // octave it loses is under 1% of its amplitude and it was a full-res warp.)
+    const wash = warpLo(n, { freq: 7, octaves: 2, seed: seed + 61, type: 'value' }, { amp: 0.13, freq: 3, seed: seed + 62 });
     const wash2 = TG.fbm(n, { freq: 3.4, octaves: 2, seed: seed + 63, type: 'value' });
     const v = F(n);
     for (let i = 0; i < v.length; i++) {
-      v[i] = 0.24 + A.id[i] * 0.30 + A.lobe[i] * 0.24 + (base[i] - 0.5) * 0.50 + grit[i] * 0.07
-        + chisel[i] * 0.09 - pits[i] * 0.18 + chips[i] * 0.16
-        + (wash[i] - 0.5) * 0.22 + (wash2[i] - 0.5) * 0.15;
+      // the tool marks are the face's value structure now: each mark is a lit
+      // ridge, the drafted margin is a smooth, slightly paler dressed band,
+      // and the warped fBm is a quiet quarry drift under both
+      // ROUND-2: baseline 0.22 -> 0.30 and the drafted margin 0.11 -> 0.17. The
+      // wall is the MID band (§12): it has to sit a clear value step above the
+      // floor with the world's litGain 0.34 on it, and the margin has to be a
+      // visibly paler dressed band around each block, not a rumour.
+      v[i] = 0.30 + A.id[i] * 0.30 + A.lobe[i] * 0.22 + (base[i] - 0.5) * 0.22 + grit[i] * 0.05
+        + chisel[i] * 0.05 + tool[i] * 0.36 + A.margin[i] * 0.17 + A.dome[i] * A.boss[i] * 0.10
+        - pits[i] * 0.18 + chips[i] * 0.16
+        + (wash[i] - 0.5) * 0.18 + (wash2[i] - 0.5) * 0.12;
     }
     const temp = TG.lowFreq(n, (r) => {
       const t = TG.warp(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 31 }), r, { amp: 0.08, freq: 2, seed: seed + 32 });
       for (let i = 0; i < t.length; i++) t[i] = clamp01((t[i] - 0.35) * 1.9);
       return t;
     }, n >> 2);
-    // each block also gets its own warm/cool bias — quarried from a different bed
-    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.62 + A.id[i] * 0.55 + A.lobe[i] * 0.38);
-    paintValue(v, n, { rng, seed, temp, cavity: cav, cavityAmt: 0.34, edge, edgeAmt: 0.17, flowBase: 0.12, swirl: 1.9, highlight: 0.75 });
+    // each block gets its own warm/cool bias — quarried from a different bed —
+    // and the bias is mostly PER BLOCK: a warm/cool field that swirls inside
+    // one block is a marble print, a warm block beside a cool one is masonry
+    // ROUND-2: the selector averaged ~0.5, i.e. half of every wall went through
+    // the violet ramp and the mid-ground read as a grey-violet slab. Biased so
+    // the wall is CRIMSON STONE with a minority of cooler blocks and cool joints.
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.26 + A.id[i] * 0.52 + A.lobe[i] * 0.28 - 0.10);
+    const relief = F(n);
+    paintValue(v, n, { rng, seed, temp, tempAmt: 0.30, cavity: cav, cavityAmt: 0.34, edge, edgeAmt: 0.17, flowBase: 0.12, swirl: 1.9, highlight: 0.85, relief,
+      light: [0.03, 0.10], dark: [-0.10, -0.03], count: Math.round(n * 0.7), count2: Math.round(n * 0.5), tempScale: 0.6,
+      fineCount: Math.round(n * 0.5), fineWidth: [n * 0.0030, n * 0.0060], hiWidth: [n * 0.0025, n * 0.0050] });
+    addRelief(h, relief, n, 0.09);
 
     const rgb = TG.applyRamp2(v, temp, n, 'stone.tartarus', 'stone.tartarus.cool');
 
@@ -806,6 +954,9 @@ const RECIPES = {
     // blood grime weeping out of the crevices
     const grime = TG.dirtMask(h, n, { seed: seed + 44, cavity: cav, streak: 0.055, streakStrength: 0.7 });
     TG.tintRGB(rgb, n, powField(grime, 1.6), C255('#2a0a14'), 0.62);
+    // §1.3 / §1.4 the hue split: every recess drifts toward the ink ramp and
+    // every tool-mark crest and chamfer drifts warm, at unchanged value
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(INK.violet), warm: C255('#ff9a6a'), inkAmount: 0.50, warmAmount: 0.26 });
     // gold inlay in the engraved meander
     // GOLD HAS A RAMP; USE IT. Biased to 0.56 with edge at 0.55 this field pinned
     // at 1.0 across most of the ornament, which addresses only the ramp's top
@@ -819,12 +970,16 @@ const RECIPES = {
     const upFace = TG.edgeMask(h, n, Math.max(2, n * 0.008), 3);
     TG.tintRGB(rgb, n, scaleField(TG.blurWrap(upFace, n, Math.max(2, n * 0.004), 1), 0.62), C255('#e08a6a'), 0.22);
 
+    // ROUGHNESS AS AN ARTISTIC MAP: the drafted margin is honed (it catches a
+    // broad soft sheen), the tooled face is dry, the tool-mark crests polish
+    // where hands and shoulders have rubbed them, and the mortar is dust.
     const rough = TG.artisticRoughness(n, {
       base: 0.84, height: h, cavity: cav, edge, polish: 0.26, dry: 0.24, variation: 0.22,
       seed: seed + 7, min: 0.34, max: 0.99,
-      strokes: { count: Math.round(n * 0.45), flow: TG.flowField(n, { base: 0.15, swirl: 0.6, freq: 3, seed: seed + 8 }), value: [0.1, 0.35], len: [n * 0.04, n * 0.12], width: [1.4, 3.4], rng },
+      strokes: { count: Math.round(n * 0.25), flow: TG.flowField(n, { base: 0.15, swirl: 0.6, freq: 3, seed: seed + 8 }), value: [0.1, 0.35], len: [n * 0.04, n * 0.12], width: [n * 0.004, n * 0.009], rng },
       strokeAmount: 0.22,
     });
+    for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] - A.margin[i] * 0.18 + A.face[i] * 0.05 - tool[i] * 0.12 + A.mortar[i] * 0.08);
     const metal = F(n);
     for (let i = 0; i < metal.length; i++) { metal[i] = clamp01(orn[i] * 1.15); rough[i] = clamp01(rough[i] * (1 - orn[i] * 0.62)); }
 
@@ -915,6 +1070,7 @@ const RECIPES = {
     TG.tintRGB(rgb, n, powField(seam, 1.5), C255(INK.plum), 0.60);
     const grime = TG.dirtMask(h, n, { seed: seed + 44, cavity: cav, streak: 0.05, streakStrength: 0.6 });
     TG.tintRGB(rgb, n, powField(grime, 1.6), C255('#2a0a14'), 0.48);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(INK.violet), warm: C255('#ff9a6a'), inkAmount: 0.45, warmAmount: 0.24 });
 
     const rough = TG.artisticRoughness(n, {
       base: 0.86, height: h, cavity: cav, edge, polish: 0.16, dry: 0.24, variation: 0.16,
@@ -943,30 +1099,65 @@ const RECIPES = {
   // value, broken and replaced flags, and a macro multiply whose period is four
   // times the plate's.
   'floor.tartarus': { size: 1024, build(n, rng, seed) {
+    // ROUND-2: 14 x 13 at the chamber's 17.9m period is a 1.28m course and a
+    // 1.1-1.9m flag — 45-70 screen px at the 02_gameplay lens, which is the
+    // size a flagstone has to be for a per-stone colour step to READ as a
+    // stone rather than as brick. The joint and chamfer widen with it (a 3px
+    // gap and a 5px arris on screen), so the bond is legible at 12m.
     const T = flagBond(n, {
-      rng, courses: 16, perCourse: 15,
-      joint: 0.0012, bevel: 0.0032, rot: 0.030, wobble: 0.0045,
-      broken: 0.17, replace: 0.11,
+      rng, courses: 14, perCourse: 13,
+      joint: 0.0014, bevel: 0.0042, rot: 0.030, wobble: 0.0045,
+      broken: 0.15, replace: 0.10,
     });
-    // FULL resolution, deliberately. Everywhere else the warped fBm is a broad
-    // glaze and half resolution is free; here it is the low-frequency value
-    // drift that decorrelates one course of stones from the next, and it is the
-    // only defence the floor has against §7's visible-repetition ban.
-    const base = TG.warp2(TG.fbm(n, { freq: 4, octaves: 6, seed }), n, { amp: 0.07, freq: 2, seed: seed + 1 });
+    // The quarry drift is freq 4 across the plate: one cell is 250 texels at
+    // n=1024, so the octave that half resolution costs carries ~3% amplitude
+    // and no legible shape. (It was baked at full resolution in round 1 and was
+    // most of the recipe's warp cost for nothing the eye can see.)
+    const base = warpLo(n, { freq: 4, octaves: 6, seed }, { amp: 0.07, freq: 2, seed: seed + 1 });
     const grit = TG.fbm(n, { freq: 30, octaves: 3, seed: seed + 2, ppc: 3 });
     // chipping, not crazing: cracks confined to a minority of the stones
-    const rawCrack = TG.cracks(n, { levels: [{ freq: 9, width: 0.035, weight: 1 }], seed: seed + 5, warpAmp: 0.05 });
+    const rawCrack = TG.cracks(n, { levels: [{ freq: 9, width: 0.035, weight: 1 }], seed: seed + 5, warpAmp: 0.05, res: n >> 1 });
     const crackWhere = TG.lowFreq(n, (r) => TG.fbm(r, { freq: 3, octaves: 4, seed: seed + 51 }), n >> 2);
     const fissure = F(n);
     // §1.10: under 15% of stones should crack at all. At a 0.58 gate the crazing
     // was universal and became the single most legible detail in the close shots.
     for (let i = 0; i < fissure.length; i++) fissure[i] = rawCrack[i] * clamp01((crackWhere[i] - 0.72) * 4.2);
 
-    const h = combine(n, [[T.height, 0.40], [base, 0.30], [grit, 0.08]]);
+    // ── PER-STONE TOOLING ────────────────────────────────────────────────
+    // Each flag is dressed with a claw chisel along its OWN axis (the same
+    // axis its light/shade lobe uses), and the marks stop at the chamfer. The
+    // previous floor had brushwork only as a global glaze across the whole
+    // bed, so at the play camera every stone was the same speckle; a mason's
+    // floor changes tool direction at every joint, and so does a painter's.
+    const tool = F(n);
+    TG.strokes(tool, n, {
+      rng, flow: T.axis, mask: T.face, seedGrid: true,
+      // ROUND-2, LENS-SCALED: 0.8-1.9 texel marks were sub-pixel at 12m and the
+      // whole tooling pass was invisible in the shot sheet. 2.7-5.3 texels of n
+      // is 4-8 screen px on the near floor; a third of the count at 2.5x the
+      // width covers the same area for a third of the stroke cost.
+      count: Math.round(n * 1.1), len: [n * 0.014, n * 0.045], width: [n * 0.0026, n * 0.0052],
+      value: [0.10, 0.26], curl: 0.0, wobble: 0.02, bristle: 0.7, taper: 1.3, softness: 0.95,
+    });
+    clampField(tool);
+    // ── WEAR PATHS ───────────────────────────────────────────────────────
+    // A warped low-frequency band across the bed: where feet have crossed for
+    // an age the stone is polished paler and the tooling is rubbed down;
+    // elsewhere it stays dry and dark. It is the one value structure on the
+    // floor that belongs to NO stone and NO course, so it is also the one that
+    // can never line up with the bond.
+    const wearPath = TG.lowFreq(n, (r) => {
+      const w = TG.warp2(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 81, type: 'grad' }), r, { amp: 0.16, freq: 2, seed: seed + 82 });
+      for (let i = 0; i < w.length; i++) w[i] = clamp01((w[i] - 0.50) * 3.2);
+      return w;
+    }, n >> 2);
+    for (let i = 0; i < tool.length; i++) tool[i] *= 1 - wearPath[i] * 0.55;
+
+    const h = combine(n, [[T.height, 0.40], [base, 0.26], [grit, 0.07]]);
     // per-stone RISE: flags that sit proud and flags that have settled. Without
     // it a bed of chamfered stones is still one perfectly flat plane with lines
     // scored in it, and the normal map has nothing to model.
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.12 + T.rise[i] * 0.045 - fissure[i] * 0.34);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.12 + T.rise[i] * 0.045 + tool[i] * 0.09 - fissure[i] * 0.34);
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6);
 
@@ -1007,8 +1198,11 @@ const RECIPES = {
       // frame's rms contrast down 15%; this is where it comes back, as
       // STRUCTURE instead of exposure, and structure is also what decorrelates
       // the joint lattice §7 bans.
-      v[i] = 0.28 + T.id[i] * 0.38 + T.lobe[i] * 0.24 + (base[i] - 0.5) * 0.52 + grit[i] * 0.05
-           + T.arris[i] * 0.30;
+      // ROUND-2: the quarry drift comes down (0.44 -> 0.34) and the per-stone
+      // step goes up (0.38 -> 0.42): value that belongs to a STONE reads as a
+      // laid floor at 12m, value that belongs to a noise field reads as blotch.
+      v[i] = 0.24 + T.id[i] * 0.42 + T.lobe[i] * 0.22 + (base[i] - 0.5) * 0.34 + grit[i] * 0.04
+           + T.arris[i] * 0.32 + tool[i] * 0.34 + wearPath[i] * 0.12;
     }
     // and the lit side of each stone is also the WARM side — colour variation
     // within the material, not a uniform tint over noise
@@ -1022,7 +1216,13 @@ const RECIPES = {
     // two-tone bed while still decorrelating the joint lattice — measured, 0.16
     // gave back most of the anti-tiling win the rest of this pass had bought.
     // The lobe and arris terms vary WITHIN one stone and carry the painted read.
-    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] + T.lobe[i] * 0.30 + (T.id[i] - 0.5) * 0.24 + T.arris[i] * 0.26);
+    // ROUND-2: the judges saw a salmon/lavender/cyan blotch at 2-5m, and most
+    // of it was the world's vertex-colour hue push (now taken at 30% via
+    // `vertexHue` below). What the albedo contributes is re-weighted the same
+    // way as the value above: the noise field is halved and the PER-STONE term
+    // doubled, so temperature changes at a JOINT — a warm flag laid beside a
+    // plum one — which is what a painter does, and never inside a stone.
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.55 + 0.12 + T.lobe[i] * 0.22 + (T.id[i] - 0.5) * 0.46 + T.arris[i] * 0.22);
     // A floor is seen at a grazing angle across a whole screen: any high-frequency
     // value noise turns into shimmering mottle once bloom gets hold of it. Broad
     // glazes stay, the hatching goes quiet.
@@ -1032,9 +1232,24 @@ const RECIPES = {
     // painted stone carries 0.25-0.40 of value swing inside ONE block. Shimmer
     // is a mip/roughness problem, not an amplitude problem — the raised detail
     // is fed through the toksvig bake below instead of being flattened here.
-    paintValue(v, n, { rng, seed: seed + 3, temp, cavity: cav, cavityAmt: 0.44, edge, edgeAmt: 0.11,
-      flowBase: 0.9, swirl: 2.3, light: [0.055, 0.185], dark: [-0.170, -0.052], fine: [-0.034, 0.034], highlight: 0.75 });
+    const relief = F(n);
+    paintValue(v, n, { rng, seed: seed + 3, temp, tempAmt: 0.55, cavity: cav, cavityAmt: 0.44, edge, edgeAmt: 0.11,
+      flowBase: 0.9, swirl: 2.3, light: [0.055, 0.185], dark: [-0.170, -0.052], fine: [-0.040, 0.040], highlight: 0.85, relief,
+      // lens-scaled brushwork (see paintValue): fewer, wider strokes
+      count: Math.round(n * 0.7), count2: Math.round(n * 0.5), tempScale: 0.6,
+      fineCount: Math.round(n * 0.35), hiCount: Math.round(n * 0.20), fineWidth: [n * 0.0022, n * 0.0046], hiWidth: [n * 0.0020, n * 0.0040] });
+    // the brush ridges go into the height too — modest, because a floor is
+    // seen at a grazing angle and every ridge is a specular line waiting to
+    // crawl; the toksvig bake widens the lobe over them
+    addRelief(h, relief, n, 0.06);
     const rgb = TG.applyRamp2(v, temp, n, 'floor.tartarus', 'floor.tartarus.cool');
+    // hue split (§1.3): the joints and every settled hollow toward the ink
+    // ramp, the lit chamfers and the worn crowns warm
+    {
+      const lit = F(n);
+      for (let i = 0; i < lit.length; i++) lit[i] = clamp01(edge[i] * 0.7 + Math.max(0, T.arris[i]) * 0.8 + wearPath[i] * 0.35);
+      TG.inkAndWarm(rgb, n, cav, lit, { ink: C255(INK.violet), warm: C255('#ffa070'), inkAmount: 0.52, warmAmount: 0.32 });
+    }
 
     // The seam ink used to be a hard #07060f at 0.86 over a 0.0065 gap. Once the
     // plate was scaled up for the play camera those joints became finger-wide
@@ -1050,7 +1265,7 @@ const RECIPES = {
     TG.tintRGB(rgb, n, powField(T.joint, 2.20), C255(INK.deep), 0.42);
     TG.tintRGB(rgb, n, powField(fissure, 1.2), C255('#180610'), 0.55);
     // spilled ichor pooling in the seams
-    const stain = warpLo(n, { freq: 3, octaves: 5, seed: seed + 61 }, { amp: 0.12, freq: 2, seed: seed + 62 });
+    const stain = warpLo(n, { freq: 3, octaves: 5, seed: seed + 61 }, { amp: 0.12, freq: 2, seed: seed + 62 }, 4);
     const stainM = F(n);
     // deliberate spills, not mottling: a high threshold makes fewer, larger,
     // clearly shaped stains that read as painted rather than as noise
@@ -1063,7 +1278,7 @@ const RECIPES = {
     TG.compositeRamp(rgb, n, stainM, v, 'blood', 0.28);
     TG.tintRGB(rgb, n, scaleField(powField(edge, 1.6), 0.5), C255('#b98a7c'), 0.20);
     // pale bone-dust drifted into the low ground: the floor's light accents
-    const dust = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 6, octaves: 5, seed: seed + 71 }), r, { amp: 0.09, freq: 3, seed: seed + 72 }), n >> 1);
+    const dust = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 6, octaves: 4, seed: seed + 71 }), r, { amp: 0.09, freq: 3, seed: seed + 72 }), n >> 2);
     const dustM = F(n);
     for (let i = 0; i < dustM.length; i++) dustM[i] = clamp01((dust[i] - 0.60) * 3.4) * clamp01(0.25 + cav[i] * 1.5);
     TG.compositeRamp(rgb, n, dustM, clampField(biasField(scaleField(TG.copyField(grit), 0.5), 0.45)), 'bone', 0.42);
@@ -1082,7 +1297,9 @@ const RECIPES = {
     const rough = TG.artisticRoughness(n, {
       base: 0.88, height: h, cavity: cav, edge, polish: 0.14, dry: 0.22, variation: 0.20, seed: seed + 9, min: 0.62, max: 0.99,
     });
-    for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] - stainM[i] * 0.25);
+    // the wear paths are where the flags have been polished by feet; the
+    // tool marks are dry; the joints are dust
+    for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] - stainM[i] * 0.25 - wearPath[i] * 0.22 + tool[i] * 0.06 + T.joint[i] * 0.06);
     return { rgb, height: h, rough, metal: 0.0, normalScale: 0.40,
       // triScale halved => every authored feature is ~2x bigger in world space,
       // which is what the grazing play camera needs (a 7x5 grid now spans ~12u).
@@ -1163,7 +1380,15 @@ const RECIPES = {
         // 0.57 lands P90 at ~0.45 and groundLuma at ~0.245 — at or under the
         // figures this pass inherited — with the contrast paid back below as
         // structure rather than as exposure.
-        macroLevel: 0.57,
+        // ── ROUND-2: 0.57 -> 0.34 ─────────────────────────────────────────────
+        // Three independent judges measured the shipped floor at groundLuma
+        // 0.227-0.236 on 02/05 against §9.1's 0.18, brighter than the frame
+        // median in every composition frame. The world's floorResponse
+        // (litGain 1.02 / ambGain 1.35) is not this file's to change, so the
+        // albedo pays: 0.34 is the linear trim that lands the play floor under
+        // 0.18 with the key on it. The contrast it costs is bought back above
+        // as per-stone STRUCTURE (id 0.42, arris 0.32, lens-scaled tooling).
+        macroLevel: 0.34,
         // TILING (§7). Measured autocorrelation was 0.535-0.592 at the ashlar
         // pitch. Plate size alone cannot answer a REGULAR JOINT LATTICE — the
         // seams repeat even when the stones do not. A much stronger macro layer
@@ -1178,11 +1403,24 @@ const RECIPES = {
         // +-30% value drift about the surface's own mean instead of a 1% ripple
         // riding a 15% darkening, and it now has octaves at ~9m and ~3.4m as
         // well as the 80m one — the band where a 17.9m plate's repeat reads.
-        macroStrength: 0.30, macroDrift: 0.44, macroScale: 0.0125, macroTint: '#4a2c38',
+        // ROUND-2: drift 0.44 -> 0.34. A +-44% value swing at 3-9m was the other
+        // half of the "low-frequency blotch" read; +-34% still decorrelates the
+        // 17.9m plate and no longer out-shouts the per-stone step.
+        macroStrength: 0.30, macroDrift: 0.34, macroScale: 0.0125, macroTint: '#4a2c38',
         macroRough: 0.26,
         // belt AND braces with the ground-plane veto in painterly.js: a floor is
         // never a silhouette, so it never carries the art-directed rim
         rimStrength: 0.10,
+        // THE WORLD'S HUE GLAZE, AT A PAINTER'S STRENGTH. world/chamber.js paints
+        // the floor's vertex colour with a k=0.88 push toward '#2b83c4' on unlit
+        // stone and '#ffb070' in the brazier pools. Multiplied into a crimson
+        // albedo that is a cyan floor with salmon pools — the blotch every judge
+        // named. painterly.js applies the vertex colour's VALUE in full (pools,
+        // island hump, repoussoir crush are composition and stay) and only this
+        // share of its chroma, so the two-hue opposition survives as a
+        // temperature drift under the painted per-flag colour instead of over
+        // it. Reported to AGENT-WORLD; if chamber.js lowers k this goes back up.
+        vertexHue: 0.30,
         // fine grain at a scale incommensurate with the bond: it decorrelates
         // the floor at SHORT lags, which is the half of the tiling test that
         // plate size alone cannot answer
@@ -1330,6 +1568,7 @@ const RECIPES = {
       flowBase: 0.5, swirl: 2.4, light: [0.02, 0.075], dark: [-0.10, -0.02], fine: [-0.02, 0.02], highlight: 0.35 });
     const rgb = TG.applyRamp2(v, temp, n, 'stone.tartarus', 'stone.tartarus.cool');
     TG.tintRGB(rgb, n, powField(crack, 1.2), C255(INK.void), 0.72);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(INK.violet), warm: C255('#ff9a6a'), inkAmount: 0.40, warmAmount: 0.20 });
 
     // ---- gold inlay --------------------------------------------------------
     // MEASURED: 25.4% of gold pixels above 0.92 display luma at mean chroma
@@ -1490,41 +1729,54 @@ const RECIPES = {
   // the shaft instead of swirling.
   // ======================================================================
   'stone.tartarus.column': { size: MID, build(n, rng, seed) {
-    const A = TG.ashlar(n, { rows: 6, cols: 1, rng, mortar: 0.010, bevel: 0.04, wobble: 0.006 });
+    // drums with a drafted band at each bed joint and a claw-tooled face that
+    // runs UP the shaft (toolFlip off keeps every drum's tooling vertical)
+    const A = TG.ashlar(n, { rows: 6, cols: 1, rng, mortar: 0.010, bevel: 0.04, wobble: 0.006, margin: 0.10, toolBase: 1.52, toolSpread: 0.10, toolFlip: false, seed: seed + 5 });
     let base = TG.fbm(n, { freq: 3, octaves: 6, seed, type: 'value' });
     base = TG.warp2(base, n, { amp: 0.06, freq: 2, seed: seed + 11 });
     const grit = TG.fbm(n, { freq: 24, octaves: 3, seed: seed + 2, ppc: 3 });
     // vertical tooling: a quarried shaft is dressed with a claw chisel that runs
     // WITH the axis, which is also what stops a cylinder reading as a smooth tube
     const chisel = TG.ridged(n, { freq: 3, octaves: 4, seed: seed + 3, type: 'grad' });
+    const tool = F(n);
+    TG.strokes(tool, n, {
+      rng, flow: A.tool, mask: A.face, seedGrid: true,
+      count: Math.round(n * 2.4), len: [n * 0.02, n * 0.075], width: [0.9, 2.2],
+      value: [0.08, 0.20], curl: 0.0, wobble: 0.012, bristle: 0.7, taper: 1.3, softness: 0.95,
+    });
+    clampField(tool);
     const pitRaw = TG.worleyField(n, { freq: 20, mode: 'f1', seed: seed + 4, jitter: 1, res: n >> 1 });
     const pits = F(n);
     for (let i = 0; i < pits.length; i++) pits[i] = clamp01((0.085 - pitRaw[i]) * 9.0);
 
-    const h = combine(n, [[A.height, 0.46], [base, 0.24], [chisel, 0.16], [grit, 0.04]]);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.12 - pits[i] * 0.10);
+    const h = combine(n, [[A.height, 0.46], [base, 0.16], [chisel, 0.10], [grit, 0.04]]);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.12 + tool[i] * 0.12 + A.face[i] * 0.04 - pits[i] * 0.10);
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 5.5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6.5);
 
     const v = F(n);
     for (let i = 0; i < v.length; i++) {
-      v[i] = 0.34 + A.id[i] * 0.20 + A.lobe[i] * 0.22 + (base[i] - 0.5) * 0.42 + chisel[i] * 0.13 + grit[i] * 0.06 - pits[i] * 0.16;
+      v[i] = 0.32 + A.id[i] * 0.20 + A.lobe[i] * 0.22 + (base[i] - 0.5) * 0.30 + chisel[i] * 0.09 + tool[i] * 0.34 + A.margin[i] * 0.09 + grit[i] * 0.06 - pits[i] * 0.16;
     }
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 31 }), -0.40), 1.8)), n >> 2);
-    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.66 + A.id[i] * 0.44 + A.lobe[i] * 0.30);
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.40 + A.id[i] * 0.52 + A.lobe[i] * 0.30);
     // flowBase ~PI/2 = strokes run UP the shaft; swirl held right down so they
     // stay parallel instead of curling into the marble-print look
-    paintValue(v, n, { rng, seed, temp, cavity: cav, cavityAmt: 0.30, edge, edgeAmt: 0.20,
-      flowBase: 1.52, swirl: 0.34, flowFreq: 1.1, light: [0.03, 0.12], dark: [-0.12, -0.03], highlight: 0.9 });
+    const relief = F(n);
+    paintValue(v, n, { rng, seed, temp, tempAmt: 0.35, cavity: cav, cavityAmt: 0.30, edge, edgeAmt: 0.20,
+      flowBase: 1.52, swirl: 0.34, flowFreq: 1.1, light: [0.03, 0.12], dark: [-0.12, -0.03], highlight: 0.9, relief });
+    addRelief(h, relief, n, 0.07);
     const rgb = TG.applyRamp2(v, temp, n, 'stone.tartarus.column', 'stone.tartarus.column.cool');
     TG.tintRGB(rgb, n, powField(A.mortar, 1.3), C255(INK.plum), 0.78);
     const grime = TG.dirtMask(h, n, { seed: seed + 44, cavity: cav, streak: 0.09, streakStrength: 0.85 });
     TG.tintRGB(rgb, n, powField(grime, 1.8), C255('#2a1224'), 0.42);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(INK.violet), warm: C255('#ffb08a'), inkAmount: 0.45, warmAmount: 0.24 });
 
     const rough = TG.artisticRoughness(n, {
       base: 0.80, height: h, cavity: cav, edge, polish: 0.24, dry: 0.20, variation: 0.14,
       seed: seed + 7, min: 0.36, max: 0.98,
     });
+    for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] - A.margin[i] * 0.16 - tool[i] * 0.10);
     return { rgb, height: h, rough, metal: 0.0, normalScale: 0.9,
       // §1.9 CYLINDRICAL, NOT TRIPLANAR. On a 5.4m fluted shaft the surface
       // normal is horizontal everywhere, so a triplanar blend runs entirely
@@ -1552,27 +1804,42 @@ const RECIPES = {
     const grit = TG.fbm(n, { freq: 26, octaves: 3, seed: seed + 2, ppc: 3 });
     const chisel = TG.ridged(n, { freq: 7, octaves: 4, seed: seed + 3, type: 'grad' });
 
-    // a bead-and-fillet along both arrises of the tube
+    // a bead-and-fillet along both arrises of the tube, and an egg-and-dart
+    // echinus down the archivolt face between them — one egg per voussoir, so
+    // the ornament and the masonry agree on the rhythm
     const orn = F(n);
     for (const y of [n * 0.19, n * 0.81]) {
       TG.drawLine(orn, n, 0, y, n, y, Math.max(2, n * 0.011), 1.0, 1.2);
       TG.beadRow(orn, n, { y, count: 30, r: n * 0.010, value: 0.85 });
     }
-    const ornS = TG.blurWrap(orn, n, Math.max(1, n * 0.003), 1);
+    TG.eggAndDart(orn, n, { y: n * 0.5, height: n * 0.105, count: 15, value: 0.92, lineW: Math.max(1.6, n * 0.006), dome: 0.6, soft: 1.2, rails: false, eggW: 0.40, eggH: 0.40 });
+    const ornS = powField(TG.blurWrap(orn, n, Math.max(1, n * 0.0035), 1), 0.8);
+    // radial claw tooling on each wedge (the tube's v axis is the arch's
+    // radial direction), stopping at the joints
+    const tool = F(n);
+    {
+      const face = F(n);
+      for (let i = 0; i < face.length; i++) face[i] = clamp01((1 - T.seam[i]) * 1.3 - 0.3) * clamp01(1 - orn[i] * 2.0);
+      TG.strokes(tool, n, { rng, flow: 1.52, mask: face, seedGrid: true, count: Math.round(n * 2.2), len: [n * 0.02, n * 0.06], width: [0.9, 2.0], value: [0.08, 0.20], curl: 0, wobble: 0.015, bristle: 0.7, taper: 1.3, softness: 0.95 });
+      clampField(tool);
+    }
 
-    const h = combine(n, [[T.height, 0.50], [base, 0.24], [chisel, 0.10], [grit, 0.04]]);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.10 + ornS[i] * 0.22);
+    const h = combine(n, [[T.height, 0.50], [base, 0.16], [chisel, 0.08], [grit, 0.04]]);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(h[i] + 0.10 + ornS[i] * 0.24 + tool[i] * 0.11);
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 5.0);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6.5);
 
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = 0.28 + T.id[i] * 0.22 + T.lobe[i] * 0.24 + (base[i] - 0.5) * 0.46 + chisel[i] * 0.10 + grit[i] * 0.05;
+    for (let i = 0; i < v.length; i++) v[i] = 0.27 + T.id[i] * 0.22 + T.lobe[i] * 0.24 + (base[i] - 0.5) * 0.32 + chisel[i] * 0.08 + tool[i] * 0.34 + grit[i] * 0.05;
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 31 }), -0.36), 1.8)), n >> 2);
-    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.6 + T.id[i] * 0.5 + T.lobe[i] * 0.32);
-    paintValue(v, n, { rng, seed: seed + 5, temp, cavity: cav, cavityAmt: 0.36, edge, edgeAmt: 0.20,
-      flowBase: 0.05, swirl: 0.5, light: [0.03, 0.13], dark: [-0.13, -0.03], highlight: 0.95 });
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.4 + T.id[i] * 0.55 + T.lobe[i] * 0.32);
+    const relief = F(n);
+    paintValue(v, n, { rng, seed: seed + 5, temp, tempAmt: 0.35, cavity: cav, cavityAmt: 0.36, edge, edgeAmt: 0.20,
+      flowBase: 0.05, swirl: 0.5, light: [0.03, 0.13], dark: [-0.13, -0.03], highlight: 0.95, relief });
+    addRelief(h, relief, n, 0.06);
     const rgb = TG.applyRamp2(v, temp, n, 'stone.tartarus', 'stone.tartarus.cool');
     TG.tintRGB(rgb, n, powField(T.seam, 1.2), C255(INK.deep), 0.80);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(INK.violet), warm: C255('#ff9a6a'), inkAmount: 0.45, warmAmount: 0.24 });
     const goldV = F(n);
     for (let i = 0; i < goldV.length; i++) goldV[i] = clamp01(0.34 + (base[i] - 0.5) * 0.26 + edge[i] * 0.34 - cav[i] * 0.52);
     TG.compositeRamp(rgb, n, powField(orn, 1.1), goldV, 'gold', 0.92);
@@ -1623,13 +1890,10 @@ const RECIPES = {
     TG.compositeRamp(rgb, n, scaleField(TG.copyField(bleed), 0.55), null, 'lava', 0.45);
     TG.compositeRamp(rgb, n, heat, clampField(biasField(scaleField(TG.copyField(flick), 0.5), 0.5)), 'lava', 1.0);
 
-    const em = F(n);
-    for (let i = 0; i < em.length; i++) em[i] = clamp01(heat[i] * 1.15 + bleed[i] * 0.30);
-    const emissive = TG.applyRamp(em, n, 'lava');
-    for (let i = 0; i < em.length; i++) {
-      const k = Math.pow(em[i], 1.5), j = i * 3;
-      emissive[j] *= k; emissive[j + 1] *= k; emissive[j + 2] *= k;
-    }
+    // three-layer glow: white-hot thread down the deepest seam, saturated
+    // lava body, soft halo bleeding on to the glass either side
+    const emissive = glowLayers(heat, n, { ramp: 'lava', core: C255(ASPHODEL.lavaCore), coreGate: 0.74, bodyPow: 1.4, glowRadius: 0.014, glow: 0.42 });
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(ASPHODEL.obsidianDark), warm: C255('#8fb4ff'), inkAmount: 0.40, warmAmount: 0.24 });
 
     const rough = TG.artisticRoughness(n, { base: 0.34, height: h, cavity: cav, edge, polish: 0.26, dry: 0.42, variation: 0.16, seed: seed + 9, min: 0.06, max: 0.92 });
     return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 0.16, normalScale: 1.25,
@@ -1662,10 +1926,8 @@ const RECIPES = {
     const bleed = TG.blurWrap(hot, n, Math.max(2, n * 0.014), 2);
     TG.compositeRamp(rgb, n, scaleField(TG.copyField(bleed), 0.5), null, 'lava', 0.4);
     TG.compositeRamp(rgb, n, hot, null, 'lava', 0.95);
-    const em = F(n);
-    for (let i = 0; i < em.length; i++) em[i] = clamp01(hot[i] * 1.1 + bleed[i] * 0.28);
-    const emissive = TG.applyRamp(em, n, 'lava');
-    for (let i = 0; i < em.length; i++) { const k = Math.pow(em[i], 1.5), j = i * 3; emissive[j] *= k; emissive[j + 1] *= k; emissive[j + 2] *= k; }
+    const emissive = glowLayers(hot, n, { ramp: 'lava', core: C255(ASPHODEL.lavaCore), coreGate: 0.76, bodyPow: 1.4, glowRadius: 0.016, glow: 0.40 });
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(ASPHODEL.obsidianDark), warm: C255('#c9b8a0'), inkAmount: 0.40, warmAmount: 0.18 });
 
     const rough = TG.artisticRoughness(n, { base: 0.56, height: h, cavity: cav, edge, polish: 0.22, dry: 0.34, variation: 0.16, seed: seed + 8, min: 0.24, max: 0.96 });
     for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] + ashM[i] * 0.35);
@@ -1677,46 +1939,86 @@ const RECIPES = {
   // ELYSIUM — veined warm marble with gold leaf
   // ======================================================================
   'marble.elysium': { size: MID, build(n, rng, seed) {
-    const veins = TG.veinNetwork(n, { count: 5, seed, len: 2.2, width: [0.9, 3.6], meander: 0.55, jitter: 0.045, branch: 0.005 });
-    const veins2 = TG.veinNetwork(n, { count: 7, seed: seed + 1, len: 1.6, width: [0.5, 1.5], meander: 0.85, jitter: 0.06, branch: 0.008 });
-    const gold = TG.veinNetwork(n, { count: 3, seed: seed + 2, len: 1.8, width: [0.5, 1.5], meander: 0.7, jitter: 0.05, branch: 0.012 });
+    // ── VEINS WITH A BODY, NOT PENCIL SCRIBBLE ───────────────────────────
+    // Twelve thin veins at full opacity read as hair on paper. Real statuary
+    // marble carries two or three MAJOR veins — soft-edged ribbons a few
+    // centimetres wide with a darker thread down the middle and a bruise of
+    // colour either side — plus a faint secondary web, plus broad cloudy
+    // patches (breccia) where the stone itself changes colour. Three layers,
+    // three opacities, and the halo does most of the work.
+    const major = TG.veinNetwork(n, { count: 3, seed, len: 2.4, width: [2.0, 6.5], meander: 0.42, jitter: 0.03, branch: 0.004 });
+    const minor = TG.veinNetwork(n, { count: 4, seed: seed + 1, len: 1.3, width: [0.5, 1.5], meander: 0.85, jitter: 0.06, branch: 0.008 });
+    const gold = TG.veinNetwork(n, { count: 2, seed: seed + 2, len: 1.6, width: [0.5, 1.4], meander: 0.7, jitter: 0.05, branch: 0.012 });
     const grain = TG.fbm(n, { freq: 22, octaves: 3, seed: seed + 3, ppc: 3 });
     const cloud = warpLo(n, { freq: 3, octaves: 5, seed: seed + 4 }, { amp: 0.09, freq: 2, seed: seed + 5 });
-
+    const breccia = warpLo(n, { freq: 2, octaves: 4, seed: seed + 14, type: 'grad' }, { amp: 0.15, freq: 2, seed: seed + 15 });
+    // the vein body is a soft ribbon; the core is the drawn line itself
+    const body = TG.blurWrap(major, n, Math.max(2, n * 0.009), 2);
+    for (let i = 0; i < body.length; i++) body[i] = clamp01(body[i] * 2.4);
+    const core = powField(clampField(TG.copyField(major)), 1.3);
     const vMask = F(n), gMask = F(n);
     for (let i = 0; i < vMask.length; i++) {
-      vMask[i] = clamp01(veins[i]) * 0.85 + clamp01(veins2[i]) * 0.42;
+      vMask[i] = clamp01(body[i] * 0.85 + clamp01(minor[i]) * 0.32);
       gMask[i] = clamp01(gold[i]) * clamp01((cloud[i] - 0.35) * 2.4);
     }
     // Every real marble vein carries a soft bruise of colour around it. Without
     // this halo the veins read as pencil lines drawn on paper.
-    const halo = TG.blurWrap(vMask, n, Math.max(2, n * 0.014), 2);
-    const halo2 = TG.blurWrap(vMask, n, Math.max(4, n * 0.045), 2);
-    for (let i = 0; i < halo.length; i++) halo[i] = clamp01(halo[i] * 2.2 + halo2[i] * 3.4);
+    const halo = TG.blurWrap(vMask, n, Math.max(2, n * 0.016), 2);
+    const halo2 = TG.blurWrap(vMask, n, Math.max(4, n * 0.050), 2);
+    for (let i = 0; i < halo.length; i++) halo[i] = clamp01(halo[i] * 2.0 + halo2[i] * 3.6);
+    // the sculptor's dressing: fine parallel tooth-chisel marks in one slowly
+    // turning direction, low in the height so the statue reads as CARVED
+    // stone under the polish rather than as cast plastic
+    const tooling = F(n);
+    TG.strokes(tooling, n, {
+      rng, flow: TG.flowField(n, { base: 1.15, swirl: 0.30, freq: 2, seed: seed + 21 }),
+      count: Math.round(n * 1.6), len: [n * 0.012, n * 0.040], width: [0.6, 1.3],
+      value: [0.04, 0.11], curl: 0.2, wobble: 0.02, bristle: 0.6, taper: 1.3, softness: 0.95,
+    });
+    clampField(tooling);
 
     const h = F(n);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.62 + (cloud[i] - 0.5) * 0.22 + grain[i] * 0.08 - vMask[i] * 0.10 + gMask[i] * 0.08);
+    for (let i = 0; i < h.length; i++) {
+      h[i] = clamp01(0.62 + (cloud[i] - 0.5) * 0.18 + grain[i] * 0.06 - body[i] * 0.06 - core[i] * 0.07 + gMask[i] * 0.07 + tooling[i] * 0.07);
+    }
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.008), 4);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.003), 6);
 
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = 0.56 + (cloud[i] - 0.5) * 0.60 + grain[i] * 0.11 - halo[i] * 0.16;
+    for (let i = 0; i < v.length; i++) {
+      v[i] = 0.58 + (cloud[i] - 0.5) * 0.44 + (breccia[i] - 0.5) * 0.30 + grain[i] * 0.09 - halo[i] * 0.14 - body[i] * 0.10 + tooling[i] * 0.10;
+    }
+    // warm cream where the breccia is clean, cool grey-violet where it clouds
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 2, octaves: 4, seed: seed + 7 }), -0.42), 2.2)), n >> 2);
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.40 + (0.54 - breccia[i]) * 1.3 + halo[i] * 0.25);
+    const relief = F(n);
     paintValue(v, n, { rng, seed: seed + 6, temp, cavity: cav, cavityAmt: 0.18, edge, edgeAmt: 0.16, flowBase: 0.62, swirl: 1.15,
-      light: [0.015, 0.06], dark: [-0.055, -0.012], highlight: 0.6 });
+      light: [0.015, 0.06], dark: [-0.055, -0.012], highlight: 0.6, relief });
+    addRelief(h, relief, n, 0.05);
     const rgb = TG.applyRamp2(v, temp, n, 'marble.elysium', 'floor.elysium');
-    TG.compositeRamp(rgb, n, scaleField(powField(halo, 1.25), 0.55), clampField(biasField(scaleField(TG.copyField(v), 0.6), 0.18)), 'marble.vein', 0.75);
-    TG.compositeRamp(rgb, n, powField(vMask, 1.15), clampField(scaleField(TG.copyField(v), 0.55)), 'marble.vein', 0.88);
+    TG.compositeRamp(rgb, n, scaleField(powField(halo, 1.25), 0.50), clampField(biasField(scaleField(TG.copyField(v), 0.6), 0.22)), 'marble.vein', 0.70);
+    TG.compositeRamp(rgb, n, powField(vMask, 1.1), clampField(biasField(scaleField(TG.copyField(v), 0.55), 0.10)), 'marble.vein', 0.80);
+    TG.compositeRamp(rgb, n, core, clampField(scaleField(TG.copyField(v), 0.30)), 'marble.vein', 0.85);
     // verdant moss creeping out of the deepest crevices — the Elysium accent
     const moss = F(n);
     for (let i = 0; i < moss.length; i++) moss[i] = clamp01((cav[i] - 0.35) * 2.2) * clamp01((cloud[i] - 0.45) * 3.0);
     TG.compositeRamp(rgb, n, moss, clampField(scaleField(TG.copyField(cloud), 1.1)), 'verdant', 0.5);
     // gold leaf
     TG.compositeRamp(rgb, n, powField(gMask, 0.8), clampField(biasField(scaleField(TG.copyField(grain), 0.4), 0.55)), 'gold', 0.95);
+    // hue split: recesses to the marble-shadow violet, crowns to the key's cream
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#6d6383'), warm: C255(ELYSIUM.key), inkAmount: 0.40, warmAmount: 0.22 });
 
+    // ROUGHNESS: polished body, calcite-filled veins glossier still, the tooth
+    // marks dry, and a crystalline sparkle — tiny facets of the stone's own
+    // grain that catch the key as pin-points, which is what makes marble read
+    // as marble at a glance
     const rough = TG.artisticRoughness(n, { base: 0.30, height: h, cavity: cav, edge, polish: 0.22, dry: 0.34, variation: 0.14, seed: seed + 8, min: 0.08, max: 0.85 });
+    const sparkle = powField(invField(TG.worleyField(n, { freq: 64, mode: 'f1', seed: seed + 9, res: n >> 1 })), 4.0);
     const metal = F(n);
-    for (let i = 0; i < metal.length; i++) { metal[i] = clamp01(gMask[i] * 0.8); rough[i] = clamp01(rough[i] * (1 - gMask[i] * 0.55) + moss[i] * 0.45); }
+    for (let i = 0; i < metal.length; i++) {
+      metal[i] = clamp01(gMask[i] * 0.8);
+      rough[i] = clamp01(rough[i] * (1 - gMask[i] * 0.55) + moss[i] * 0.45 - vMask[i] * 0.10 + tooling[i] * 0.12 - sparkle[i] * 0.30);
+    }
     // fake subsurface: a whisper of warm self-illumination in the clean stone
     const emissive = new Float32Array(n * n * 3);
     for (let i = 0; i < n * n; i++) {
@@ -1742,7 +2044,8 @@ const RECIPES = {
     for (let i = 0; i < inlay.length; i++) inlay[i] = clamp01((T.seam[i] - 0.30) * 2.2);
     const orn = F(n);
     TG.laurelBand(orn, n, { y: n * 0.5, leaves: 12, leafLen: n * 0.052, value: 1, lineW: Math.max(1.8, n * 0.004) });
-    TG.beadRow(orn, n, { y: n * 0.5 - n * 0.105, count: 24, r: n * 0.0085, value: 0.95 });
+    // egg-and-dart above the laurel, an astragal below it, a key at the edge
+    TG.eggAndDart(orn, n, { y: n * 0.5 - n * 0.115, height: n * 0.062, count: 12, value: 0.95, lineW: Math.max(1.2, n * 0.0035), dome: 0.6, soft: 1.1, rails: false });
     TG.beadRow(orn, n, { y: n * 0.5 + n * 0.105, count: 24, r: n * 0.0085, value: 0.95 });
     TG.meanderBand(orn, n, { y: n * 0.06, height: n * 0.085, cells: 5, lineW: Math.max(1.8, n * 0.0055), value: 0.9, rails: false, soft: n * 0.002 });
 
@@ -1761,6 +2064,7 @@ const RECIPES = {
     const rgb = TG.applyRamp2(v, temp, n, 'floor.elysium', 'marble.elysium');
     // warm the cream so it reads as sunlit stone, not bathroom tile
     TG.tintRGB(rgb, n, TG.mapField(TG.copyField(cloud), (x) => 0.30 + 0.35 * x), C255('#e8c98f'), 0.30);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#514a63'), warm: C255(ELYSIUM.key), inkAmount: 0.40, warmAmount: 0.22 });
     TG.compositeRamp(rgb, n, powField(vM, 1.2), clampField(scaleField(TG.copyField(v), 0.7)), 'marble.vein', 0.62);
     TG.tintRGB(rgb, n, powField(T.seam, 1.8), C255('#514a63'), 0.72);
     const goldV = F(n);
@@ -1801,23 +2105,59 @@ const RECIPES = {
   // Obsidian — conchoidal fracture glass
   // ======================================================================
   obsidian: { size: BASE, build(n, rng, seed) {
-    const facet = TG.worleyField(n, { freq: 8, mode: 'f1', seed, jitter: 1 });
-    const facet2 = TG.worleyField(n, { freq: 17, mode: 'f1', seed: seed + 1, res: n >> 1 });
-    const cell = TG.worleyField(n, { freq: 8, mode: 'cell', seed });
-    const chip = TG.cracks(n, { levels: [{ freq: 14, width: 0.05, weight: 1 }], seed: seed + 2, warpAmp: 0.03 });
+    // ── CONCHOIDAL, NOT HONEYCOMB ────────────────────────────────────────
+    // A Worley bowl per cell gave a wall of chicken-wire: every plate a smooth
+    // dimple, every boundary a bright line. Knapped glass breaks into shallow
+    // SHELLS with ripple rings radiating from the blow, meeting at razor
+    // arrises, and some plates flake again into smaller shells. TG.conchoidal
+    // returns the shell, its rings and its arris from one lattice.
+    // ROUND-2: the primary shell lattice is 7 cells across the tile — a facet
+    // is ~65 texels even at half resolution — so it bakes at n/2 like K2 does
+    // (obsidian.asphodel 86 -> 225ms at n=256 in round 1; this is most of it).
+    const K = TG.conchoidal(n, { freq: 7, seed, rings: 4.5, warp: 0.55, arrisWidth: 0.05, res: n >> 1 });
+    const K2 = TG.conchoidal(n, { freq: 15, seed: seed + 1, rings: 3, warp: 0.45, arrisWidth: 0.07, res: n >> 1 });
+    // the rings fade toward the arris and are strongest near the blow: a
+    // fingerprint-even ring field is the one thing that does not read as glass
+    const p12 = powLUTFor(1.2), p072 = powLUTFor(0.72);
+    for (let i = 0; i < K.ripple.length; i++) { K.ripple[i] *= powAt(p12, K.facet[i]); K2.ripple[i] *= powAt(p12, K2.facet[i]); }
+    const chip = TG.cracks(n, { levels: [{ freq: 14, width: 0.05, weight: 1 }], seed: seed + 2, warpAmp: 0.03, res: n >> 1 });
+    // flow banding in the glass: the volcanic swirl a polished face shows
     const swirl = warpLo(n, { freq: 5, octaves: 4, seed: seed + 3, type: 'grad' }, { amp: 0.05, freq: 3, seed: seed + 4 });
+    // which plates flake a second time
+    const sub = F(n);
+    for (let i = 0; i < sub.length; i++) sub[i] = clamp01((K.id[i] - 0.45) * 3.0);
 
     const h = F(n);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.42 + Math.pow(1 - facet[i], 0.65) * 0.52 + (1 - facet2[i]) * 0.12 + (swirl[i] - 0.5) * 0.10 - chip[i] * 0.30);
+    for (let i = 0; i < h.length; i++) {
+      const shell = powAt(p072, K.facet[i]);
+      h[i] = clamp01(0.36 + shell * 0.44 + K.ripple[i] * 0.045 * (1 - K.arris[i])
+        + sub[i] * (K2.facet[i] * 0.14 + K2.ripple[i] * 0.025) - K.arris[i] * 0.08
+        - chip[i] * 0.24 + (swirl[i] - 0.5) * 0.06);
+    }
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.01), 5);
-    const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 8);
+    const edge = TG.edgeMask(h, n, Math.max(1, n * 0.003), 9);
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = 0.24 + cell[i] * 0.20 + (1 - facet[i]) * 0.30 + (swirl[i] - 0.5) * 0.28;
-    const temp = clampField(scaleField(biasField(TG.copyField(cell), -0.35), 1.8));
-    paintValue(v, n, { rng, seed: seed + 5, temp, cavity: cav, cavityAmt: 0.30, edge, edgeAmt: 0.44, flowBase: 0.8, swirl: 1.5, light: [0.025, 0.10], highlight: 1.2 });
+    for (let i = 0; i < v.length; i++) {
+      v[i] = 0.18 + K.id[i] * 0.24 + K.facet[i] * 0.14 + K.ripple[i] * 0.07 * (1 - K.arris[i]) + edge[i] * 0.50
+        + K.arris[i] * 0.12 + (swirl[i] - 0.5) * 0.20 - chip[i] * 0.20 + sub[i] * K2.ripple[i] * 0.04;
+    }
+    // per-plate temperature: some plates carry the steel-blue sheen, most
+    // stay violet-black, and the flow banding drifts it within a plate
+    const temp = F(n);
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(K.id[i] * 1.25 - 0.28 + (swirl[i] - 0.5) * 0.5);
+    paintValue(v, n, { rng, seed: seed + 5, temp, cavity: cav, cavityAmt: 0.30, edge, edgeAmt: 0.40, flowBase: 0.8, swirl: 1.5,
+      light: [0.02, 0.08], dark: [-0.07, -0.02], fine: [-0.03, 0.03], highlight: 1.2,
+      count: Math.round(n * 0.6), count2: Math.round(n * 0.45), fineCount: Math.round(n * 0.5) });
     const rgb = TG.applyRamp2(v, temp, n, 'obsidian', 'obsidian.sheen');
-    TG.tintRGB(rgb, n, scaleField(powField(edge, 1.1), 0.6), C255('#7f9ecb'), 0.3);
+    // the arris catches a cold glint; the ring crests a fainter one
+    TG.tintRGB(rgb, n, scaleField(powField(edge, 1.1), 0.6), C255('#9fbde8'), 0.34);
+    TG.tintRGB(rgb, n, scaleField(powField(K.arris, 1.4), 0.5), C255('#7f9ecb'), 0.30);
+    // shadow is blue-black glass, never grey; the lit shell drifts to the sheen
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#0d0b18'), warm: C255('#8fb4ff'), inkAmount: 0.45, warmAmount: 0.30 });
+    // ROUGHNESS: glass. The shells are mirror-polished, the arrises and chips
+    // are frosted where they have been struck, and the flow bands dull it.
     const rough = TG.artisticRoughness(n, { base: 0.22, height: h, cavity: cav, edge, polish: 0.16, dry: 0.5, variation: 0.13, seed: seed + 6, min: 0.04, max: 0.8 });
+    for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] * 0.55 + 0.06 + chip[i] * 0.45 + K.arris[i] * 0.22 + (1 - K.facet[i]) * 0.08);
     return { rgb, height: h, rough, metal: 0.12, normalScale: 1.3,
       params: { envMapIntensity: 0.85 },
       paint: { triplanar: true, triScale: 0.35, macroTint: ASPHODEL.obsidianLight, variation: 0.14, variationTint: '#3d3a5c' } };
@@ -1827,45 +2167,94 @@ const RECIPES = {
   // Gold filigree — real ornament, not a gold cube
   // ======================================================================
   'gold.filigree': { size: MID, build(n, rng, seed) {
+    // ── CHASED RELIEF, NOT WIRE ON BROWN ─────────────────────────────────
+    // The previous band drew every motif as a 1-2px line and blurred it by a
+    // texel: at inspection range that is gold WIRE glued to a flat plaque, and
+    // the critic read it as line art. Repoussé ornament is a RAISED BAND with
+    // a half-round section standing on a MATTED ground — the goldsmith
+    // punches the background with a ring punch and cross-hatches it so the
+    // polished relief stands out against a dry, dark field. Three things
+    // follow: the strokes are 40% fatter, the relief is a wide blur with a
+    // soft power (a rounded crown, not a plateau), and the ground carries its
+    // own punch + hatch texture in both height and roughness.
     const orn = F(n);
-    // a composed band: meander top and bottom, guilloche core, beads, palmettes
-    TG.meanderBand(orn, n, { y: n * 0.115, height: n * 0.145, cells: 6, lineW: Math.max(2, n * 0.0095), value: 1, soft: n * 0.0022 });
-    TG.meanderBand(orn, n, { y: n * 0.885, height: n * 0.145, cells: 6, lineW: Math.max(2, n * 0.0095), value: 1, soft: n * 0.0022 });
-    TG.guilloche(orn, n, { y: n * 0.5, amp: n * 0.052, cycles: 5, lineW: Math.max(2, n * 0.008), value: 0.92 });
-    TG.beadRow(orn, n, { y: n * 0.285, count: 34, r: n * 0.0085, value: 0.85 });
-    TG.beadRow(orn, n, { y: n * 0.715, count: 34, r: n * 0.0085, value: 0.85 });
+    const lw = Math.max(2.4, n * 0.0135);
+    TG.meanderBand(orn, n, { y: n * 0.115, height: n * 0.145, cells: 6, lineW: lw, value: 1, soft: n * 0.0025 });
+    TG.meanderBand(orn, n, { y: n * 0.885, height: n * 0.145, cells: 6, lineW: lw, value: 1, soft: n * 0.0025 });
+    TG.guilloche(orn, n, { y: n * 0.5, amp: n * 0.052, cycles: 5, lineW: lw * 0.85, value: 0.94 });
+    // egg-and-dart on the upper astragal line, beads on the lower one
+    TG.eggAndDart(orn, n, { y: n * 0.285, height: n * 0.078, count: 14, value: 0.96, lineW: lw * 0.5, dome: 0.62, soft: 1.2 });
+    TG.beadRow(orn, n, { y: n * 0.715, count: 34, r: n * 0.0095, value: 0.88 });
     for (let k = 0; k < 3; k++) {
-      TG.palmette(orn, n, { x: ((k + 0.5) / 3) * n, y: n * 0.375, r: n * 0.075, petals: 9, value: 0.95, lineW: Math.max(1.6, n * 0.0055) });
-      TG.palmette(orn, n, { x: ((k + 1.0) / 3) * n, y: n * 0.625, r: n * 0.070, petals: 7, value: 0.9, lineW: Math.max(1.6, n * 0.005) });
+      TG.palmette(orn, n, { x: ((k + 0.5) / 3) * n, y: n * 0.375, r: n * 0.075, petals: 9, value: 0.95, lineW: lw * 0.55 });
+      TG.palmette(orn, n, { x: ((k + 1.0) / 3) * n, y: n * 0.625, r: n * 0.070, petals: 7, value: 0.9, lineW: lw * 0.5 });
     }
-    const relief = TG.blurWrap(orn, n, Math.max(1, n * 0.0045), 1);
+    // the half-round section: a wide soft blur, opened up with a power so the
+    // band has a rounded crown and a fillet at its foot; `crest` is the very
+    // top of the round where the burnisher touched it
+    const relief = powField(TG.blurWrap(orn, n, Math.max(1.5, n * 0.0055), 2), 0.62);
+    const crest = powField(TG.blurWrap(orn, n, Math.max(1, n * 0.0018), 1), 1.5);
+    const ground = F(n);
+    for (let i = 0; i < ground.length; i++) ground[i] = clamp01(1 - relief[i] * 1.6);
     const back = warpLo(n, { freq: 6, octaves: 5, seed }, { amp: 0.05, freq: 3, seed: seed + 1 });
-    const hammer = TG.worleyField(n, { freq: 26, mode: 'f1', seed: seed + 2, res: n >> 1 });
+    // MATTING: a ring punch (small inverted worley domes) and a fine cross
+    // hatch, both confined to the ground
+    const punch = powField(invField(TG.worleyField(n, { freq: 44, mode: 'f1', seed: seed + 2, res: n >> 1 })), 1.6);
+    const hatch = F(n);
+    // ROUND-2: half the hatch count at 1.5x the width — the matting reads the
+    // same at any distance the trim is seen from and the bake is 35% cheaper.
+    TG.strokes(hatch, n, { rng, flow: 0.72, mask: ground, count: Math.round(n * 1.6), len: [n * 0.010, n * 0.030], width: [0.9, 1.8], value: [0.10, 0.22], curl: 0, wobble: 0.01, bristle: 0.5, taper: 1.2, softness: 0.9 });
+    TG.strokes(hatch, n, { rng, flow: 0.72 + Math.PI * 0.5, mask: ground, count: Math.round(n * 1.2), len: [n * 0.010, n * 0.028], width: [0.9, 1.8], value: [0.08, 0.18], curl: 0, wobble: 0.01, bristle: 0.5, taper: 1.2, softness: 0.9 });
+    clampField(hatch);
+    // planished bench marks on the raised metal itself: a burnish direction
+    const burnish = F(n);
+    TG.strokes(burnish, n, { rng, flow: 0.15, mask: relief, count: Math.round(n * 0.8), len: [n * 0.012, n * 0.045], width: [0.9, 2.0], value: [-0.10, 0.12], curl: 0, wobble: 0.02, bristle: 0.75, taper: 1.8, softness: 1.1 });
 
     const h = F(n);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.22 + relief[i] * 0.75 + (back[i] - 0.5) * 0.16 + (1 - hammer[i]) * 0.10);
+    for (let i = 0; i < h.length; i++) {
+      h[i] = clamp01(0.20 + relief[i] * 0.60 + crest[i] * 0.10 + (back[i] - 0.5) * 0.10
+        + ground[i] * (punch[i] * 0.09 + hatch[i] * 0.05) + burnish[i] * 0.03);
+    }
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.009), 6);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.0035), 9);
 
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.20 + relief[i] * 0.50 + (back[i] - 0.5) * 0.34 + edge[i] * 0.58 - cav[i] * 0.62);
+    for (let i = 0; i < v.length; i++) {
+      v[i] = clamp01(0.16 + relief[i] * 0.42 + crest[i] * 0.18 + (back[i] - 0.5) * 0.26 + edge[i] * 0.52 - cav[i] * 0.62
+        + ground[i] * (hatch[i] * 0.10 - punch[i] * 0.10) + burnish[i] * 0.10);
+    }
+    // the raised metal reads GOLD, the matted ground reads BRONZE
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 4, octaves: 4, seed: seed + 4 }), -0.42), 2.0)), n >> 2);
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.35 + ground[i] * 0.62);
     paintValue(v, n, { rng, seed: seed + 3, temp, edge, flowBase: 0.2, swirl: 0.9, light: [0.02, 0.08], dark: [-0.07, -0.015], highlight: 1.3 });
     const rgb = TG.applyRamp2(v, temp, n, 'gold', 'bronze');
     // tarnish and a breath of verdigris deep in the recesses — this is the
     // single detail that stops procedural gold looking like plastic
     const tarnish = F(n);
-    for (let i = 0; i < tarnish.length; i++) tarnish[i] = clamp01(cav[i] * 1.35 * (0.35 + back[i]));
+    for (let i = 0; i < tarnish.length; i++) tarnish[i] = clamp01(cav[i] * 1.35 * (0.35 + back[i]) + ground[i] * 0.22);
     TG.tintRGB(rgb, n, powField(tarnish, 1.4), C255('#20140a'), 0.62);
     const patina = F(n);
     for (let i = 0; i < patina.length; i++) patina[i] = clamp01((back[i] - 0.60) * 3.4) * tarnish[i];
     TG.compositeRamp(rgb, n, patina, clampField(scaleField(TG.copyField(back), 0.9)), 'verdigris', 0.55);
+    // the shadow side of every bead and every meander channel goes to the
+    // bronze shadow hue; the crests go to the pale gold highlight
+    TG.inkAndWarm(rgb, n, cav, crest, { ink: C255('#4a2a12'), warm: C255(GOLD.highlight), inkAmount: 0.55, warmAmount: 0.40 });
 
-    const rough = TG.artisticRoughness(n, { base: 0.40, height: h, cavity: cav, edge, polish: 0.22, dry: 0.42, variation: 0.12, seed: seed + 5, min: 0.26, max: 0.88 });
+    // ROUGHNESS: burnished crowns, dry matted ground, dust in the undercut
+    // ROUND-2 (§9.3, §9.5): the shot sheet had NO highlight band (brightPresent
+    // 0.0001-0.0007) and the gold read as a dull orange-brown ribbon. The
+    // world caps the leaf's diffuse and emissive, so the highlight has to be
+    // SPECULAR: burnished crests go to a mirror (min 0.13, crest -0.30) and the
+    // raised metal is more metallic, so the key's tight env lobe lands on every
+    // arris as a real glint rather than a broad orange sheen.
+    const rough = TG.artisticRoughness(n, { base: 0.42, height: h, cavity: cav, edge, polish: 0.22, dry: 0.40, variation: 0.12, seed: seed + 5, min: 0.13, max: 0.90 });
     const metal = F(n);
     // Deliberately NOT 1.0: fully metallic gold has no diffuse term, so in a
     // dark room it reads as black chrome. Painted gold keeps a diffuse core.
-    for (let i = 0; i < metal.length; i++) { metal[i] = clamp01(0.72 - patina[i] * 0.66); rough[i] = clamp01(rough[i] + patina[i] * 0.35); }
+    for (let i = 0; i < metal.length; i++) {
+      metal[i] = clamp01(0.84 - patina[i] * 0.66 - ground[i] * 0.12);
+      rough[i] = clamp01(rough[i] + patina[i] * 0.35 - crest[i] * 0.30 + ground[i] * 0.18);
+    }
 
     // §2 calls gold "the ornament spine of the whole game". A warm key times a
     // warm albedo lands metal gold at ~#ff7a30 — the brazier's hue — so the
@@ -1873,16 +2262,17 @@ const RECIPES = {
     // the AUTHORED hue (#f2c14e) anchors it: it survives the key, it sits about
     // one stop above the surrounding stone, and it stays under the bloom
     // threshold so it glows without fogging (§1.7).
-    const emissive = TG.applyRamp(clampField(mapGold(relief, edge, cav)), n, 'gold');
+    const goldMask = clampField(mapGold(relief, edge, cav));
+    const emissive = TG.applyRamp(goldMask, n, 'gold');
     {
-      const k = clampField(mapGold(relief, edge, cav));
-      for (let i = 0; i < k.length; i++) {
-        const g = Math.pow(k[i], 1.35), j = i * 3;
+      const p135 = powLUTFor(1.35);
+      for (let i = 0; i < goldMask.length; i++) {
+        const g = powAt(p135, goldMask[i]), j = i * 3;
         emissive[j] *= g; emissive[j + 1] *= g * 0.95; emissive[j + 2] *= g * 0.78;
       }
     }
     return { rgb, height: h, rough, metal, normalScale: 1.5, emissive, emissiveIntensity: 0.50,
-      params: { envMapIntensity: 0.75, emissive: 0x1a0f2c, emissiveIntensity: 0.16 },
+      params: { envMapIntensity: 1.05, emissive: 0x1a0f2c, emissiveIntensity: 0.16 },
       paint: { triplanar: false, macroStrength: 0.28, macroTint: GOLD.mid, rimStrength: 0.55 } };
   } },
 
@@ -1905,6 +2295,7 @@ const RECIPES = {
     const tarnish = F(n);
     for (let i = 0; i < tarnish.length; i++) tarnish[i] = clamp01(cav[i] * 1.2 * (0.30 + grain[i]));
     TG.tintRGB(rgb, n, powField(tarnish, 1.5), C255('#241608'), 0.55);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#4a2a12'), warm: C255(GOLD.highlight), inkAmount: 0.50, warmAmount: 0.36 });
     const rough = TG.artisticRoughness(n, { base: 0.36, height: h, cavity: cav, edge, polish: 0.26, dry: 0.30, variation: 0.12, seed: seed + 5, min: 0.17, max: 0.84 });
     const metal = F(n);
     for (let i = 0; i < metal.length; i++) metal[i] = 0.86;
@@ -1929,46 +2320,111 @@ const RECIPES = {
   } },
 
   'bronze.verdigris': { size: BASE, build(n, rng, seed) {
-    const hammer = TG.worleyField(n, { freq: 14, mode: 'f1', seed });
+    // ── PLANISHED, WEEPING BRONZE ────────────────────────────────────────
+    // Hammered bronze is a field of shallow FACETS meeting at soft arrises
+    // (the planishing hammer leaves flats, not dimples), burnished in one
+    // direction, with verdigris growing out of every recess and DRIPPING down
+    // the form. The brazier bowls stand inside their own practical, so this
+    // is the metal the player sees lit from below every frame.
+    const K = TG.conchoidal(n, { freq: 12, seed, rings: 1.2, warp: 0.5, arrisWidth: 0.22, res: n >> 1 });
+    const hammer = K.facet, arris = K.arris;
+    // a planishing hammer leaves SHALLOW flats: soften the facet so the field
+    // reads as beaten metal rather than as a honeycomb of cells
+    for (let i = 0; i < hammer.length; i++) { hammer[i] = Math.pow(hammer[i], 0.55); arris[i] *= 0.55; }
     const grain = warpLo(n, { freq: 6, octaves: 5, seed: seed + 1 }, { amp: 0.06, freq: 3, seed: seed + 2 });
     const blot = warpLo(n, { freq: 5, octaves: 6, seed: seed + 3 }, { amp: 0.10, freq: 3, seed: seed + 4 });
+    const burnish = F(n);
+    TG.strokes(burnish, n, {
+      rng, flow: TG.flowField(n, { base: 0.9, swirl: 0.35, freq: 2, seed: seed + 21 }),
+      count: Math.round(n * 1.0), len: [n * 0.02, n * 0.07], width: [n * 0.0025, n * 0.0050],
+      value: [-0.08, 0.14], curl: 0.2, wobble: 0.02, bristle: 0.75, taper: 1.7, softness: 1.1,
+    });
     const h = F(n);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.5 + (1 - hammer[i]) * 0.26 + (grain[i] - 0.5) * 0.3);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.48 + hammer[i] * 0.16 + (grain[i] - 0.5) * 0.30 - arris[i] * 0.04 + burnish[i] * 0.05);
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.012), 5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.005), 7);
     const patina = F(n);
     for (let i = 0; i < patina.length; i++) patina[i] = clamp01((blot[i] - 0.46) * 2.4 + cav[i] * 0.9 - edge[i] * 1.5) * clamp01(0.35 + blot[i] * 1.2);
+    // the drips: verdigris streaked DOWN the form from every patch
+    const drip = TG.dirtMask(h, n, { seed: seed + 31, cavity: patina, streak: 0.11, streakStrength: 0.9, freq: 5 });
+    for (let i = 0; i < patina.length; i++) patina[i] = clamp01(Math.max(patina[i], drip[i] * 0.85 * clamp01((blot[i] - 0.30) * 2.5)));
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.42 + (grain[i] - 0.5) * 0.5 + edge[i] * 0.42 - cav[i] * 0.3);
-    paintValue(v, n, { rng, seed: seed + 5, edge, flowBase: 0.9, swirl: 1.1, light: [0.03, 0.12], dark: [-0.10, -0.02], highlight: 1.0 });
+    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.40 + (grain[i] - 0.5) * 0.46 + edge[i] * 0.42 - cav[i] * 0.30 + hammer[i] * 0.10 + burnish[i] * 0.12);
+    const relief = F(n);
+    paintValue(v, n, { rng, seed: seed + 5, edge, flowBase: 0.9, swirl: 1.1, light: [0.03, 0.12], dark: [-0.10, -0.02], highlight: 1.0, relief });
+    addRelief(h, relief, n, 0.04);
     const rgb = TG.applyRamp(v, n, 'bronze');
-    TG.compositeRamp(rgb, n, powField(patina, 1.35), clampField(biasField(scaleField(TG.copyField(blot), 1.1), -0.05)), 'verdigris', 0.85);
-    const rough = TG.artisticRoughness(n, { base: 0.52, height: h, cavity: cav, edge, polish: 0.26, dry: 0.36, variation: 0.16, seed: seed + 6, min: 0.22, max: 0.96 });
+    TG.compositeRamp(rgb, n, powField(patina, 1.35), clampField(biasField(scaleField(TG.copyField(blot), 1.1), -0.05)), 'verdigris', 0.80);
+    // a chalky pale crust on the thickest patina
+    const crust = F(n);
+    for (let i = 0; i < crust.length; i++) crust[i] = Math.pow(patina[i], 2.4) * clamp01((grain[i] - 0.45) * 2.5);
+    TG.tintRGB(rgb, n, crust, C255('#a2ddc8'), 0.22);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#2a1408'), warm: C255(GOLD.highlight), inkAmount: 0.45, warmAmount: 0.30 });
+    const rough = TG.artisticRoughness(n, { base: 0.50, height: h, cavity: cav, edge, polish: 0.26, dry: 0.36, variation: 0.16, seed: seed + 6, min: 0.20, max: 0.96 });
     const metal = F(n);
-    for (let i = 0; i < metal.length; i++) { metal[i] = clamp01(0.78 - patina[i] * 0.70); rough[i] = clamp01(rough[i] + patina[i] * 0.40); }
+    for (let i = 0; i < metal.length; i++) {
+      metal[i] = clamp01(0.80 - patina[i] * 0.72);
+      rough[i] = clamp01(rough[i] + patina[i] * 0.40 + crust[i] * 0.15 - burnish[i] * 0.10 - edge[i] * 0.08);
+    }
     return { rgb, height: h, rough, metal, normalScale: 1.2,
       params: { envMapIntensity: 1.0 }, paint: { triplanar: false, macroTint: GOLD.verdigris } };
   } },
 
   bone: { size: BASE, build(n, rng, seed) {
-    const pore = powField(invField(TG.worleyField(n, { freq: 34, mode: 'f1', seed, res: n >> 1 })), 2.4);
-    const crack = TG.veinNetwork(n, { count: 8, seed: seed + 1, len: 1.1, width: [0.5, 1.3], meander: 1.0, jitter: 0.09, branch: 0.014 });
+    // ── PITTED, NOT POLKA-DOTTED ─────────────────────────────────────────
+    // An even Worley pore field is a sheet of dots. Old bone is pitted in
+    // CLUSTERS of varied size, opens into spongy (cancellous) patches where
+    // the cortex has worn through, and carries growth striations along its
+    // length. Three scales of hole, one direction of grain.
+    const cluster = TG.lowFreq(n, (r) => TG.warp(TG.fbm(r, { freq: 4, octaves: 5, seed: seed + 11 }), r, { amp: 0.10, freq: 3, seed: seed + 12 }), n >> 2);
+    const poreRaw = TG.worleyField(n, { freq: 34, mode: 'f1', seed, res: n >> 1 });
+    const poreFine = TG.fbm(n, { freq: 40, octaves: 2, seed: seed + 13, ppc: 3 });
+    const pores = F(n);
+    for (let i = 0; i < pores.length; i++) {
+      const cl = clamp01((cluster[i] - 0.46) * 3.2);
+      const size = 0.05 + 0.10 * cl + 0.04 * poreFine[i];
+      pores[i] = clamp01((size - poreRaw[i]) * 8.0) * (0.18 + cl * 1.1);
+    }
+    const web = TG.worleyField(n, { freq: 46, mode: 'f2f1', seed: seed + 14, res: n >> 1 });
+    const spongy = F(n);
+    for (let i = 0; i < spongy.length; i++) spongy[i] = clamp01(1 - web[i] * 5.0) * clamp01((cluster[i] - 0.70) * 5.0);
+    const crack = TG.veinNetwork(n, { count: 4, seed: seed + 1, len: 0.8, width: [0.4, 1.1], meander: 1.0, jitter: 0.09, branch: 0.010 });
     const grain = warpLo(n, { freq: 7, octaves: 5, seed: seed + 2 }, { amp: 0.055, freq: 3, seed: seed + 3 });
-    const stria = TG.ridged(n, { freq: 5, octaves: 4, seed: seed + 4, type: 'grad' });
+    // growth striations: long, faint, parallel strokes along the bone
+    const stria = F(n);
+    TG.strokes(stria, n, {
+      rng, flow: TG.flowField(n, { base: 0.35, swirl: 0.28, freq: 2, seed: seed + 4 }),
+      // ROUND-2: n*1.6 long strokes made this the most expensive brush pass in
+      // the book (bone.tartarus 69 -> 125ms at n=256). Fewer, wider striations
+      // read the same at prop distance for 40% of the cost.
+      count: Math.round(n * 0.7), len: [n * 0.03, n * 0.10], width: [n * 0.0025, n * 0.0050],
+      value: [0.06, 0.16], curl: 0.3, wobble: 0.02, bristle: 0.7, taper: 1.6, softness: 1.1,
+    });
+    clampField(stria);
     const h = F(n);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.62 + (grain[i] - 0.5) * 0.3 + stria[i] * 0.12 - pore[i] * 0.30 - crack[i] * 0.34);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.62 + (grain[i] - 0.5) * 0.26 + stria[i] * 0.10 - pores[i] * 0.32 - spongy[i] * 0.30 - crack[i] * 0.34);
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.01), 5.5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 7);
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.58 + (grain[i] - 0.5) * 0.42 + stria[i] * 0.12);
+    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.56 + (grain[i] - 0.5) * 0.40 + stria[i] * 0.14 - pores[i] * 0.10 - spongy[i] * 0.14);
+    // the pitted, weathered patches stain warm ochre; the clean cortex cools
     const temp = TG.lowFreq(n, (r) => clampField(scaleField(biasField(TG.fbm(r, { freq: 3, octaves: 4, seed: seed + 6 }), -0.42), 1.9)), n >> 2);
+    for (let i = 0; i < temp.length; i++) temp[i] = clamp01(temp[i] * 0.7 + 0.35 - clamp01((cluster[i] - 0.46) * 3.2) * 0.45);
+    const relief = F(n);
     paintValue(v, n, { rng, seed: seed + 5, temp, cavity: cav, cavityAmt: 0.34, edge, edgeAmt: 0.22, flowBase: 0.35, swirl: 1.1,
-      light: [0.015, 0.07], dark: [-0.07, -0.015], highlight: 0.9 });
+      light: [0.015, 0.07], dark: [-0.07, -0.015], highlight: 0.9, relief,
+      count: Math.round(n * 0.6), count2: Math.round(n * 0.45), fineCount: Math.round(n * 0.5) });
+    addRelief(h, relief, n, 0.05);
     const rgb = TG.applyRamp2(v, temp, n, 'bone', 'bone.cool');
     const grime = TG.dirtMask(h, n, { seed: seed + 7, cavity: cav, streak: 0.05 });
     TG.tintRGB(rgb, n, powField(grime, 2.0), C255('#6b4a24'), 0.38);
-    TG.tintRGB(rgb, n, powField(crack, 1.1), C255('#4a3320'), 0.62);
+    TG.tintRGB(rgb, n, powField(crack, 1.1), C255('#4a3320'), 0.46);
+    TG.tintRGB(rgb, n, powField(pores, 1.2), C255('#5a3a1c'), 0.45);
+    TG.tintRGB(rgb, n, powField(spongy, 1.0), C255('#4e341e'), 0.55);
+    // shadow toward a cool lilac-grey, crowns toward ivory
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#6a5a7a'), warm: C255('#fff2d6'), inkAmount: 0.40, warmAmount: 0.24 });
     const rough = TG.artisticRoughness(n, { base: 0.66, height: h, cavity: cav, edge, polish: 0.24, dry: 0.28, variation: 0.16, seed: seed + 8, min: 0.22, max: 0.96 });
+    for (let i = 0; i < rough.length; i++) rough[i] = clamp01(rough[i] + pores[i] * 0.16 + spongy[i] * 0.22 - stria[i] * 0.06);
     return { rgb, height: h, rough, metal: 0.0, normalScale: 1.1, paint: { triplanar: false, macroTint: '#c9b894' } };
   } },
 
@@ -1986,15 +2442,21 @@ const RECIPES = {
     for (let i = 0; i < h.length; i++) h[i] = clamp01(0.6 + cell[i] * 0.12 + (flow[i] - 0.5) * 0.3 - hot[i] * 0.42);
     const v = F(n);
     for (let i = 0; i < v.length; i++) v[i] = clamp01(0.10 + hot[i] * 0.92 + (flow[i] - 0.5) * 0.18 + cell[i] * 0.06);
-    paintValue(v, n, { rng, seed: seed + 4, flowBase: 1.3, swirl: 1.4, count: Math.round(n * 0.9), light: [0.03, 0.14], dark: [-0.1, -0.02] });
+    // the flow direction is painted INTO the crust: strokes along the current
+    const relief = F(n);
+    paintValue(v, n, { rng, seed: seed + 4, flowBase: 1.3, swirl: 1.4, count: Math.round(n * 0.9), light: [0.03, 0.14], dark: [-0.1, -0.02], relief });
+    addRelief(h, relief, n, 0.06);
     const rgb = TG.applyRamp(v, n, 'lava');
-    const emissive = TG.applyRamp(v, n, 'lava');
-    for (let i = 0; i < n * n; i++) {
-      const k = Math.pow(clamp01(v[i]), 1.65), j = i * 3;
-      emissive[j] *= k; emissive[j + 1] *= k; emissive[j + 2] *= k;
-    }
+    // §1.6 three-layer emissive: the fine cracks are the white-hot CORE, the
+    // open melt is the saturated BODY, and a wide soft halo warms the crust
+    // plates either side — the cooled crust itself stays dark and reads as
+    // crust instead of as a dimmer orange
+    const heat = F(n);
+    for (let i = 0; i < heat.length; i++) heat[i] = clamp01(hot[i] * 0.80 + fine[i] * 0.55 * clamp01(0.3 + flow[i]) - 0.04);
+    const emissive = glowLayers(heat, n, { ramp: 'lava', core: C255(ASPHODEL.lavaCore), coreGate: 0.70, bodyPow: 1.35, glowRadius: 0.028, glow: 0.55 });
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.01), 5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 6);
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#1c0400'), warm: C255(ASPHODEL.lavaHot), inkAmount: 0.35, warmAmount: 0.30 });
     const rough = TG.artisticRoughness(n, { base: 0.62, height: h, cavity: cav, edge, polish: 0.2, dry: 0.3, variation: 0.2, seed: seed + 5, min: 0.18, max: 0.95 });
     return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 2.0, normalScale: 0.9,
       animate: { scroll: [0.010, 0.006], pulse: 0.08 },
@@ -2067,11 +2529,15 @@ const RECIPES = {
     paintValue(v, n, { rng, seed: seed + 4, temp, edge, edgeAmt: 0.34, flowBase: 0.9, swirl: 1.7,
       light: [0.04, 0.15], dark: [-0.09, -0.02], fine: [-0.02, 0.02], highlight: 1.2 });
     const rgb = TG.applyRamp(v, n, 'crystal.violet');
-    const emissive = TG.applyRamp(v, n, 'crystal.violet');
-    for (let i = 0; i < n * n; i++) {
-      const k = Math.pow(clamp01(v[i] * 0.75 + inner[i] * 0.4), 2.0), j = i * 3;
-      emissive[j] *= k; emissive[j + 1] *= k; emissive[j + 2] *= k;
-    }
+    // the glow is INSIDE the crystal: a soft body in the violet ramp with a
+    // near-white core along the brightest inner veins and the facet arrises,
+    // and a wide halo, so a shard reads as lit from within rather than as a
+    // flat purple decal. bodyPow 2.1 keeps the mean where the old v^2 mask
+    // put it, so the rig's emissiveIntensity does not need to move.
+    const heat = F(n);
+    for (let i = 0; i < heat.length; i++) heat[i] = clamp01(v[i] * 0.72 + inner[i] * 0.42 - 0.08 + edge[i] * 0.10);
+    const emissive = glowLayers(heat, n, { ramp: 'crystal.violet', core: C255('#eddcff'), coreGate: 0.86, bodyPow: 2.1, glowRadius: 0.03, glow: 0.22 });
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255('#22073c'), warm: C255('#eddcff'), inkAmount: 0.40, warmAmount: 0.30 });
     const rough = TG.artisticRoughness(n, { base: 0.16, height: h, cavity: cav, edge, polish: 0.12, dry: 0.5, variation: 0.1, seed: seed + 5, min: 0.03, max: 0.7 });
     return { rgb, height: h, rough, metal: 0.0, emissive, emissiveIntensity: 20.0, normalScale: 1.35,
       params: { envMapIntensity: 1.4 },
@@ -2092,16 +2558,28 @@ const RECIPES = {
     TG.beadRow(orn, n, { y: n * 0.965, count: 30, r: n * 0.0065, value: 0.9 });
     for (let k = 0; k < 2; k++) TG.palmette(orn, n, { x: ((k + 0.5) / 2) * n, y: n * 0.42, r: n * 0.14, petals: 11, value: 0.95, lineW: Math.max(1.4, n * 0.005) });
     const ornS = TG.blurWrap(orn, n, Math.max(1, n * 0.004), 1);
+    // a woven DAMASK ground: a faint repeat of small palmettes in the cloth's
+    // own weave, one value step darker where the thread is cut — the
+    // brocade a Greek hanging actually has, and a second scale of ornament
+    // under the embroidered gold
+    const damask = F(n);
+    for (let r = 0; r < 4; r++) for (let c = 0; c < 3; c++) {
+      TG.palmette(damask, n, { x: ((c + 0.5 + (r % 2) * 0.5) / 3) * n, y: ((r + 0.5) / 4) * n * 0.82, r: n * 0.055, petals: 7, value: 1, lineW: Math.max(1.0, n * 0.003) });
+    }
+    const damaskS = TG.blurWrap(damask, n, Math.max(1, n * 0.002), 1);
 
     const h = F(n);
-    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.42 + w[i] * 0.34 + (fold[i] - 0.5) * 0.30 + ornS[i] * 0.30);
+    for (let i = 0; i < h.length; i++) h[i] = clamp01(0.42 + w[i] * 0.34 + (fold[i] - 0.5) * 0.30 + ornS[i] * 0.30 - damaskS[i] * 0.05);
     const cav = TG.cavityMask(h, n, Math.max(2, n * 0.012), 5);
     const edge = TG.edgeMask(h, n, Math.max(1, n * 0.004), 7);
     const v = F(n);
-    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.44 + (fold[i] - 0.5) * 0.62 + w[i] * 0.16 + (wear[i] - 0.5) * 0.22);
+    for (let i = 0; i < v.length; i++) v[i] = clamp01(0.44 + (fold[i] - 0.5) * 0.62 + w[i] * 0.16 + (wear[i] - 0.5) * 0.22 - damaskS[i] * 0.11);
+    const relief = F(n);
     paintValue(v, n, { rng, seed: seed + 4, cavity: cav, cavityAmt: 0.28, edge, edgeAmt: 0.18, flowBase: Math.PI / 2, swirl: 0.5,
-      light: [0.025, 0.11], dark: [-0.10, -0.025], fine: [-0.02, 0.02], highlight: 0.5 });
+      light: [0.025, 0.11], dark: [-0.10, -0.025], fine: [-0.02, 0.02], highlight: 0.5, relief });
+    addRelief(h, relief, n, 0.05);
     const rgb = TG.applyRamp(v, n, 'banner.crimson');
+    TG.inkAndWarm(rgb, n, cav, edge, { ink: C255(INK.plum), warm: C255('#ff8a70'), inkAmount: 0.45, warmAmount: 0.22 });
     const goldV = F(n);
     for (let i = 0; i < goldV.length; i++) goldV[i] = clamp01(0.48 + w[i] * 0.3 + edge[i] * 0.4 - cav[i] * 0.3);
     TG.compositeRamp(rgb, n, powField(orn, 0.9), goldV, 'gold', 0.92);

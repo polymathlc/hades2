@@ -11,6 +11,7 @@
     "test:features": "node scripts/test-forge-gates-controls.mjs",
     "test:textures": "node scripts/test-texture-budget.mjs",
     "test:weapons": "node scripts/test-player-weapons.mjs",
+    "test:rig": "node scripts/test-rig.mjs",
     "preview": "vite preview --port 4173 --strictPort",
     "shot": "node tools/capture.mjs",
     "desktop": "npm run build && node scripts/stage-desktop.mjs && electron desktop/main.cjs",

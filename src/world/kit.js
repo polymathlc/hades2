@@ -93,6 +93,18 @@ export class Parts {
   }
   /** A box specified by its centre — the workhorse for mouldings. */
   box(w, h, d, p, r) { return this.add(new THREE.BoxGeometry(w, h, d), { p, r }); }
+  /**
+   * A CHAMFERED box: every one of the twelve arrises cut at 45 degrees.
+   * §9.5 "light the edges of architecture, not its faces" needs an edge that
+   * is a FACET — a sharp BoxGeometry corner is one pixel wide and takes no
+   * light; a chamfer is a narrow lit plane the rim and the key both catch.
+   * Default cut is 3% of the smallest side, clamped so a thin fillet stays a
+   * fillet.
+   */
+  cbox(w, h, d, p, c, r) {
+    const cut = Math.max(0.004, Math.min(c ?? Math.min(w, h, d) * 0.06, Math.min(w, h, d) * 0.42));
+    return this.add(chamferedBox(w, h, d, cut), { p, r });
+  }
   concat(other) { for (const g of other.list) this.list.push(g); return this; }
   merge() { return mergeGeos(this.list); }
   mergeFaceted() { return faceted(mergeGeos(this.list)); }
@@ -657,6 +669,23 @@ export function chamferedPrism(outline, depth, chamfer) {
   return g;
 }
 
+/**
+ * A box with all twelve arrises chamfered: an octagonal outline (the four
+ * z-parallel edges) extruded through chamferedPrism (the eight edges around
+ * the z faces). Centred on the origin like BoxGeometry.
+ */
+export function chamferedBox(w, h, d, c) {
+  const hw = w * 0.5, hh = h * 0.5;
+  const cc = Math.min(c, hw * 0.9, hh * 0.9);
+  const outline = [
+    [-hw + cc, -hh], [hw - cc, -hh], [hw, -hh + cc], [hw, hh - cc],
+    [hw - cc, hh], [-hw + cc, hh], [-hw, hh - cc], [-hw, -hh + cc],
+  ];
+  const g = chamferedPrism(outline, d, c);
+  g.computeVertexNormals();
+  return g;
+}
+
 /** Deterministic float source adapter: accepts an RNG object or a function. */
 function F(rng) {
   if (!rng) return () => 0.5;
@@ -1002,7 +1031,7 @@ export class Kit {
     const baseH = R * 1.35;
     const baseGeo = this.geo(key + ':base', () => {
       const p = new Parts();
-      p.add(faceted(new THREE.BoxGeometry(R * 2.55, baseH * 0.34, R * 2.55)), { p: [0, baseH * 0.17, 0] });
+      p.cbox(R * 2.55, baseH * 0.34, R * 2.55, [0, baseH * 0.17, 0], R * 0.05);
       p.add(lathe([
         [R * 1.30, 0.00], [R * 1.34, 0.06], [R * 1.30, 0.13],       // lower torus
         [R * 1.08, 0.17], [R * 0.99, 0.26], [R * 1.06, 0.36],       // scotia (concave)
@@ -1015,7 +1044,7 @@ export class Kit {
     g.add(this._mesh(baseGeo, stone, 'column.base'));
 
     // ---- shaft ----------------------------------------------------------
-    const capH = order === 'corinthian' ? R * 2.35 : R * 1.15;
+    const capH = order === 'corinthian' ? R * 2.35 : order === 'ionic' ? R * 1.45 : R * 1.15;
     const shaftH = H - baseTop - capH;
     // FLUTE DEPTH IS A READABILITY DECISION. At R*0.105 (~4.9cm on a 0.47m
     // shaft) a flute is sub-pixel at the 17.5m shipping camera and the column
@@ -1075,8 +1104,8 @@ export class Kit {
       const abGeo = this.geo(key + ':abacus.c', () => {
         const p = new Parts();
         const w = R * 3.05, t = capH * 0.17;
-        p.box(w, t, w, [0, 0, 0]);
-        p.box(w * 1.06, t * 0.42, w * 1.06, [0, t * 0.42, 0]);
+        p.cbox(w, t, w, [0, 0, 0], t * 0.18);
+        p.cbox(w * 1.06, t * 0.42, w * 1.06, [0, t * 0.42, 0], t * 0.12);
         for (const s of [-1, 1]) {
           // scoop the long faces so the abacus is not a slab
           const sc = new THREE.CylinderGeometry(w * 0.46, w * 0.46, t * 1.4, 14, 1, true);
@@ -1106,6 +1135,56 @@ export class Kit {
           g.add(m);
         }
       }
+    } else if (order === 'ionic') {
+      // IONIC: an egg-and-dart echinus under a pair of VOLUTES — the scrolls
+      // hang off the two faces that look into the arena — with a palmette
+      // between them and a thin chamfered abacus. The volute is the whole
+      // read: at play scale it is the only capital that is not a cone or a
+      // block, and the two spirals are the kit's most Greek line.
+      const echGeo = this.geo(key + ':echinus', () => {
+        const p = new Parts();
+        p.add(lathe([[R * 0.86, 0], [R * 0.94, capH * 0.06], [R * 1.06, capH * 0.18], [R * 1.16, capH * 0.30], [R * 1.20, capH * 0.40]], 22));
+        return p.merge();
+      });
+      const ech = this._mesh(echGeo, stone, 'column.echinus');
+      ech.position.y = neckY;
+      g.add(ech);
+      const ed = this.geo(`ed:${(R * 0.24).toFixed(3)}`, () => eggAndDartUnit(R * 0.24));
+      const nEd = 12;
+      for (let i = 0; i < nEd; i++) {
+        const a = (i / nEd) * TAU;
+        const m = this._mesh(ed, opts.ornate ? trim : stone, 'column.eggdart', true, false);
+        m.position.set(Math.cos(a) * R * 1.12, neckY + capH * 0.24, Math.sin(a) * R * 1.12);
+        m.rotation.set(-0.35, -a + Math.PI / 2, 0);
+        g.add(m);
+      }
+      // the volute bolster: a cushion across the top of the echinus, its two
+      // ends rolled into the scrolls
+      const bolGeo = this.geo(key + ':bolster', () => {
+        const p = new Parts();
+        p.add(taperedTube([
+          new THREE.Vector3(-R * 1.42, 0, 0), new THREE.Vector3(-R * 0.6, R * 0.04, 0),
+          new THREE.Vector3(R * 0.6, R * 0.04, 0), new THREE.Vector3(R * 1.42, 0, 0),
+        ], [R * 0.36, R * 0.30, R * 0.30, R * 0.36], 14));
+        // a bound band round the bolster's middle
+        p.add(new THREE.TorusGeometry(R * 0.32, R * 0.035, 6, 18), { p: [0, R * 0.04, 0], r: [0, 0, Math.PI / 2] });
+        return p.merge();
+      });
+      const bol = this._mesh(bolGeo, stone, 'column.bolster');
+      bol.position.y = neckY + capH * 0.62;
+      g.add(bol);
+      const vol = this.geo(key + ':volute.i', () => volute(R * 0.44, 2.1, R * 0.075));
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const m = this._mesh(vol, opts.ornate ? trim : stone, 'column.volute');
+        m.position.set(sx * R * 1.40, neckY + capH * 0.60, sz * R * 0.30);
+        m.rotation.set(0, sz > 0 ? 0 : Math.PI, 0);
+        m.scale.set(sx, 1, 1);
+        g.add(m);
+      }
+      const abGeo = this.geo(key + ':abacus.i', () => faceted(chamferedBox(R * 2.9, capH * 0.16, R * 2.9, capH * 0.04)));
+      const ab = this._mesh(abGeo, opts.ornate ? trim : stone, 'column.abacus');
+      ab.position.y = neckY + capH * 0.94;
+      g.add(ab);
     } else {
       // DORIC: annulets, echinus (a real ovolo curve), abacus with a fillet.
       const capGeo = this.geo(key + ':cap.d', () => {
@@ -1119,9 +1198,9 @@ export class Kit {
           [R * 0.88, 0.17], [R * 1.02, 0.24], [R * 1.16, 0.33],
           [R * 1.27, 0.45], [R * 1.32, 0.58], [R * 1.33, 0.65],
         ].map(([r, y]) => [r, y * (capH / 0.65)]), 22));
-        // abacus
-        p.box(R * 2.78, capH * 0.26, R * 2.78, [0, capH * 0.80, 0]);
-        p.box(R * 2.95, capH * 0.10, R * 2.95, [0, capH * 0.98, 0]);
+        // abacus — chamfered, so its arris is the lit line of the capital
+        p.cbox(R * 2.78, capH * 0.26, R * 2.78, [0, capH * 0.80, 0], capH * 0.05);
+        p.cbox(R * 2.95, capH * 0.10, R * 2.95, [0, capH * 0.98, 0], capH * 0.03);
         return p.merge();
       });
       // GOLD, not bronze. `metal` resolves to bronze.verdigris, and a green
@@ -1134,7 +1213,7 @@ export class Kit {
       g.add(cap);
       if (opts.ornate) {
         const ab = this._mesh(
-          this.geo(key + ':abacus.d', () => faceted(new THREE.BoxGeometry(R * 3.05, capH * 0.13, R * 3.05))),
+          this.geo(key + ':abacus.d', () => faceted(chamferedBox(R * 3.05, capH * 0.13, R * 3.05, capH * 0.035))),
           trim, 'column.abacus');
         ab.position.y = neckY + capH * 1.04;
         g.add(ab);
@@ -1333,15 +1412,16 @@ export class Kit {
       const key = `cornice:${H.toFixed(2)}:${D.toFixed(2)}:${len.toFixed(2)}`;
       return this.geo(key, () => {
         const p = new Parts();
-        // architrave: three fasciae, each stepping proud
-        p.box(len, H * 0.16, D * 0.72, [0, H * 0.08, 0]);
-        p.box(len, H * 0.14, D * 0.80, [0, H * 0.23, D * 0.04]);
-        p.box(len, H * 0.06, D * 0.90, [0, H * 0.33, D * 0.09]);
+        // architrave: three fasciae, each stepping proud — every one chamfered
+        // so each step is a lit line and a shadow line, not a value change
+        p.cbox(len, H * 0.16, D * 0.72, [0, H * 0.08, 0], H * 0.018);
+        p.cbox(len, H * 0.14, D * 0.80, [0, H * 0.23, D * 0.04], H * 0.018);
+        p.cbox(len, H * 0.06, D * 0.90, [0, H * 0.33, D * 0.09], H * 0.012);
         // corona: the big overhang, with a drip fillet under it
-        p.box(len, H * 0.20, D * 1.35, [0, H * 0.76, D * 0.24]);
-        p.box(len, H * 0.07, D * 1.44, [0, H * 0.90, D * 0.28]);
+        p.cbox(len, H * 0.20, D * 1.35, [0, H * 0.76, D * 0.24], H * 0.024);
+        p.cbox(len, H * 0.07, D * 1.44, [0, H * 0.90, D * 0.28], H * 0.014);
         // cyma: a crowning ogee, approximated by two stepped fillets
-        p.box(len, H * 0.09, D * 1.20, [0, H * 0.98, D * 0.18]);
+        p.cbox(len, H * 0.09, D * 1.20, [0, H * 0.98, D * 0.18], H * 0.016);
         return faceted(p.merge());
       });
     };
@@ -1418,12 +1498,18 @@ export class Kit {
     const body = this.geo(key, () => {
       const p = new Parts();
       p.box(w, h, d, [0, 0, 0]);
-      // moulded frame proud of the field
+      // moulded frame proud of the field — chamfered, with an inner fillet
+      // stepped back from it so the frame reads as two mouldings, not a slab
       const fw = w * 0.10;
-      p.box(w, fw * 0.9, d * 0.42, [0, h * 0.5 - fw * 0.45, d * 0.62]);
-      p.box(w, fw * 0.9, d * 0.42, [0, -h * 0.5 + fw * 0.45, d * 0.62]);
-      p.box(fw * 0.9, h, d * 0.42, [-w * 0.5 + fw * 0.45, 0, d * 0.62]);
-      p.box(fw * 0.9, h, d * 0.42, [w * 0.5 - fw * 0.45, 0, d * 0.62]);
+      p.cbox(w, fw * 0.9, d * 0.42, [0, h * 0.5 - fw * 0.45, d * 0.62], fw * 0.16);
+      p.cbox(w, fw * 0.9, d * 0.42, [0, -h * 0.5 + fw * 0.45, d * 0.62], fw * 0.16);
+      p.cbox(fw * 0.9, h, d * 0.42, [-w * 0.5 + fw * 0.45, 0, d * 0.62], fw * 0.16);
+      p.cbox(fw * 0.9, h, d * 0.42, [w * 0.5 - fw * 0.45, 0, d * 0.62], fw * 0.16);
+      const iw = w - fw * 1.8, ih = h - fw * 1.8;
+      p.cbox(iw, fw * 0.28, d * 0.30, [0, ih * 0.5 - fw * 0.14, d * 0.56], fw * 0.06);
+      p.cbox(iw, fw * 0.28, d * 0.30, [0, -ih * 0.5 + fw * 0.14, d * 0.56], fw * 0.06);
+      p.cbox(fw * 0.28, ih, d * 0.30, [-iw * 0.5 + fw * 0.14, 0, d * 0.56], fw * 0.06);
+      p.cbox(fw * 0.28, ih, d * 0.30, [iw * 0.5 - fw * 0.14, 0, d * 0.56], fw * 0.06);
       return faceted(p.merge());
     });
     g.add(this._mesh(body, stone, 'panel.body'));
@@ -1441,6 +1527,13 @@ export class Kit {
     return g;
   }
 
+  /**
+   * THE RELIEF PLAQUE. A rosette — boss, two rings of petals, a beaded rim —
+   * inside a LAUREL WREATH: two arcs of overlapping leaves, tied at the foot
+   * with a ribbon. The wreath is what turns "a flower on a wall" into a
+   * carved plaque; it is one merged mesh so the panel costs no extra call.
+   * Authored in the x-z plane with +y proud, like the rosette always was.
+   */
   _rosetteGeo(r) {
     const p = new Parts();
     p.add(lathe([[r * 0.30, 0], [r * 0.34, r * 0.18], [r * 0.20, r * 0.34], [r * 0.06, r * 0.40]], 12));
@@ -1449,9 +1542,47 @@ export class Kit {
       const pet = new THREE.SphereGeometry(r * 0.34, 8, 6);
       pet.scale(0.55, 0.32, 1.0);
       p.add(pet, { p: [Math.cos(a) * r * 0.56, r * 0.10, Math.sin(a) * r * 0.56], r: [0, -a + Math.PI / 2, 0.25] });
+      // a second, shorter ring of petals between the first — a real rosette
+      // has depth in its petal rows, and the offset breaks the eight-spoke read
+      const a2 = a + Math.PI / 8;
+      const pet2 = new THREE.SphereGeometry(r * 0.22, 7, 5);
+      pet2.scale(0.55, 0.36, 1.0);
+      p.add(pet2, { p: [Math.cos(a2) * r * 0.36, r * 0.16, Math.sin(a2) * r * 0.36], r: [0, -a2 + Math.PI / 2, 0.35] });
     }
     p.add(new THREE.TorusGeometry(r * 0.92, r * 0.10, 7, 20), { p: [0, r * 0.04, 0], r: [Math.PI / 2, 0, 0] });
-    return p.merge();
+    // bead course on the rim
+    for (let i = 0; i < 20; i++) {
+      const a = (i / 20) * TAU;
+      p.add(new THREE.SphereGeometry(r * 0.055, 6, 5), { p: [Math.cos(a) * r * 0.92, r * 0.12, Math.sin(a) * r * 0.92] });
+    }
+    // THE WREATH: two arcs of leaves, each leaf a lens, overlapping like
+    // scales and tilting outward as they climb; a ribbon knot at the foot
+    const RW = r * 1.42;
+    for (const side of [-1, 1]) {
+      const NL = 11;
+      for (let i = 0; i < NL; i++) {
+        const t = i / (NL - 1);
+        const a = Math.PI * 0.5 + side * (0.18 + 2.55 * t);     // from the knot at the foot up and over
+        const leaf = new THREE.SphereGeometry(r * 0.26, 7, 5);
+        leaf.scale(0.42, 0.28, 1.0);
+        p.add(leaf, {
+          p: [Math.cos(a) * RW, r * 0.10, Math.sin(a) * RW],
+          r: [0, -a + Math.PI / 2 - side * 0.55, 0.30],
+          s: [1, 1, 1 - 0.25 * t],
+        });
+      }
+    }
+    // the ribbon: two short tails below the knot
+    for (const side of [-1, 1]) {
+      p.add(taperedTube([
+        new THREE.Vector3(side * r * 0.10, r * 0.08, RW * 0.98),
+        new THREE.Vector3(side * r * 0.30, r * 0.06, RW * 1.16),
+        new THREE.Vector3(side * r * 0.22, r * 0.05, RW * 1.34),
+      ], [r * 0.07, r * 0.06, r * 0.03], 6));
+    }
+    p.add(new THREE.SphereGeometry(r * 0.11, 8, 6), { p: [0, r * 0.10, RW * 0.98] });
+    const g = p.merge();
+    return reliefShade(g, { axis: 'y', seat: 0.55, seatEnd: 0.5, side: 0.70, up: 0.18, down: 0.30 });
   }
 
   // =========================================================================
@@ -1506,10 +1637,23 @@ export class Kit {
       const pw = opts.plinthW ?? 1.6;
       const pg = this.geo(`plinth:${pw.toFixed(2)}:${ph.toFixed(2)}`, () => {
         const p = new Parts();
-        p.box(pw, ph * 0.72, pw, [0, ph * 0.36, 0]);
-        p.box(pw * 1.16, ph * 0.13, pw * 1.16, [0, ph * 0.055, 0]);
-        p.box(pw * 1.12, ph * 0.16, pw * 1.12, [0, ph * 0.80, 0]);
-        p.box(pw * 1.20, ph * 0.07, pw * 1.20, [0, ph * 0.92, 0]);
+        // a dado between a chamfered footing and a stepped cap; every arris
+        // cut so the cap's edges carry the light the plinth's faces are denied
+        p.cbox(pw, ph * 0.72, pw, [0, ph * 0.36, 0], ph * 0.02);
+        p.cbox(pw * 1.16, ph * 0.13, pw * 1.16, [0, ph * 0.055, 0], ph * 0.03);
+        p.cbox(pw * 1.12, ph * 0.16, pw * 1.12, [0, ph * 0.80, 0], ph * 0.03);
+        p.cbox(pw * 1.20, ph * 0.07, pw * 1.20, [0, ph * 0.92, 0], ph * 0.02);
+        // bead course under the cap, on all four faces
+        const nb = Math.max(6, Math.round(pw / (ph * 0.09)));
+        for (let f = 0; f < 4; f++) {
+          const a = f * Math.PI / 2;
+          for (let i = 0; i < nb; i++) {
+            const u = (i + 0.5) / nb - 0.5;
+            const x = Math.cos(a) * pw * 0.565 - Math.sin(a) * u * pw * 1.0;
+            const z = Math.sin(a) * pw * 0.565 + Math.cos(a) * u * pw * 1.0;
+            p.add(new THREE.SphereGeometry(ph * 0.026, 6, 5), { p: [x, ph * 0.715, z] });
+          }
+        }
         return faceted(p.merge());
       });
       // A plinth is a BASE. At full rig gain its big flat top and its two lit
@@ -2318,11 +2462,26 @@ export class Kit {
 
     const bowlGeo = this.geo(key + ':bowl', () => {
       const p = new Parts();
-      p.add(lathe([
+      // GADROONED: 18 convex lobes swell round the belly of the bowl and die
+      // out at the rim, so the biggest metal surface on the prop carries
+      // eighteen lit ridges and eighteen ink grooves instead of one highlight
+      const bowl = lathe([
         [R * 0.28, 0.00], [R * 0.42, 0.06], [R * 0.66, 0.18], [R * 0.86, 0.34],
         [R * 0.98, 0.50], [R * 1.04, 0.62], [R * 1.00, 0.68], [R * 0.86, 0.62],
         [R * 0.80, 0.46], [R * 0.72, 0.28],
-      ].map(([r, y]) => [r, y * H * 0.55 + H * 0.80]), 22));
+      ].map(([r, y]) => [r, y * H * 0.55 + H * 0.80]), 72);
+      foldify(bowl, 18, R * 0.055, 0.9);
+      p.add(bowl);
+      // a bound fillet at the foot of the bowl where it meets the legs
+      p.add(new THREE.TorusGeometry(R * 0.40, R * 0.045, 7, 24), { p: [0, H * 0.80 + 0.05 * H * 0.55, 0], r: [Math.PI / 2, 0, 0] });
+      // RING HANDLES on lion-mask lugs, two opposed — the silhouette hook
+      for (const sgn of [-1, 1]) {
+        const lugX = sgn * R * 1.02, lugY = H * 0.80 + 0.50 * H * 0.55;
+        const lug = new THREE.SphereGeometry(R * 0.12, 8, 6);
+        lug.scale(0.7, 1.0, 1.0);
+        p.add(lug, { p: [lugX, lugY, 0] });
+        p.add(new THREE.TorusGeometry(R * 0.17, R * 0.032, 7, 20), { p: [lugX + sgn * R * 0.05, lugY - R * 0.16, 0], r: [0, Math.PI / 2, 0] });
+      }
       return p.merge();
     });
     g.add(this._mesh(bowlGeo, metal, 'brazier.bowl'));
@@ -2356,8 +2515,8 @@ export class Kit {
     if (opts.plinth) {
       const pg = this.geo(key + ':plinth', () => {
         const p = new Parts();
-        p.box(R * 2.0, 0.30, R * 2.0, [0, 0.15, 0]);
-        p.box(R * 2.3, 0.10, R * 2.3, [0, 0.05, 0]);
+        p.cbox(R * 2.0, 0.30, R * 2.0, [0, 0.15, 0], 0.03);
+        p.cbox(R * 2.3, 0.10, R * 2.3, [0, 0.05, 0], 0.02);
         return faceted(p.merge());
       });
       const pl = this._mesh(pg, stone, 'brazier.plinth');
@@ -2841,6 +3000,13 @@ export function amphoraGeo(f) {
     [0.35, 0.48], [0.32, 0.62], [0.24, 0.74], [0.15, 0.82], [0.126, 0.90],
     [0.14, 0.965], [0.185, 1.00]]) prof.push([Math.max(0.012, r * (1 + (f() - 0.5) * 0.05)), t * H]);
   const parts = [lathe(prof, 22)];
+  // the potter's rings: a torus at the lip, a fillet at the neck, a foot ring,
+  // and a raised shoulder band where the meander would be painted — so the
+  // silhouette steps at four heights instead of being one smooth gourd
+  parts.push(new THREE.TorusGeometry(0.175, 0.024, 6, 18).rotateX(Math.PI / 2).translate(0, H * 0.985, 0));
+  parts.push(new THREE.TorusGeometry(0.128, 0.014, 6, 18).rotateX(Math.PI / 2).translate(0, H * 0.88, 0));
+  parts.push(new THREE.TorusGeometry(0.34, 0.018, 6, 22).rotateX(Math.PI / 2).translate(0, H * 0.50, 0));
+  parts.push(new THREE.TorusGeometry(0.15, 0.022, 6, 18).rotateX(Math.PI / 2).translate(0, H * 0.035, 0));
   for (const sgn of [-1, 1]) {
     const h = new THREE.TorusGeometry(0.135, 0.072, 7, 14, Math.PI * 1.15);
     h.rotateY(Math.PI / 2); h.rotateZ(-Math.PI * 0.12);

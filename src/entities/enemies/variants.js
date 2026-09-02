@@ -5,9 +5,10 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { TAU } from '../../core/math.js';
-import { inDisc } from '../ai.js';
+import { TAU, lerp } from '../../core/math.js';
+import { inDisc, TELEGRAPH } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
+import * as PR from './props.js';
 
 const LANCER_PALETTE = {
   skin: '#d7d0e8', skinDeep: '#716987', hair: '#17253b', hairTip: '#4d6680',
@@ -59,41 +60,47 @@ function attachOnce(a, key, boneName, build, ctx, transform) {
 }
 
 function buildLance(ctx) {
-  const shaft = new THREE.CylinderGeometry(0.035, 0.048, 3.35, 8);
-  shaft.translate(0, 0.68, 0);
-  const butt = new THREE.ConeGeometry(0.07, 0.28, 7); butt.rotateZ(Math.PI); butt.translate(0, -1.13, 0);
-  const collar = new THREE.TorusGeometry(0.075, 0.018, 6, 16); collar.rotateX(Math.PI / 2); collar.translate(0, 2.15, 0);
-  const wood = mergeGeometries([shaft, butt, collar], false);
-  paintGeo(wood, '#234861', { y0: -1.3, y1: 2.3, aoLow: 0.52, top: '#78bbca' });
-
-  const tip = new THREE.ConeGeometry(0.14, 0.56, 7); tip.translate(0, 2.52, 0);
-  const wings = [];
-  for (const s of [-1, 1]) {
-    const w = new THREE.ConeGeometry(0.07, 0.34, 5);
-    w.rotateZ(s * 0.84); w.translate(s * 0.13, 2.24, 0); wings.push(w);
-  }
-  const head = mergeGeometries([tip, ...wings], false);
-  paintGeo(head, '#b9d9dc', { y0: 2.0, y1: 2.9, aoLow: 0.64, top: '#ffffff' });
-
+  // A DORY: a long ash shaft with a wrapped grip, a socketed LEAF head with a
+  // ground edge, two lugs under the socket, and a sauroter butt-spike.
+  const P = LANCER_PALETTE;
+  const wood = PR.merge([
+    PR.tint(PR.shaft({ y0: -1.20, y1: 2.10, r0: 0.040, r1: 0.032, radial: 8 }), '#234861', { y0: -1.3, y1: 2.3, aoLow: 0.5 }),
+    PR.tint(PR.grip({ y0: -0.25, y1: 0.25, r: 0.046 }), PR.wrapped('#1c2938', '#0d1520', 8)),
+  ]);
+  const head = PR.merge([
+    PR.tint(PR.blade({ len: 0.74, w: 0.085, th: 0.020, profile: 'leaf', base: [0, 2.08, 0], stations: 9 }), PR.edged(P.blade, P.bladeEdge)),
+    PR.tint(PR.ring({ y: 2.05, R: 0.050, th: 0.010, hh: 0.080, seg: 12 }), PR.chamfered(P.metalHot, P.metal, P.metalDeep)),
+    PR.tint(PR.ring({ y: 1.92, R: 0.042, th: 0.008, hh: 0.020, seg: 12 }), P.metalHot),
+    PR.tint(PR.blade({ len: 0.30, w: 0.034, th: 0.012, profile: 'straight', base: [0.04, 2.00, 0], dir: [0.62, 1, 0], across: [0, 0, 1], stations: 5, radial: 8 }), P.metal),
+    PR.tint(PR.blade({ len: 0.30, w: 0.034, th: 0.012, profile: 'straight', base: [-0.04, 2.00, 0], dir: [-0.62, 1, 0], across: [0, 0, 1], stations: 5, radial: 8 }), P.metal),
+    PR.tint(PR.blade({ len: 0.30, w: 0.040, th: 0.040, profile: 'straight', base: [0, -1.18, 0], dir: [0, -1, 0], stations: 5, radial: 8 }), P.metalDeep),
+  ]);
   const group = new THREE.Group();
-  group.add(mesh(wood, ctx, 'hair', 'lancer'), mesh(head, ctx, 'metal', 'lancer'));
+  group.add(PR.mesh(ctx, wood, 'hair', 'lancer'), PR.mesh(ctx, head, 'metal', 'lancer'));
   return group;
 }
 
 function buildSirenWings(ctx) {
+  // WINGS with a bone and seven FEATHERS each, not five cones: the feathers
+  // are flattened diamond-section vanes with a bow, longest at the outer
+  // primaries, so the wing reads as a fan of separate edges in silhouette.
   const group = new THREE.Group();
   for (const s of [-1, 1]) {
-    const feathers = [];
-    for (let i = 0; i < 5; i++) {
-      const f = new THREE.ConeGeometry(0.12 + i * 0.018, 0.72 + i * 0.16, 5);
-      f.rotateZ(s * (0.68 + i * 0.12));
-      f.rotateX(-0.24 + i * 0.05);
-      f.translate(s * (0.34 + i * 0.16), 0.02 - i * 0.09, -0.10 - i * 0.04);
-      feathers.push(f);
+    const parts = [];
+    parts.push(PR.blade({ len: 0.98, w: 0.048, th: 0.040, profile: 'straight', base: [s * 0.10, 0.06, -0.06], dir: [s * 1, 0.62, -0.30], across: [0, 0, 1], stations: 6, radial: 8 }));
+    for (let i = 0; i < 7; i++) {
+      const t = i / 6;
+      const rx = s * lerp(0.20, 0.92, t), ry = lerp(0.12, 0.60, t), rz = lerp(-0.08, -0.30, t);
+      const L = lerp(0.62, 1.12, Math.pow(t, 1.2));
+      const a = lerp(-1.30, -0.30, t);
+      parts.push(PR.feather({
+        from: [rx, ry, rz], to: [rx + s * Math.cos(a) * L, ry + Math.sin(a) * L, rz - 0.12 * L],
+        w: 0.080, bow: 0.10, n: 7,
+      }));
     }
-    const geo = mergeGeometries(feathers, false);
-    paintGeo(geo, iColor(s), { y0: -0.8, y1: 0.8, aoLow: 0.48, top: '#f4c7df' });
-    group.add(mesh(geo, ctx, 'cloth', 'siren'));
+    const geo = PR.tint(PR.merge(parts), (x, y, z, u, v) => (v > 0.72 ? '#f4c7df' : (v > 0.30 ? iColor(s) : '#3a0e28')),
+      { y0: -0.9, y1: 0.7, aoLow: 0.55 });
+    group.add(PR.mesh(ctx, geo, 'cloth', 'siren'));
   }
   return group;
 }
@@ -141,6 +148,10 @@ function staggerTo(a, state, token) {
   }
 }
 
+/** the lancer's charge: lane length from commit distance, and its hard cap */
+export const LANCE_CHARGE = Object.freeze({ speedMul: 2.75, maxTime: 1.0, minReach: 5.5, maxReach: 11.6, overrun: 1.6, commitMax: 10.0 });
+export function lanceReach(dist) { return Math.min(LANCE_CHARGE.maxReach, Math.max(LANCE_CHARGE.minReach, dist + LANCE_CHARGE.overrun)); }
+
 export const LANCER = {
   kind: 'lancer', label: 'Stygian Lancer',
   role: 'lane charger — a long spear line must be sidestepped, not outrun',
@@ -152,7 +163,9 @@ export const LANCER = {
   spec: {
     name: 'erebus.lancer', height: 2.10,
     build: { shoulder: 1.03, limb: 1.04, bulk: 0.98 }, palette: LANCER_PALETTE,
-    features: { pauldron: 'left', crown: 'laurel', cape: true, skirt: 4, greaves: true, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'none' },
+    // the DRAGOON: an Attic helm with a peak and a horse-tail plume, a tabard
+    features: { pauldron: 'left', crown: 'none', cape: true, skirt: 4, greaves: true, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'none', helm: 'attic', tabard: true, armlet: 'none' },
+    gait: { idle: 'idleBrace' },
     glowIntensity: 0.56,
   },
   onSpawn(a, ctx) {
@@ -174,31 +187,43 @@ export const LANCER = {
           const p = a.perc;
           a.steer.begin(a.def.speed).orbit(p.aimX, p.aimZ, 6.2, a.orbitDir, 1.0, 0.72).separation(a.mgr.list, 2.0).avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ });
-          if (a.attackCd <= 0 && p.dist > 3.0 && p.dist < 10.0 && a.wantToken('heavy', -p.dist)) return 'aim';
+          if (a.attackCd <= 0 && p.dist > 3.0 && p.dist < LANCE_CHARGE.commitMax && a.wantToken('heavy', -p.dist)) return 'aim';
         },
       },
       aim: {
         enter(a) {
           a.committed = true; a.play('attack3', { fade: 0.08, restart: true, speed: 0.65 });
           const p = a.perc; a.snapFace(p.dirX, p.dirZ); a.mem.dx = p.dirX; a.mem.dz = p.dirZ;
-          a.telegraph('lance', 0.78, { shape: 'line', radius: 8.2, inner: 0.17, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: '#71d8ff' });
+          // THE LANE IS THE CHARGE. It used to be 0.42 s of travel (~5 m) under
+          // an 8.2 m telegraph, so a lancer that committed at 7 m stopped two
+          // metres short of a hero standing still. Reach is now the distance
+          // it committed at plus an over-run, and the charge runs until it
+          // has covered it.
+          a.mem.reach = lanceReach(p.dist); a.mem.trav = 0;
+          a.telegraph('lance', 0.78, { shape: 'line', radius: a.mem.reach, inner: 0.17, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: '#71d8ff' });
         },
         update(a, dt, ctx) {
           a.steer.begin(a.def.speed * 0.08).separation(a.mgr.list, 1.4);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
-          a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 4.0); a.mem.dx = a.facing.x; a.mem.dz = a.facing.z;
+          // track the hero's LIVE line through the wind-up (slowly), leading
+          // by a little of their velocity so a stroll does not walk out of it
+          const pl = ctx.player, lx = a.perc.aimX + (pl?.velocity?.x || 0) * 0.3 - a.position.x, lz = a.perc.aimZ + (pl?.velocity?.z || 0) * 0.3 - a.position.z;
+          a.faceTowards(lx, lz, dt, 4.0); a.mem.dx = a.facing.x; a.mem.dz = a.facing.z;
+          a.mem.reach = lanceReach(a.perc.dist);
+          if (a._tellHandle) { a._tellHandle.r = a.mem.reach; a._tellHandle.mesh.scale.set(a.mem.reach, 1, a.mem.reach); }
           if (a.tell.k >= 1) return 'charge';
         },
       },
       charge: {
         enter(a, ctx) { a.endTell(true); a.mem.hit = false; ctx.audio?.sfx?.('lunge', { pos: a.position }); },
         update(a, dt, ctx) {
-          a.steer.begin(a.def.speed * 2.75).add(a.mem.dx, a.mem.dz, 1).separation(a.mgr.list, 0.5);
+          a.steer.begin(a.def.speed * LANCE_CHARGE.speedMul).add(a.mem.dx, a.mem.dz, 1).separation(a.mgr.list, 0.5);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false, accel: 110 });
-          if (!a.mem.hit && ctx.player && inDisc(a.position.x, a.position.z, ctx.player, 1.15)) {
+          a.mem.trav += (a.speedNow || 0) * dt;
+          if (!a.mem.hit && ctx.player && inDisc(a.position.x, a.position.z, ctx.player, 1.25)) {
             a.mem.hit = true; a._hitPlayer(ctx, 18, 'physical', a.mem.dx, a.mem.dz, 11);
           }
-          if (a.brain.t > 0.42) return 'recover';
+          if (a.mem.trav >= (a.mem.reach || 8) || a.brain.t > LANCE_CHARGE.maxTime) return 'recover';
         },
       },
       recover: {
@@ -225,7 +250,7 @@ export const SIREN = {
   spec: {
     name: 'erebus.siren', height: 1.92,
     build: { shoulder: 0.88, limb: 0.90, bulk: 0.82 }, palette: SIREN_PALETTE,
-    features: { pauldron: 'none', crown: 'none', cape: false, skirt: 8, greaves: false, bracers: true, harness: false, hair: 'swept', eyes: true, weapon: 'xiphos' },
+    features: { pauldron: 'none', crown: 'none', cape: false, skirt: 8, greaves: false, bracers: true, harness: false, hair: 'long', eyes: true, weapon: 'xiphos', armlet: 'both' },
     glowIntensity: 0.68,
   },
   onSpawn(a, ctx) {
@@ -271,7 +296,7 @@ export const SIREN = {
           a.position.set(a.mem.tx, 0, a.mem.tz); ctx.world?.collide?.(a.position, a.radius); a.iframes = Math.max(a.iframes, 0.18);
           const p = ctx.player?.position; if (p) a.snapFace(p.x - a.position.x, p.z - a.position.z);
           ctx.vfx?.beam?.(from, a.position.clone().setY(1.0), { color: '#ff76ba', width: 0.22, life: 0.22, opacity: 0.75 });
-          a.telegraph('talon', 0.32, { shape: 'arc', radius: 2.6, arc: 150, follow: true, color: '#ff76ba' });
+          a.telegraph('talon', TELEGRAPH.blinkStrike, { shape: 'arc', radius: 2.6, arc: 150, follow: true, color: '#ff76ba' });
         },
         update(a, dt, ctx) {
           a.steer.begin(0).separation(a.mgr.list, 1.3); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
@@ -307,7 +332,8 @@ export const RIFT_STALKER = {
   spec: {
     name: 'erebus.riftstalker', height: 2.05,
     build: { shoulder: 0.91, limb: 0.98, bulk: 0.88 }, palette: RIFT_PALETTE,
-    features: { pauldron: 'left', crown: 'none', cape: true, skirt: 10, greaves: true, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'xiphos' },
+    features: { pauldron: 'left', crown: 'none', cape: true, capeStyle: 'tattered', hood: 'cowl', skirt: 10, greaves: true, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'xiphos', armlet: 'none' },
+    gait: { idle: 'idleHunch' },
     glowIntensity: 0.82,
   },
   onSpawn(a, ctx) {
@@ -358,7 +384,7 @@ export const RIFT_STALKER = {
           a.iframes = Math.max(a.iframes, 0.16);
           const p = ctx.player?.position; if (p) a.snapFace(p.x - a.position.x, p.z - a.position.z);
           ctx.vfx?.beam?.(from, a.position.clone().setY(1.05), { color: '#74f0ff', width: 0.18, life: 0.26, opacity: 0.72 });
-          a.telegraph('rift-slash', 0.38, { shape: 'arc', radius: 2.85, arc: 165, follow: true, color: '#74f0ff' });
+          a.telegraph('rift-slash', Math.max(TELEGRAPH.blinkStrike, 0.38), { shape: 'arc', radius: 2.85, arc: 165, follow: true, color: '#74f0ff' });
         },
         update(a, dt, ctx) {
           a.steer.begin(0).separation(a.mgr.list, 1.4); a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
@@ -399,7 +425,9 @@ export const ORACLE = {
   spec: {
     name: 'erebus.oracle', height: 2.20,
     build: { shoulder: 0.94, limb: 1.02, bulk: 0.98 }, palette: ORACLE_PALETTE,
-    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 12, greaves: false, bracers: true, harness: true, hair: 'none', eyes: true, weapon: 'none' },
+    // the tallest robe in the roster under a deep hood, sleeves to the wrist
+    features: { pauldron: 'both', crown: 'none', cape: true, skirt: 12, greaves: false, bracers: false, harness: true, hair: 'none', eyes: true, weapon: 'none', hood: 'deep', robe: true, sleeves: true, armlet: 'none' },
+    gait: { idle: 'idleCaster' },
     glowIntensity: 0.72,
   },
   onSpawn(a, ctx) {

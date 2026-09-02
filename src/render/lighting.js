@@ -232,7 +232,14 @@ const RIGS = {
     // §9.5 "ornament carries the light": keyGain drives the sharp specular lobe
     // the gold filigree, the bronze and the brazier rims reflect, and it is the
     // cheapest route to a real highlight band that is NOT a lit floor.
-    env:    { zenith: '#1c1024', horizon: '#3a1c30', nadir: '#170a12', keyGain: 34.0, keySharp: 200, keyWide: 0.05, rimGain: 2.0, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 0.55 },
+    // ROUND-2 (§9.3, §9.5): brightPresent measured 0.0001-0.0007 on every shot —
+    // there was no highlight band at all. gold.filigree now bakes mirror crests
+    // (rough min 0.13) and 0.84 metal, so the tight key lobe here is what it
+    // reflects: keyGain 34 -> 44 and a broader warm wash (keyWide 0.05 -> 0.16)
+    // so ROUGH bronze and the matted gold ground still read as metal, rimGain
+    // 2.0 -> 2.6 to keep the cyan complement on the shadow side of the same
+    // metal. None of it lands on the floor's diffuse.
+    env:    { zenith: '#1c1024', horizon: '#3a1c30', nadir: '#170a12', keyGain: 44.0, keySharp: 200, keyWide: 0.16, rimGain: 2.6, rimSharp: 22, bounce: '#8c2f26', bounceGain: 0.03, intensity: 0.66 },
     // §9.5 + §9.6. Two families:
     //   WARM  tight brazier pools, radius ~8.5, sitting ON the ornament ring so
     //         the light lands on the annulus of floor the glaze paints bright

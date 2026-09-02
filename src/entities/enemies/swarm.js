@@ -20,8 +20,13 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, clamp01, lerp, damp, TAU } from '../../core/math.js';
-import { TELEGRAPH, inDisc } from '../ai.js';
+import { TELEGRAPH, inDisc, surroundSlot } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
+import { flashVariant } from '../../render/shaders/character.js';
+import * as PR from './props.js';
+
+const _slot = { x: 0, z: 0 };
+const isHound = (o) => o.kind === 'hound';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // a tiny visual driver for hand-animated procedural bodies
@@ -35,7 +40,12 @@ class PartsVisual {
   play(name) { if (name !== this.clip) { this.clip = name; this.clipT = 0; } }
   duration() { return 0.5; }
   reset() { this.t = 0; this.clip = 'idle'; this.clipT = 0; }
-  setFlash(mat) { for (let i = 0; i < this.parts.length; i++) this.parts[i].material = mat || this.base[i]; }
+  setFlash(mat) {
+    // the manager's flash material is a marker: flash through the character
+    // shader's twins (rim outline + brightened base), not a white cut-out
+    const rim = !!(mat && mat.userData && mat.userData.rimFlash);
+    for (let i = 0; i < this.parts.length; i++) this.parts[i].material = rim ? flashVariant(this.base[i]) : (mat || this.base[i]);
+  }
   update(dt, e) { this.t += dt; this.clipT += dt; this._animate(this, dt, e); }
 }
 
@@ -94,20 +104,34 @@ function houndGeo() {
     const joint = new THREE.SphereGeometry(0.145, 10, 8); joint.scale(1.0, 1.15, 1.0); joint.translate(sx * 0.25, 0.55, z0);
     const paw = new THREE.SphereGeometry(0.12, 10, 7); paw.scale(1.18, 0.58, 1.55); paw.translate(sx * 0.35, 0.065, zend + 0.035);
     legs.push(limb, joint, paw);
+    // TOES: three per paw, splayed and curling to the ground — the difference
+    // between a foot and a bean at play distance is that a foot has an edge
+    for (let ti = -1; ti <= 1; ti++) {
+      const x = sx * 0.35 + ti * 0.062, z = zend + 0.035 + 0.15;
+      legs.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+        new THREE.Vector3(x, 0.065, z - 0.03), new THREE.Vector3(x + ti * 0.012, 0.045, z + 0.05), new THREE.Vector3(x + ti * 0.02, 0.012, z + 0.10),
+      ]), 4, 0.030, 6, false));
+    }
   }
   const leg = mergeGeometries(legs, false);
   paintGeo(leg, '#1d1218', { y0: 0, y1: 0.72, aoLow: 0.56, top: '#68241f' });
 
-  // SPINES: irregular layered keratin, tapered toward the tail.
+  // SPINES: a dorsal ridge of KERATIN PLATES — flattened, bowed, diamond-
+  // section vanes that lean back harder toward the tail, alternating a few
+  // degrees left and right so the crest breaks the outline as a saw rather
+  // than as a row of identical cones. The tail ends in a bone spade.
   const spikes = [];
-  for (let i = 0; i < 8; i++) {
-    const t = i / 7;
-    const h = 0.14 + 0.22 * Math.sin(t * Math.PI);
-    const c = new THREE.ConeGeometry(0.055 + 0.015 * Math.sin(t * Math.PI), h, 7);
-    c.rotateX(-0.30 + 0.18 * t);
-    c.translate(0, 0.89 + 0.07 * Math.sin(t * Math.PI), 0.52 - 1.16 * t);
-    spikes.push(c);
+  for (let i = 0; i < 9; i++) {
+    const t = i / 8;
+    const h = 0.16 + 0.26 * Math.sin(t * Math.PI);
+    const z0 = 0.56 - 1.20 * t, y0 = 0.86 + 0.07 * Math.sin(t * Math.PI);
+    const lean = 0.55 + 0.35 * t;
+    spikes.push(PR.feather({
+      from: [0, y0, z0], to: [(i % 2 ? 0.035 : -0.035), y0 + h, z0 - h * lean],
+      w: 0.058 + 0.022 * Math.sin(t * Math.PI), bow: 0.12, n: 5,
+    }));
   }
+  spikes.push(PR.blade({ len: 0.34, w: 0.075, th: 0.014, profile: 'leaf', base: [-0.178, 0.84, -1.39], dir: [-0.47, -0.08, -0.88], across: [0, 1, 0], stations: 7, radial: 8 }));
   const ridge = mergeGeometries(spikes, false);
   paintGeo(ridge, '#292126', { y0: 0.6, y1: 1.25, aoLow: 0.66, top: '#b9aa8e' });
 
@@ -120,13 +144,22 @@ function houndGeo() {
   paintGeo(earR, '#24171d', { y0: 0.95, y1: 1.40, aoLow: 0.60, top: '#715047' });
   const nose = new THREE.SphereGeometry(0.105, 12, 8); nose.scale(1.05, 0.75, 0.80); nose.translate(0, 0.87, 1.42);
   paintGeo(nose, '#08070d', { y0: 0.7, y1: 1.0, aoLow: 0.72, top: '#332735' });
-  const collar = new THREE.CylinderGeometry(0.245, 0.235, 0.105, 14, 1, true); collar.rotateX(1.12); collar.translate(0, 0.76, 0.70);
-  paintGeo(collar, '#6e4f2b', { y0: 0.45, y1: 1.05, aoLow: 0.60, top: '#b89555' });
+  // COLLAR: a chamfered bronze band studded with eight spikes — the one
+  // ornament on the family, and the ring of glints that says "kept beast"
+  const collarParts = [PR.ring({ y: 0, R: 0.245, th: 0.022, hh: 0.078, seg: 24 })];
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + 0.2, cx = Math.cos(a), cz = Math.sin(a);
+    collarParts.push(new THREE.TubeGeometry(new THREE.CatmullRomCurve3([
+      new THREE.Vector3(cx * 0.24, 0, cz * 0.24), new THREE.Vector3(cx * 0.33, 0.02, cz * 0.33), new THREE.Vector3(cx * 0.40, 0.05, cz * 0.40),
+    ]), 4, 0.026, 6, false));
+  }
+  const collar = mergeGeometries(collarParts, false); collar.rotateX(1.12); collar.translate(0, 0.76, 0.70);
+  paintGeo(collar, '#6e4f2b', { y0: 0.45, y1: 1.05, aoLow: 0.60, top: '#d8b060' });
   const fangL = new THREE.ConeGeometry(0.034, 0.15, 7); fangL.rotateZ(Math.PI); fangL.translate(-0.075, 0.73, 1.25);
   const fangR = new THREE.ConeGeometry(0.034, 0.15, 7); fangR.rotateZ(Math.PI); fangR.translate(0.075, 0.73, 1.25);
   paintGeo(fangL, '#a99b80', { y0: 0.62, y1: 0.82, aoLow: 0.68, top: '#e1d3b4' });
   paintGeo(fangR, '#a99b80', { y0: 0.62, y1: 0.82, aoLow: 0.68, top: '#e1d3b4' });
-  const features = mergeGeometries([earL, earR, nose, collar, fangL, fangR], false);
+  const features = mergeGeometries([earL, earR, nose, collar, fangL, fangR].map((g) => (g.index ? g.toNonIndexed() : g)), false);
 
   // EYES
   const e1 = new THREE.SphereGeometry(0.042, 10, 7); e1.translate(-0.105, 0.99, 1.08);
@@ -202,12 +235,18 @@ export const HOUND = {
           const p = a.perc;
           a.mem.t += dt;
           if (a.mem.t > 1.7) { a.mem.t = 0; a.orbitDir *= -1; }
-          // hounds harry: they hold a TIGHT ring and dart in and out
-          a.steer.begin(a.def.speed * 0.8)
-            .orbit(p.aimX, p.aimZ, 4.4 + 0.7 * Math.sin(a.id * 1.7), a.orbitDir, 1.0, 1.15)
+          // hounds harry: they hold a TIGHT ring and dart in and out, and the
+          // PACK spreads itself across the hero's flanks — three hounds never
+          // arrive from one side
+          const pl = ctx.player;
+          surroundSlot(a, a.mgr.list, p.aimX, p.aimZ, pl?.facing?.x ?? -p.dirX, pl?.facing?.y ?? -p.dirZ, 4.6, _slot, isHound);
+          a.steer.begin(a.def.speed * 0.85)
+            .arrive(_slot.x, _slot.z, 1.8, 0.9)
+            .orbit(p.aimX, p.aimZ, 4.4 + 0.7 * Math.sin(a.id * 1.7), a.orbitDir, 0.7, 1.15)
             .separation(a.mgr.list, 2.2).avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ, turn: 13 });
-          if (a.attackCd <= 0 && p.dist < 7.5 && a.wantToken('melee', -p.dist + 0.5)) return 'crouch';
+          // commit only from inside the lunge's real reach (a 6.4 m lane)
+          if (a.attackCd <= 0 && p.dist < 5.8 && a.wantToken('melee', -p.dist + 0.5)) return 'crouch';
         },
       },
       // the LUNGE tell: a hard crouch and a lane drawn on the floor
@@ -217,7 +256,9 @@ export const HOUND = {
           const p = a.perc;
           a.snapFace(p.dirX, p.dirZ);
           a.mem.lungeX = p.dirX; a.mem.lungeZ = p.dirZ;
-          a.telegraph('lunge', 0.46, {
+          a.mem.reach = Math.min(6.4, Math.max(3.0, p.dist + 1.3));
+          a.mem.trav = 0;
+          a.telegraph('lunge', TELEGRAPH.dash, {
             shape: 'line', radius: 6.4, inner: 0.14, dirX: p.dirX, dirZ: p.dirZ,
             follow: true, color: '#ff5a3c',
           });
@@ -227,6 +268,7 @@ export const HOUND = {
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
           a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 7);
           a.mem.lungeX = a.facing.x; a.mem.lungeZ = a.facing.z;
+          a.mem.reach = Math.min(6.4, Math.max(3.0, a.perc.dist + 1.3));
           if (a.tell.k >= 1) return 'lunge';
         },
       },
@@ -236,13 +278,16 @@ export const HOUND = {
           const s = a.def.speed * 2.35;
           a.steer.begin(s).add(a.mem.lungeX, a.mem.lungeZ, 1).separation(a.mgr.list, 0.8);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false, accel: 90 });
+          a.mem.trav += (a.speedNow || 0) * dt;
           if (!a.mem.hit && a.brain.t > 0.04) {
-            if (inDisc(a.position.x, a.position.z, ctx.player, 1.05)) {
+            if (inDisc(a.position.x, a.position.z, ctx.player, 1.15)) {
               a.mem.hit = true;
-              a.strikeCone(ctx, { range: 1.5, arc: 160, damage: 9, knock: 6, color: '#ff8c1a', width: 0.22, shake: 0.04 });
+              a.strikeCone(ctx, { range: 1.6, arc: 170, damage: 8, knock: 6, color: '#ff8c1a', width: 0.22, shake: 0.04 });
             }
           }
-          if (a.brain.t > 0.30) return 'recover';
+          // the lunge runs the lane it drew, not a stopwatch: it ends when it
+          // has covered the distance it committed at (or hit), 0.5 s at most
+          if (a.mem.hit || a.mem.trav >= (a.mem.reach || 4.5) || a.brain.t > 0.50) return 'recover';
         },
       },
       recover: {

@@ -22,6 +22,30 @@
 //    low alpha. Effects supply the frame's highlight band without flooding it —
 //    the additive footprint of a full impact is a few hundred pixels above 0.6
 //    luma, not a bloom fog over the arena.
+//
+// THE BEATS (round 2). combat.js and weapons.js announce the feel system on
+// the bus — perfect chain, charge tiers, riposte, tip hit, backstab, elite
+// arrival, boss enrage — and until this round nothing drew them. `_bindBeats`
+// is the listener for every one of those, each a bold flat additive shape:
+//   boss.enraged        red-gold triple shockwave + a persistent rim AURA that
+//                       pulses under the boss until it dies
+//   weapon.perfectChain a crisp gold ring at the blade's reach
+//   weapon.charge.tier  a tick ring at the hero's feet, one radius per tier
+//   player.riposte      a blue-white arc over the victim
+//   weapon.tipHit       a spark spike straight up out of the tip
+//   enemy.elite         an affix-coloured ring + a slow aura for six seconds
+//   damage.backstab     a dark-red shard burst behind the victim
+//   weapon.loose        a per-arm TRACER (bow, rail, flames, skull, spear...)
+//
+// THE ARMS. slash()/beam()/shockwave() take `o.weapon` and consult WEAPON_FX:
+// blade = crescent, axe/coat = wide heavy crescent, spear = a long thin thrust
+// streak, shield = a flat bash ring, fists = a short jab + chevrons, blades =
+// twin thin ribbons, staff = crescent with runes, bow/rail/flames/skull = a
+// charge glow and a tracer. A bow frame no longer matches a spear frame.
+//
+// RING CAP. Ground rings are the one shape that stacks unreadably (six of them
+// filled the round-1 combat frame). shockwave() and the auras refuse to add a
+// ring past RING_CAP live rings; impacts keep theirs (§5: all four, always).
 // ---------------------------------------------------------------------------
 import * as THREE from 'three';
 import { GODS, GOLD, TARTARUS, INK, BIOMES } from '../materials/palette.js';
@@ -37,6 +61,38 @@ const S = (t, c) => ({ t, c });
 const clamp01 = (v) => v < 0 ? 0 : v > 1 ? 1 : v;
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
+const _d = { x: 0, z: 0 };
+
+/** live ground rings beyond this are refused (readability, §5 silhouette) */
+export const RING_CAP = 7;
+
+/** elite affix -> ring colour (matches the affix's answer, not the family) */
+export const AFFIX_COLOR = Object.freeze({
+  armoured: '#c9b8ff',   // lavender: commit to the heavy
+  swift: '#77e5ff',      // ice: dash sooner
+  volatile: '#ff8c1a',   // ember: kill it away from the pack
+  warded: '#ffe14d',     // gold: cannot be stun-locked
+});
+
+/**
+ * Per-arm shape language. `kind` picks the construction in slash()/beam();
+ * the multipliers retune the ribbon; `tracer` is what weapon.loose draws.
+ */
+export const WEAPON_FX = Object.freeze({
+  blade:  { kind: 'crescent' },
+  axe:    { kind: 'heavy', widthMul: 1.55, bank: 0.98, riseMul: 1.4, lifeMul: 1.3, embers: 5 },
+  coat:   { kind: 'heavy', widthMul: 1.2, bank: 0.8, riseMul: 1.1, lifeMul: 1.15, wisps: 4 },
+  spear:  { kind: 'thrust', widthMul: 0.55, lifeMul: 0.8, tip: true, tracer: { width: 0.16, life: 0.2, len: 9, chev: 4 } },
+  staff:  { kind: 'crescent', widthMul: 0.85, runes: 2, thrustRune: true, tracer: { width: 0.2, life: 0.24, len: 9, runes: 1 } },
+  shield: { kind: 'bash', ring: 1.15 },
+  fists:  { kind: 'jab', widthMul: 0.8, radiusMul: 0.72, lifeMul: 0.7, chev: 5 },
+  blades: { kind: 'twin', widthMul: 0.55, lifeMul: 0.85 },
+  bow:    { kind: 'crescent', tracer: { width: 0.10, life: 0.16, len: 12, core: '#fffdf0', star: 0.5 }, charge: 'draw' },
+  rail:   { kind: 'crescent', tracer: { width: 0.14, life: 0.12, len: 17, core: '#eaf6ff', muzzle: true, casing: 2 }, charge: 'draw' },
+  flames: { kind: 'crescent', tracer: { width: 0.26, life: 0.24, len: 8, embers: 8 }, charge: 'glow' },
+  skull:  { kind: 'crescent', tracer: { width: 0.30, life: 0.30, len: 9, wisps: 6 }, charge: 'glow' },
+});
 
 // ── damage-type identity ───────────────────────────────────────────────────
 // body = the saturated mid, glow = the wide halo, core = the hot centre.
@@ -58,6 +114,7 @@ export class VFX {
     this._budget = 1;
     this._tierBudget = 1;
     this._doom = new Map();
+    this._auras = [];        // {entity, color, core, radius, every, next, t, life, embers}
   }
 
   // ───────────────────────────────────────────────────────────────── init ──
@@ -103,6 +160,7 @@ export class VFX {
 
     ctx.events.on('biome.changed', ({ name }) => this.setBiome(name));
     ctx.events.on('capture.state', ({ name }) => this._captureState(name, ctx));
+    this._bindBeats(ctx);
     // Enemy.onDied is the sole death-effect authority because it knows the
     // enemy's authored colour, direction and scale. Listening to entity.died
     // here as well used to emit a complete second death burst for every kill.
@@ -386,8 +444,8 @@ export class VFX {
     // 3 — RADIAL SPARKS, thrown back along the hit normal
     const n1 = Math.round(9 + 9 * s);
     P.emit('spark', n1, { x, y, z, dx: ux, dy: 0.42, dz: uz, spread: 1.02, speed: 1.0 * (0.75 + 0.3 * s), color: C.body });
-    P.emit('sparkFine', Math.round(7 + 8 * s), { x, y, z, dx: ux, dy: 0.55, dz: uz, spread: 1.35, speed: 0.9, color: C.core });
-    P.emit('chev', 3, { x, y, z, dx: ux, dy: 0.18, dz: uz, spread: 0.30, speed: 1.0, color: C.body });
+    P.emit('sparkFine', Math.round(5 + 6 * s), { x, y, z, dx: ux, dy: 0.55, dz: uz, spread: 1.35, speed: 0.9, color: C.core });
+    P.emit('chev', 2, { x, y, z, dx: ux, dy: 0.18, dz: uz, spread: 0.30, speed: 1.0, color: C.body });
     P.emit('mote', 1, { x, y, z, size: 0.70 * s, color: C.glow });
     if (s > 0.9) P.emit('shard', 4, { x, y, z, dx: ux, dy: 0.6, dz: uz, spread: 0.9, speed: 0.85, color: C.body });
     P.emit('smoke', 2, { x, y: y - 0.15, z, dx: ux, dy: 0.5, dz: uz, spread: 0.8, speed: 0.5, size: 0.8 * s });
@@ -408,14 +466,21 @@ export class VFX {
     if (!this.enabled || !origin || !dir) return;
     const color = o.color || GOLD.highlight;
     const glow = o.glow || this.biome.key;
-    const arc = o.arc ?? 106;
-    const R = o.radius ?? 2.05;
+    const FX = (o.weapon && WEAPON_FX[o.weapon]) || null;
+    const kind = FX ? FX.kind : 'crescent';
+    const arc = kind === 'bash' ? Math.min(o.arc ?? 106, 84) : kind === 'jab' ? Math.min(o.arc ?? 106, 70) : (o.arc ?? 106);
+    const R = (o.radius ?? 2.05) * (FX?.radiusMul ?? 1) * (kind === 'bash' ? 0.85 : 1);
     const spin = o.spin ?? (this.rng.bool() ? 1 : -1);
+    const width = (o.width ?? 0.30) * (FX?.widthMul ?? 1) * (kind === 'bash' ? 1.5 : 1);
+    const life = (o.life ?? 0.30) * (FX?.lifeMul ?? 1) * (kind === 'bash' ? 0.75 : 1);
+    const bank = o.bank ?? (FX?.bank ?? 1.24);
+    const rise = o.rise ?? R * 0.34 * (FX?.riseMul ?? 1);
     this.slashes.spawn(origin, dir, {
-      arc, radius: R, width: o.width ?? 0.30, color, glow,
-      core: o.core || '#fffdf0', life: o.life ?? 0.30, y: origin.y ?? 1.05,
-      bank: o.bank ?? 1.24, rise: o.rise ?? R * 0.34, spin, opacity: o.opacity ?? 1,
+      arc, radius: R, width, color, glow,
+      core: o.core || '#fffdf0', life, y: origin.y ?? 1.05,
+      bank, rise, spin, opacity: o.opacity ?? 1,
     });
+    if (FX) this._armSlash(FX, kind, origin, dir, { arc, R, width, life, color, glow, spin });
 
     // sparks shed off the blade's leading edge, laid down the swept path with
     // sub-frame interpolation so they streak instead of clumping at one point
@@ -527,10 +592,45 @@ export class VFX {
     return this;
   }
 
+  /**
+   * The per-arm half of a swing: what makes the axe frame heavy, the shield
+   * frame a bash and the fists a flurry, on top of (or instead of) the ribbon.
+   */
+  _armSlash(FX, kind, origin, dir, q) {
+    const P = this.particles;
+    const fx = dir.x || 0, fz = dir.z ?? dir.y ?? 0;
+    const fl = Math.hypot(fx, fz) || 1, ux = fx / fl, uz = fz / fl;
+    const y = origin.y ?? 1.05;
+    if (kind === 'heavy') {
+      // a second, tighter ribbon inside the first: the double edge of a
+      // labrys reads as WEIGHT, and the embers it sheds say the same
+      this.slashes.spawn(origin, dir, { arc: q.arc * 0.86, radius: q.R * 0.70, width: q.width * 0.55, color: q.color, glow: q.glow, core: '#fffdf0', life: q.life * 0.9, y: y - 0.12, bank: 0.7, rise: q.R * 0.2, spin: q.spin, opacity: 0.75 });
+      if (FX.embers) P.emit('ember', FX.embers, { x: origin.x + ux * q.R * 0.7, y: y + 0.2, z: origin.z + uz * q.R * 0.7, dx: ux, dy: 0.8, dz: uz, spread: 0.9, speed: 0.8, color: q.color });
+      if (FX.wisps) P.emit('wisp', FX.wisps, { x: origin.x + ux * q.R * 0.6, y, z: origin.z + uz * q.R * 0.6, dx: ux, dy: 0.6, dz: uz, spread: 0.8, speed: 0.6, color: q.color });
+    } else if (kind === 'bash') {
+      // THE FLAT BASH RING: a disc of force at the shield's face, plus a
+      // fan of chevrons thrown forward. No crescent tail — a shield does
+      // not cut.
+      const bx = origin.x + ux * q.R * 0.8, bz = origin.z + uz * q.R * 0.8;
+      this.rings.spawn(bx, y - 0.05, bz, { radius: (FX.ring ?? 1.1), life: 0.22, color: q.color, core: '#ffffff', thick: 0.62, ease: 3.0, opacity: 0.95, phase: (Math.atan2(uz, ux) / 6.283185 + 1) % 1 });
+      P.emit('chev', 6, { x: bx, y, z: bz, dx: ux, dy: 0.1, dz: uz, spread: 0.55, speed: 1.1, color: q.color });
+      P.emit('star', 1, { x: bx, y, z: bz, size: 0.6, color: '#fffdf0' });
+    } else if (kind === 'jab') {
+      P.emit('chev', FX.chev ?? 5, { x: origin.x + ux * q.R * 0.75, y, z: origin.z + uz * q.R * 0.75, dx: ux, dy: 0.05, dz: uz, spread: 0.3, speed: 1.3, color: q.color });
+      P.emit('star', 1, { x: origin.x + ux * q.R * 0.95, y, z: origin.z + uz * q.R * 0.95, size: 0.42, color: '#fffdf0', lifeMul: 0.7 });
+    } else if (kind === 'twin') {
+      // the sister blade: a second thin ribbon, mirrored, a hair lower
+      this.slashes.spawn(origin, dir, { arc: q.arc * 0.9, radius: q.R * 0.84, width: q.width * 0.8, color: q.color, glow: q.glow, core: '#fffdf0', life: q.life, y: y - 0.22, bank: 1.1, rise: -q.R * 0.25, spin: -q.spin, opacity: 0.9 });
+    }
+    if (FX.runes) P.emit('rune', FX.runes, { x: origin.x + ux * q.R * 0.5, y: y + 0.3, z: origin.z + uz * q.R * 0.5, size: 0.7, color: q.color });
+  }
+
   /** beam(a, b, {color, width, life}) — core + glow + scrolling energy + caps */
   beam(a, b, o = {}) {
     if (!this.enabled || !a || !b) return;
     const color = o.color || GODS.hecate;
+    const FX = (o.weapon && WEAPON_FX[o.weapon]) || null;
+    if (o.thrust && FX) return this._thrust(FX, a, b, o, color);
     const life = o.life ?? 0.45;
     this.beams.spawn(a, b, { color, core: o.core || '#ffffff', width: o.width ?? 0.22, life, opacity: o.opacity ?? 1 });
     const P = this.particles;
@@ -558,10 +658,11 @@ export class VFX {
     const life = o.life ?? 0.45;
     const density = Math.max(0, o.density ?? 1);
     const q = this._budget * density;
-    this.rings.spawn(pos.x, (pos.y ?? 0) + 0.04, pos.z, {
+    const ringsOk = this._ringOk();
+    if (ringsOk) this.rings.spawn(pos.x, (pos.y ?? 0) + 0.04, pos.z, {
       radius: R, life, color, core: '#fff6e0', thick: 0.40, ease: 2.7, opacity: o.opacity ?? 0.85,
     });
-    if (R > 2.4 && q >= 0.58) this.rings.spawn(pos.x, (pos.y ?? 0) + 0.05, pos.z, {
+    if (ringsOk && R > 2.4 && q >= 0.58 && this._ringOk(RING_CAP - 1)) this.rings.spawn(pos.x, (pos.y ?? 0) + 0.05, pos.z, {
       radius: R * 0.55, life: life * 0.72, color: o.core || '#fff2cf', thick: 0.22, ease: 3.1, opacity: 0.35,
       phase: o.phase ?? 0,
     });
@@ -571,12 +672,215 @@ export class VFX {
     return this;
   }
 
+  /** true while the floor can take another ring without turning into ripples */
+  _ringOk(cap = RING_CAP) { return !this.rings.liveCount || this.rings.liveCount() < cap; }
+
+  /**
+   * THE THRUST STREAK — the spear's (and the staff's, and the shield jab's)
+   * line: a long, thin, fast beam with a hot tip, chevrons racing down it and
+   * nothing swept. Reads as "the hitbox is a line" at 1/8 resolution.
+   */
+  _thrust(FX, a, b, o, color) {
+    const P = this.particles;
+    const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+    const L = Math.hypot(dx, dy, dz) || 1;
+    const ux = dx / L, uy = dy / L, uz = dz / L;
+    if (FX.kind === 'bash' || FX.kind === 'jab') {
+      // a shield jab / a gauntlet: short, blunt — the bash ring at the tip
+      this.beams.spawn(a, b, { color, core: o.core || '#ffffff', width: (o.width ?? 0.3) * 0.9, life: 0.14, opacity: 0.9 });
+      this.rings.spawn(b.x, b.y - 0.05, b.z, { radius: (FX.ring ?? 0.9) * 0.8, life: 0.2, color, core: '#ffffff', thick: 0.6, ease: 3.0, opacity: 0.9 });
+      P.emit('chev', 4, { x: b.x, y: b.y, z: b.z, dx: ux, dy: 0.1, dz: uz, spread: 0.5, speed: 1.1, color });
+      return this;
+    }
+    const w = (o.width ?? 0.30) * (FX.widthMul ?? 0.55);
+    this.beams.spawn(a, b, { color, core: o.core || '#fffdf0', width: w, life: (o.life ?? 0.2) * (FX.lifeMul ?? 0.8), opacity: o.opacity ?? 1 });
+    // chevrons race down the shaft, laid along it with sub-frame interpolation
+    P.emit('chev', 5, { x: b.x - ux * 0.6, y: b.y - uy * 0.6, z: b.z - uz * 0.6, px: a.x, py: a.y, pz: a.z, dx: ux, dy: uy, dz: uz, spread: 0.12, speed: 1.4, color, dt: 0.03 });
+    // the tip: a hot four-point star and a few fine sparks thrown forward
+    P.emit('star', 1, { x: b.x, y: b.y, z: b.z, size: 0.55, color: '#fffdf0', lifeMul: 0.8 });
+    P.emit('sparkFine', 6, { x: b.x, y: b.y, z: b.z, dx: ux, dy: 0.25, dz: uz, spread: 0.45, speed: 1.1, color });
+    if (FX.thrustRune) P.emit('rune', 1, { x: b.x, y: b.y + 0.1, z: b.z, size: 0.6, color });
+    return this;
+  }
+
+  // ═══════════════════════════════════════════════════════════ THE BEATS ══
+  _bindBeats(ctx) {
+    const on = (n, fn) => ctx.events.on(n, (e) => { if (this.enabled && e) fn(e); });
+    on('boss.enraged', (e) => this.enrage(e.entity, e.pos || e.entity?.position));
+    on('weapon.perfectChain', (e) => this.perfectChain(e.actor, e));
+    on('weapon.charge.tier', (e) => this.chargeTick(e.actor, e.tier || 1, e.of || 3, e));
+    on('weapon.charge.full', (e) => this.chargeTick(e.actor, (e.of || 3) + 1, e.of || 3, { ...e, full: true }));
+    on('player.riposte', (e) => this.riposte(e.pos || e.target?.position, e.target));
+    on('weapon.riposte', (e) => this.riposteArm(e.actor, e.color));
+    on('weapon.tipHit', (e) => this.tipHit(e.pos || e.target?.position, e.target));
+    on('enemy.elite', (e) => this.elite(e.entity, e.affix, e.pos || e.entity?.position));
+    on('damage.backstab', (e) => this.backstab(e.target, e.source));
+    on('weapon.loose', (e) => this.tracer(e.actor, e));
+    on('enemy.blink', (e) => { if (e.pos) this.burst(_v.set(e.pos.x, 0.8, e.pos.z), { count: 10, color: e.entity?.def?.identity, speed: 5, spread: 1.1, kind: 'wisp' }); });
+  }
+
+  /**
+   * boss.enraged: a red-gold shockwave in three widening rings, a column of
+   * embers, a screen flash — and a persistent rim aura under the boss for the
+   * rest of the fight. The rule change is visible from across the room.
+   */
+  enrage(entity, pos) {
+    if (!pos) return;
+    const body = '#ff5a3c', gold = GOLD.highlight;
+    const x = pos.x, z = pos.z;
+    for (let i = 0; i < 3; i++) {
+      this._at(i * 0.09, () => {
+        if (this._ringOk(RING_CAP + 2)) this.rings.spawn(x, 0.05 + i * 0.02, z, { radius: 3.2 + i * 2.4, life: 0.55 + i * 0.15, color: i === 1 ? gold : body, core: '#fff0c0', thick: 0.42, ease: 2.6, opacity: 0.9 });
+      });
+    }
+    const P = this.particles;
+    P.emit('flash', 1, { x, y: 1.6, z, size: 1.1, color: '#fff0c0' });
+    P.emit('star', 2, { x, y: 1.6, z, size: 1.3, color: body });
+    P.emit('ember', Math.round(30 * this._budget), { x, y: 0.5, z, dy: 1, spread: 0.9, speed: 1.3, color: gold });
+    P.emit('spark', Math.round(18 * this._budget), { x, y: 1.2, z, dy: 0.7, spread: 1.4, speed: 1.2, color: body });
+    this.screen?.flash?.(body, 0.42, 0.32);
+    this.screen?.pulse?.(1.2, 0.7, 0.3);
+    this.aura(entity, { color: body, core: gold, radius: Math.max(1.6, (entity?.radius || 1) * 2.1), every: 0.42, life: 1e9, embers: 2, opacity: 0.6 });
+  }
+
+  /**
+   * A pulsing ring that follows an entity: the boss's enrage rim, the elite's
+   * affix mark. One record per entity; re-arming refreshes it. Zero per-frame
+   * allocation — the ring is re-spawned from the pool on a period.
+   */
+  aura(entity, o = {}) {
+    if (!entity) return null;
+    let a = null;
+    for (let i = 0; i < this._auras.length; i++) if (this._auras[i].entity === entity) { a = this._auras[i]; break; }
+    if (!a) { a = { entity, t: 0, next: 0 }; this._auras.push(a); }
+    a.color = o.color || GOLD.highlight; a.core = o.core || '#ffffff';
+    a.radius = o.radius ?? 1.4; a.every = o.every ?? 0.5; a.life = o.life ?? 5;
+    a.embers = o.embers ?? 0; a.opacity = o.opacity ?? 0.55; a.t = 0; a.next = 0;
+    return a;
+  }
+  _updateAuras(dt) {
+    const A = this._auras;
+    for (let i = A.length - 1; i >= 0; i--) {
+      const a = A[i], e = a.entity;
+      a.t += dt;
+      if (!e || e.dead || e.alive === false || a.t > a.life || !e.position) { A.splice(i, 1); continue; }
+      if (a.t < a.next) continue;
+      a.next = a.t + a.every;
+      const x = e.position.x, z = e.position.z;
+      if (this._ringOk(RING_CAP + 1)) this.rings.spawn(x, 0.045, z, { radius: a.radius, r0: a.radius * 0.55, life: a.every * 1.5, color: a.color, core: a.core, thick: 0.30, ease: 2.0, opacity: a.opacity });
+      if (a.embers) this.particles.emit('ember', a.embers, { x, y: 0.3, z, dy: 1, spread: 0.6, speed: 0.6, color: a.core });
+    }
+  }
+
+  /** weapon.perfectChain: a crisp gold ring at the blade's reach — the metronome ticked */
+  perfectChain(actor, e = {}) {
+    if (!actor || !actor.position) return;
+    const fx = actor.facing ? actor.facing.x : 0, fz = actor.facing ? (actor.facing.z ?? actor.facing.y ?? 1) : 1;
+    const reach = Math.min(3.2, Math.max(1.2, (e.reach || 2.2) * 0.6));
+    const x = actor.position.x + fx * reach, z = actor.position.z + fz * reach, y = 1.0;
+    const streak = Math.min(4, e.streak || 1);
+    this.rings.spawn(x, y, z, { radius: 0.72 + 0.12 * streak, r0: 0.25, life: 0.22, color: GOLD.highlight, core: '#ffffff', thick: 0.16, ease: 3.2, opacity: 0.95 });
+    this.particles.emit('star', 1, { x, y, z, size: 0.48, color: '#fffdf0', lifeMul: 0.75 });
+    this.particles.emit('diamond' in SHAPE ? 'sparkFine' : 'sparkFine', 4 + streak, { x, y, z, dy: 0.4, spread: 1.3, speed: 0.7, color: GOLD.highlight });
+  }
+
+  /** weapon.charge.tier: a tick ring at the hero's feet, one radius per tier; full = a flare */
+  chargeTick(actor, tier, of, e = {}) {
+    if (!actor || !actor.position) return;
+    const x = actor.position.x, z = actor.position.z;
+    const color = e.color || GOLD.highlight, glow = e.glow || color;
+    const full = !!e.full;
+    const r = 0.85 + 0.28 * Math.min(tier, of + 1);
+    this.rings.spawn(x, 0.04, z, { radius: r, r0: r * 0.7, life: full ? 0.34 : 0.22, color: full ? '#ffffff' : color, core: '#ffffff', thick: full ? 0.26 : 0.14, ease: 3.0, opacity: full ? 1 : 0.8 });
+    // the charge glow at the hands (a drawn bow, a gathering flame)
+    const FX = e.weapon && WEAPON_FX[e.weapon];
+    const hx = x + (actor.facing?.x || 0) * 0.5, hz = z + (actor.facing?.z ?? actor.facing?.y ?? 0) * 0.5;
+    this.particles.emit('mote', 1, { x: hx, y: 1.15, z: hz, size: 0.7 + 0.25 * tier, color: glow });
+    if (full) { this.particles.emit('star', 1, { x: hx, y: 1.15, z: hz, size: 0.9, color: '#ffffff' }); this.particles.emit('sparkFine', 8, { x: hx, y: 1.15, z: hz, dy: 0.5, spread: 1.4, speed: 0.8, color }); }
+    else if (FX && FX.charge === 'glow') this.particles.emit('ember', 2, { x: hx, y: 1.0, z: hz, dy: 1, spread: 0.4, speed: 0.4, color });
+  }
+
+  /** player.riposte: the read was right — a blue-white arc over the victim */
+  riposte(pos, target) {
+    if (!pos) return;
+    const x = pos.x, z = pos.z, y = (target?.height || 1.8) * 0.6;
+    _v3.set(1, 0, 0);
+    this.slashes.spawn({ x, y, z }, _v3, { arc: 150, radius: 1.5, width: 0.42, color: '#bfe9ff', glow: '#5fd0ff', core: '#ffffff', life: 0.28, y, bank: 0.35, rise: 0.3, spin: 1, opacity: 1 });
+    this.particles.emit('chev', 6, { x, y, z, dy: 0.8, spread: 1.1, speed: 1.1, color: '#bfe9ff' });
+    this.particles.emit('star', 1, { x, y: y + 0.4, z, size: 0.7, color: '#ffffff' });
+    this.screen?.pulse?.(0.6, 0.35, 0.16);
+  }
+  /** weapon.riposte: the arm that carries the bonus flashes cold in the hand */
+  riposteArm(actor, color) {
+    if (!actor || !actor.position) return;
+    const x = actor.position.x, z = actor.position.z;
+    this.particles.emit('star', 1, { x, y: 1.25, z, size: 0.55, color: '#bfe9ff', lifeMul: 0.8 });
+    this.particles.emit('mote', 1, { x, y: 1.1, z, size: 1.0, color: '#5fd0ff' });
+  }
+
+  /** weapon.tipHit: a spark spike straight up out of the point */
+  tipHit(pos, target) {
+    if (!pos) return;
+    const x = pos.x, z = pos.z, y = (target?.height || 1.8) * 0.62;
+    this.particles.emit('spark', 7, { x, y, z, dy: 1.4, spread: 0.22, speed: 1.35, color: '#fffdf0' });
+    this.particles.emit('star', 1, { x, y: y + 0.2, z, size: 0.62, color: '#ffffff', lifeMul: 0.7 });
+    this.particles.emit('chev', 3, { x, y, z, dy: 1.0, spread: 0.3, speed: 1.2, color: GOLD.highlight });
+  }
+
+  /** enemy.elite: an affix-coloured ring, and a slow aura for six seconds */
+  elite(entity, affix, pos) {
+    if (!pos) return;
+    const color = AFFIX_COLOR[affix] || GOLD.highlight;
+    this.rings.spawn(pos.x, 0.05, pos.z, { radius: 2.6, life: 0.6, color, core: '#ffffff', thick: 0.32, ease: 2.6, opacity: 0.95 });
+    this.particles.emit('rune', 3, { x: pos.x, y: 0.4, z: pos.z, size: 0.9, color });
+    this.particles.emit('sparkFine', 12, { x: pos.x, y: 0.3, z: pos.z, dy: 0.5, spread: 1.4, speed: 1.0, color });
+    this.aura(entity, { color, core: '#ffffff', radius: Math.max(1.2, (entity?.radius || 0.5) * 2.4), every: 0.55, life: 6, opacity: 0.5 });
+  }
+
+  /** damage.backstab: a dark-red shard burst behind the victim's shoulders */
+  backstab(target, source) {
+    if (!target || !target.position) return;
+    const x = target.position.x, z = target.position.z, y = (target.height || 1.8) * 0.7;
+    const bx = source?.position ? source.position.x - x : 0, bz = source?.position ? source.position.z - z : 0;
+    const bl = Math.hypot(bx, bz) || 1;
+    this.particles.emit('shard', 6, { x, y, z, dx: -bx / bl, dy: 0.6, dz: -bz / bl, spread: 0.7, speed: 1.0, color: '#e01f2d' });
+    this.particles.emit('star', 1, { x, y, z, size: 0.5, color: '#ff8a8a', lifeMul: 0.7 });
+  }
+
+  /**
+   * weapon.loose: the per-arm TRACER. A bow shot is a thin gold line to the
+   * horizon with a flare at the bow; the rail a white-blue streak with a
+   * muzzle star and casings; the flames an ember cone; the skull a wisp
+   * trail; the thrown spear a green line with chevrons.
+   */
+  tracer(actor, e = {}) {
+    if (!actor || !actor.position) return;
+    const FX = (e.weapon && WEAPON_FX[e.weapon]) || null;
+    const T = FX && FX.tracer; if (!T) return;
+    const fx = actor.facing ? actor.facing.x : 0, fz = actor.facing ? (actor.facing.z ?? actor.facing.y ?? 1) : 1;
+    const fl = Math.hypot(fx, fz) || 1, ux = fx / fl, uz = fz / fl;
+    const color = e.color || GOLD.highlight;
+    const x0 = actor.position.x + ux * 0.7, z0 = actor.position.z + uz * 0.7, y = 1.15;
+    const len = T.len * (e.full ? 1.25 : 1);
+    _v.set(x0, y, z0); _v2.set(x0 + ux * len, y + 0.15, z0 + uz * len);
+    this.beams.spawn(_v, _v2, { color, core: T.core || '#ffffff', width: T.width * (e.full ? 1.4 : 1), life: T.life, opacity: 0.95 });
+    const P = this.particles;
+    if (T.star) P.emit('star', 1, { x: x0, y, z: z0, size: T.star * (e.full ? 1.4 : 1), color: '#fffdf0', lifeMul: 0.7 });
+    if (T.muzzle) { P.emit('star', 1, { x: x0, y, z: z0, size: 0.8, color: '#ffffff', lifeMul: 0.6 }); P.emit('burst' in SHAPE ? 'flash' : 'flash', 1, { x: x0, y, z: z0, size: 0.35, color: T.core || '#ffffff' }); }
+    if (T.casing) P.emit('shard', T.casing, { x: x0 - ux * 0.3, y: y - 0.1, z: z0 - uz * 0.3, dx: -uz, dy: 0.9, dz: ux, spread: 0.4, speed: 0.6, color: GOLD.highlight });
+    if (T.chev) P.emit('chev', T.chev, { x: x0 + ux * 2.5, y, z: z0 + uz * 2.5, px: x0, py: y, pz: z0, dx: ux, dy: 0, dz: uz, spread: 0.1, speed: 1.5, color, dt: 0.03 });
+    if (T.embers) P.emit('ember', T.embers, { x: x0 + ux * 1.2, y, z: z0 + uz * 1.2, dx: ux, dy: 0.5, dz: uz, spread: 0.55, speed: 1.2, color });
+    if (T.wisps) P.emit('wisp', T.wisps, { x: x0 + ux * 1.0, y, z: z0 + uz * 1.0, dx: ux, dy: 0.4, dz: uz, spread: 0.5, speed: 1.0, color });
+    if (T.runes) P.emit('rune', T.runes, { x: x0 + ux * 1.5, y: y + 0.2, z: z0 + uz * 1.5, size: 0.7, color });
+  }
+
   // ══════════════════════════════════════════════════════════ internals ═══
   /** Schedule `fn` `dt` seconds from now, on sim time. */
   _at(dt, fn) { this._pending.push({ t: this.ctx.time.t + dt, fn }); }
 
   clear() {
     for (const target of [...this._doom.keys()]) this._removeDoom(target);
+    this._auras.length = 0;
     this.particles.clear(); this.rings.clear(); this.slashes.clear();
     this.beams.clear(); this.trails.clear(); this.decals.clear();
     this._pending.length = 0;
@@ -598,6 +902,7 @@ export class VFX {
     this.decals.update(dt);
     this.screen.update(dt);
     this._updateDoom(dt, ctx);
+    this._updateAuras(dt);
 
     // graceful degradation: if the pool is saturated, thin new emissions
     const load = this.particles.count / this.particles.cap;

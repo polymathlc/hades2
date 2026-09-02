@@ -330,6 +330,7 @@ uniform float uRimTighten;    // fresnel exponent multiplier (1 = off)
 uniform vec3  uRimSuppress;
 uniform float uRimSuppressK;
 uniform float uShadowNeutral; // 0 = the authored shadow tint, 1 = its luminance
+uniform float uVertexHue;     // share of the vertex colour's CHROMA applied (its value always is)
 
 float gPaintLit = 1.0;
 // Set in the map fragment, consumed by the normal and roughness fragments,
@@ -481,6 +482,24 @@ vec3 paintStochNormal( sampler2D t ){
   }
   return acc;
 }
+
+/**
+ * The DETAIL layer through the same three rigid taps. It used to be read
+ * straight off the world uv (pUV * uDetailScale), which meant the one layer
+ * that tiles at 1.6m on the floor — well inside the lag window the tiling
+ * metric scans — was the only layer the de-tiler never touched. Scaling the
+ * rotated uv keeps each tap a rigid transform (R*(uv*s) + off*s), and the
+ * micro-normal in GB is un-rotated per tap exactly as the main normal is.
+ */
+vec4 paintStochDetail( sampler2D t, float s, float off ){
+  vec4 acc = vec4( 0.0 );
+  for ( int k = 0; k < 3; k++ ) {
+    vec4 d = texture2DGradEXT( t, gStU[k] * s + off, gStDX[k] * s, gStDY[k] * s );
+    d.gb = ( d.gb - 0.5 ) * gStR[k] + 0.5;
+    acc += d * gStW[k];
+  }
+  return acc;
+}
 `;
 
 const FRAG_LAYER_PARS = /* glsl */`
@@ -597,6 +616,7 @@ export function painterly(mat, o = {}) {
     uRimSuppress:     { value: new THREE.Vector3(...(p.rimSuppress || ENVIRONMENT_LOOK.rimSuppress)) },
     uRimSuppressK:    { value: p.rimSuppressK ?? ENVIRONMENT_LOOK.rimSuppressK },
     uShadowNeutral:   { value: p.shadowNeutral ?? 0.0 },
+    uVertexHue:       { value: p.vertexHue ?? 1.0 },
   };
 
   // projection: 'uv' | 'planarY' (world XZ) | 'cylinderY' | 'triplanar'
@@ -761,6 +781,12 @@ export function painterly(mat, o = {}) {
     }
     if (useDetail) {
       const dcoord = tri ? null : (planar || cyl) ? 'pUV * uDetailScale' : 'vMapUv * uDetailScale';
+      // planar / cylindrical projections read the detail through the
+      // stochastic frame (identity taps when uStoch is 0, so the cylinder is
+      // byte-identical to before); a plain uv material keeps the direct read
+      const dTap = (s, off) => ((planar || cyl)
+        ? `paintStochDetail( tPaintDetail, uDetailScale * ${s}, ${off} )`
+        : `texture2D( tPaintDetail, ${dcoord} * ${s} + ${off} )`);
       // R is the value grain the albedo always used (byte-identical content, so
       // the painted tone is unchanged); GB and A are the micro-normal and the
       // roughness modulation that the same fetch now also carries.
@@ -779,8 +805,8 @@ export function painterly(mat, o = {}) {
           // which is exactly the condition under which a short-lag autocorrelation
           // reads as a lattice
           float dfade = 1.0 - smoothstep( 16.0, 72.0, length( vPaintWPos - cameraPosition ) );
-          vec4 dS = texture2D( tPaintDetail, ${dcoord} );
-          vec4 d2 = texture2D( tPaintDetail, ${dcoord} * 0.41 + 0.27 );
+          vec4 dS = ${dTap('1.0', '0.0')};
+          vec4 d2 = ${dTap('0.41', '0.27')};
           float dv = dS.r * 1.2 + d2.r * 0.8;                 // mean 1.0, as before
           diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( dv ), uDetailStrength * dfade );
           gPaintBump   = ( ( dS.gb - 0.5 ) + ( d2.gb - 0.5 ) * 0.45 ) * 2.0 * uDetailBump * dfade;
@@ -799,6 +825,33 @@ export function painterly(mat, o = {}) {
       `;
     }
     if (!DBG.noMaps) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', mapFrag);
+
+    // ---- vertex colour: VALUE always, HUE by consent ----------------------
+    // A surface that receives vertex colours (the arena floor, the void skirt)
+    // gets them from the world as a value glaze AND a hue push. The value half
+    // is composition — pools, the island hump, the repoussoir crush — and it is
+    // always applied in full. The hue half is a per-material decision: on the
+    // Tartarus floor the world's k=0.88 push toward '#2b83c4' / '#ffb070'
+    // multiplied a crimson albedo into 2-5m cyan and salmon patches that the
+    // round-1 critique read as a colour blotch (§1.4 noise-slop) and that hid
+    // every per-flag stroke under it. `vertexHue` lets a recipe keep the value
+    // structure and take only a share of the chroma, so the painted per-stone
+    // colour variation owns the surface again. Identity at 1.0 (the default —
+    // no material moves unless its recipe asks).
+    shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', /* glsl */`
+      #if defined( USE_COLOR_ALPHA )
+        vec3 pVC = vColor.rgb;
+        diffuseColor.a *= vColor.a;
+      #elif defined( USE_COLOR )
+        vec3 pVC = vColor.rgb;
+      #else
+        vec3 pVC = vec3( 1.0 );
+      #endif
+      {
+        float pVL = dot( pVC, vec3( 0.2126, 0.7152, 0.0722 ) );
+        diffuseColor.rgb *= mix( vec3( pVL ), pVC, uVertexHue );
+      }
+    `);
 
     if (worldProj && !DBG.noMaps) {
       // gPaintBump is the detail layer's micro-relief, added AFTER normalScale

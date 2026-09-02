@@ -105,6 +105,8 @@ export const CAM_TUNING = {
   pushIn: 2.4,            // reward push-in
   dashKick: 0.62,
   dashFov: 2.4,
+  dashLead: 1.35,         // look-ahead along the dash direction (comfort: the
+                          // frame arrives where the hero will be, not where they were)
   shakeDecayPow: 2.0,
   maxShake: 0.9,
   roll: 0.55,             // degrees of roll per unit of shake
@@ -144,6 +146,12 @@ export class CameraRig {
     this.heat = 0;
     this._init = false;
     this._t = 0;
+    // player comfort (ui/settings.js drives these through 'settings.shake' /
+    // 'settings.motion'; the defaults are the full-strength authored feel)
+    this.shakeScale = 1;
+    this.reduceMotion = false;
+    this.dashLead = new THREE.Vector3();
+    this.dashLeadVel = new THREE.Vector3();
   }
 
   async init(ctx) {
@@ -154,13 +162,24 @@ export class CameraRig {
     this.cam.far = 460;
     this.cam.updateProjectionMatrix();
     ctx.events.on('camera.shake', (p) => this.shake(p));
+    // ── comfort settings ──
+    ctx.events.on('settings.shake', (p) => {
+      if (!p) return;
+      if (p.amount != null) this.shakeScale = clamp(+p.amount || 0, 0, 1);
+      else if (p.on != null) this.shakeScale = p.on ? 1 : 0;
+    });
+    ctx.events.on('settings.motion', (p) => { this.reduceMotion = !!(p && p.reduce); });
     ctx.events.on('camera.push', (p) => { this.push = Math.max(this.push, (p && p.amount) || 1); });
     ctx.events.on('boon.granted', () => { this.push = Math.max(this.push, 1); });
     ctx.events.on('room.cleared', () => { this.push = Math.max(this.push, 0.7); });
     ctx.events.on('player.dashed', ({ dir }) => {
       if (!dir) return;
-      this.kick.addScaledVector(dir, -this.tune.dashKick);
-      this.fovVel += this.tune.dashFov * 9;
+      const calm = this.reduceMotion ? 0.35 : 1;
+      this.kick.addScaledVector(dir, -this.tune.dashKick * calm);
+      // look-ahead: the target springs forward along the dash so the landing
+      // spot is already framed when the i-frames end
+      this.dashLead.addScaledVector(dir, this.tune.dashLead * calm);
+      this.fovVel += this.tune.dashFov * 9 * calm;
     });
     ctx.events.on('player.died', () => { this.push = Math.max(this.push, 0.8); });
     const p = ctx.player && ctx.player.position ? ctx.player.position : new THREE.Vector3();
@@ -170,7 +189,8 @@ export class CameraRig {
 
   shake(p) {
     if (!p) return;
-    const amp = clamp(p.amp ?? 0.1, 0, this.tune.maxShake);
+    const amp = clamp((p.amp ?? 0.1) * this.shakeScale, 0, this.tune.maxShake);
+    if (amp <= 1e-4) return;
     this.shakes.push({ amp, dur: Math.max(0.03, p.dur ?? 0.3), t: 0, freq: p.freq ?? 26, seed: this.shakes.length * 3 + (this._t * 7 | 0) % 17 });
     if (this.shakes.length > 12) this.shakes.shift();
   }
@@ -192,24 +212,39 @@ export class CameraRig {
     const p = (pl && pl.position) ? pl.position : this.target;
 
     // ── lead: aim first, velocity second ─────────────────────────────────
+    // Reduced motion keeps the aim-lean (it is information: where the hero is
+    // pointing) but halves it and drops the velocity component, which is the
+    // part that makes the frame feel like it is swimming.
+    const calm = this.reduceMotion ? 0.5 : 1;
     _v.set(0, 0, 0);
     if (pl) {
       if (pl.aimDir && (pl._mouseSeen || (ctx.input && ctx.input.usingGamepad))) {
-        _v.set(pl.aimDir.x, 0, pl.aimDir.y).multiplyScalar(T.leadAim);
+        _v.set(pl.aimDir.x, 0, pl.aimDir.y).multiplyScalar(T.leadAim * calm);
       }
-      if (pl.velocity) _v.addScaledVector(pl.velocity, T.leadVel * 0.12);
+      if (pl.velocity && !this.reduceMotion) _v.addScaledVector(pl.velocity, T.leadVel * 0.12);
     }
     const lk = 1 - Math.exp(-dt / Math.max(1e-3, T.leadTime));
     this.lead.lerp(_v, lk);
 
-    // ── dash kick springs back to zero ───────────────────────────────────
+    // ── dash kick and dash look-ahead spring back to zero ────────────────
     for (const ax of ['x', 'y', 'z']) {
-      const [nv, nvel] = cdamp(this.kick[ax], this.kickVel[ax], 0, 0.16, dt);
-      this.kick[ax] = nv; this.kickVel[ax] = nvel;
+      let r0 = cdamp(this.kick[ax], this.kickVel[ax], 0, 0.16, dt);
+      this.kick[ax] = r0[0]; this.kickVel[ax] = r0[1];
+      r0 = cdamp(this.dashLead[ax], this.dashLeadVel[ax], 0, 0.34, dt);
+      this.dashLead[ax] = r0[0]; this.dashLeadVel[ax] = r0[1];
     }
 
-    // ── critically-damped follow ─────────────────────────────────────────
-    _t.copy(p).add(this.lead).add(this.kick);
+    // ── critically-damped follow with a real deadzone ────────────────────
+    // Inside the deadzone the target does not move at all: small idle
+    // shuffles and attack root-motion no longer drag the whole frame, which
+    // is the single biggest comfort win for an isometric camera. Outside it
+    // the target is the hero minus the deadzone radius so there is no snap.
+    _t.copy(p).add(this.lead).add(this.kick).add(this.dashLead);
+    const dz = this.reduceMotion ? T.deadzone * 2.5 : T.deadzone;
+    const dx = _t.x - this.pos.x, dzz = _t.z - this.pos.z;
+    const dd = Math.hypot(dx, dzz);
+    if (dd < dz) { _t.x = this.pos.x; _t.z = this.pos.z; }
+    else { const k = (dd - dz) / dd; _t.x = this.pos.x + dx * k; _t.z = this.pos.z + dzz * k; }
     const st = T.followTime, sty = T.followTimeY;
     let r = cdamp(this.pos.x, this.vel.x, _t.x, st, dt); this.pos.x = r[0]; this.vel.x = r[1];
     r = cdamp(this.pos.y, this.vel.y, _t.y, sty, dt); this.pos.y = r[0]; this.vel.y = r[1];
@@ -255,7 +290,7 @@ export class CameraRig {
     }
     if (cam.fov !== this.fov) { cam.fov = this.fov; cam.updateProjectionMatrix(); }
     cam.lookAt(_t);
-    if (amp > 1e-4) cam.rotateZ(sx * T.roll * Math.PI / 180);
+    if (amp > 1e-4 && !this.reduceMotion) cam.rotateZ(sx * T.roll * Math.PI / 180);
     cam.updateMatrixWorld();
   }
 
@@ -263,6 +298,7 @@ export class CameraRig {
   snap(pos) {
     if (pos) { this.pos.copy(pos); this.target.copy(pos); }
     this.vel.set(0, 0, 0); this.lead.set(0, 0, 0); this.kick.set(0, 0, 0); this.kickVel.set(0, 0, 0);
+    this.dashLead.set(0, 0, 0); this.dashLeadVel.set(0, 0, 0);
     this.dist = this.tune.distance; this.distVel = 0;
     this._place(0);
     return this;

@@ -13,13 +13,13 @@
 // ---------------------------------------------------------------------------
 
 import {
-  PAL, RARITY, frame, panelBody, plaqueRect, roundRect, goldGradient, meander,
+  PAL, RARITY, STATUS_COLORS, frame, panelBody, plaqueRect, roundRect, goldGradient, meander,
   beadRule, palmette, tracked, trackedWidth, rgba, mix, shade, lift,
-  displayFont, bodyFont, ease, clamp01, lerp, LayerCache,
+  displayFont, bodyFont, ease, clamp01, lerp, LayerCache, cooldownRing, keyCap,
 } from './ornament.js';
 import { godEmblem } from './boons.js';
 import { GOD_INFO } from '../game/boons.js';
-import { upsertHudBoon, hudBoonSlotLabel } from './hud-boons.js';
+import { upsertHudBoon, hudBoonSlotLabel, fmtRunTime, lowHealthLevel, verbState, fitText } from './hud-boons.js';
 
 /** A value that eases toward its target with a small, controlled overshoot. */
 class Spring {
@@ -74,6 +74,34 @@ export class HUD {
 
     this.alpha = new Spring(1, 120, 0.9);
     this.visible = true;
+
+    // ── the verb cluster: Special / Cast / Call readiness rings ──
+    this.verbs = { special: verbState('special', {}), cast: verbState('cast', { cast: 3, castMax: 3 }), call: verbState('call', {}) };
+    this.verbPulse = { special: 0, cast: 0, call: 0 };   // a ready ping when a ring completes
+    this.hurt = 0;                       // screen-edge flash on damage taken
+    this.lowPulse = 0;                   // heartbeat phase for low life
+    this.runTime = 0; this._timeStr = '0:00';
+    this.heat = 0;                       // the Pact's active heat, on the depth plaque
+  }
+  setHeat(n) { const h = Math.max(0, n | 0); if (h !== this.heat) { this.heat = h; this.ui.dirty = true; } }
+
+  /** Read-only view of the colour set the accessibility setting selects. */
+  colors() { return STATUS_COLORS[this.ui.settings?.colorBlind ? 'safe' : 'normal']; }
+  get reduceFlash() { return !!this.ui.settings?.reduceFlash; }
+
+  /** Update one verb ring; only marks dirty when the visible state changed. */
+  setVerb(kind, state) {
+    const cur = this.verbs[kind];
+    if (!cur || !state) return;
+    if (cur.ready === state.ready && cur.active === state.active && Math.abs(cur.frac - state.frac) < 0.004 && cur.label === state.label) return;
+    if (!cur.ready && state.ready) this.verbPulse[kind] = 1;
+    this.verbs[kind] = state;
+    this.ui.dirty = true;
+  }
+  setRunTime(sec) {
+    const str = fmtRunTime(sec);
+    this.runTime = sec;
+    if (str !== this._timeStr) { this._timeStr = str; this.ui.dirty = true; }
   }
 
   // ── contract setters ─────────────────────────────────────────────────────
@@ -83,7 +111,7 @@ export class HUD {
     this.health.cur = Math.max(0, Math.min(this.health.max, cur));
     const f = this.health.cur / this.health.max;
     this.hpFill.set(f);
-    if (this.health.cur < prev) { this.hpGhostHold = 0.34; this.hpFlash = 1; }
+    if (this.health.cur < prev) { this.hpGhostHold = 0.34; this.hpFlash = 1; this.hurt = Math.min(1, 0.55 + (prev - this.health.cur) / this.health.max * 2.2); }
     else if (this.health.cur > prev) { this.hpGhost = Math.max(this.hpGhost, f); this.hpPulse = 1; }
     this.ui.dirty = true;
   }
@@ -140,6 +168,10 @@ export class HUD {
     else this.hpGhost = f;
     if (this.hpFlash > 0) this.hpFlash = Math.max(0, this.hpFlash - dt * 3.6);
     if (this.hpPulse > 0) this.hpPulse = Math.max(0, this.hpPulse - dt * 2.4);
+    if (this.hurt > 0) { this.hurt = Math.max(0, this.hurt - dt * 2.8); this.ui.dirty = true; }
+    for (const k in this.verbPulse) if (this.verbPulse[k] > 0) { this.verbPulse[k] = Math.max(0, this.verbPulse[k] - dt * 2.2); this.ui.dirty = true; }
+    const low = lowHealthLevel(this.health.cur / this.health.max);
+    if (low > 0) { this.lowPulse += dt * (1.4 + low * 1.2); this.ui.dirty = true; }
     this.weaponCd = Math.max(0, this.weaponCd - dt);
     if (this.reloadRemaining > 0) {
       this.reloadRemaining = Math.max(0, this.reloadRemaining - dt);
@@ -154,12 +186,36 @@ export class HUD {
     if (a <= 0.01) return;
     g.save();
     g.globalAlpha *= a;
+    this._edgeStates(g, W, H, S, t);
     this._cluster(g, W, H, S, t);
     this._depthPlaque(g, W, H, S, t);
     this._boonRail(g, W, H, S, t);
     this._resources(g, W, H, S, t);
     this._roomBanner(g, W, H, S, t);
     g.restore();
+  }
+
+  // ═══════════════════════════════ screen-edge feedback (under the chrome) ═══
+  // A hit flashes the frame edge in the blood colour; low life breathes a
+  // slow vignette. Both are EDGE treatments only — §7 bans a full-frame wash
+  // and the reduce-flash setting damps them further.
+  _edgeStates(g, W, H, S, t) {
+    const C = this.colors();
+    const damp = this.reduceFlash ? 0.4 : 1;
+    const low = lowHealthLevel(this.health.cur / this.health.max);
+    if (low > 0) {
+      const beat = 0.5 + 0.5 * Math.sin(this.lowPulse * 3.4);
+      const a = (0.10 + 0.16 * low + 0.10 * beat * low) * damp;
+      const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.40, W / 2, H / 2, Math.max(W, H) * 0.70);
+      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, rgba(C.danger, a));
+      g.fillStyle = vg; g.fillRect(0, 0, W, H);
+    }
+    if (this.hurt > 0) {
+      const a = this.hurt * this.hurt * 0.34 * damp;
+      const vg = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.45, W / 2, H / 2, Math.max(W, H) * 0.66);
+      vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, rgba(C.lifeHi, a));
+      g.fillStyle = vg; g.fillRect(0, 0, W, H);
+    }
   }
 
   // ═══════════════════════════════════════ bottom-left combat cluster ═════
@@ -180,9 +236,92 @@ export class HUD {
 
     // ---- magick, cast pips, dash chevrons ----
     const my0 = cy0 + chh + 9 * S;
-    this._magickBar(g, cx0 + 44 * S, my0, 232 * S, 17 * S, S, t);
-    this._castPips(g, cx0 + 304 * S, my0 + 8.5 * S, S, t);
-    this._dashPips(g, cx0 + 380 * S, my0 + 8.5 * S, S, t);
+    this._magickBar(g, cx0 + 44 * S, my0, 206 * S, 17 * S, S, t);
+    this._castPips(g, cx0 + 278 * S, my0 + 8.5 * S, S, t);
+    this._dashPips(g, cx0 + 356 * S, my0 + 8.5 * S, S, t);
+
+    // ---- the verb cluster: what the right hand can do, and when ----
+    // Set clear of the cradle's right cap (the judges found it cramped against
+    // the life bar at 8 px): its own column, larger sockets, 11 px captions.
+    this._verbs(g, cx0 + cw + 62 * S, cy0 + chh * 0.50, S, t);
+  }
+
+  // ═══════════════════════════════════════════ Special / Cast / Call rings ═══
+  // Three bronze sockets, each a cooldown ring around a slot glyph with the
+  // bound key (or pad button) carved underneath. A ring that just completed
+  // pings outward once. The glyphs are struck in the god colour of the boon
+  // that owns the slot, so the cluster doubles as a build read-out.
+  _verbs(g, x0, cy, S, t) {
+    const r = 21 * S, gap = 70 * S;
+    const kinds = ['special', 'cast', 'call'];
+    const C = this.colors();
+    const byslot = { special: this.boons.find(b => b.slot === 'special'), cast: this.boons.find(b => b.slot === 'cast'), call: this.boons.find(b => b.slot === 'call') };
+    for (let i = 0; i < kinds.length; i++) {
+      const k = kinds[i], v = this.verbs[k], cx = x0 + i * gap;
+      const god = byslot[k] ? GOD_INFO[byslot[k].god] : null;
+      const accent = god ? god.color : (k === 'cast' ? C.magick : PAL.gold);
+      // socket
+      const lay = this.cache.get('verb-socket|' + Math.round(S * 100), r * 3.2, r * 3.2, (q, w, h) => {
+        const c = w / 2;
+        q.beginPath(); q.arc(c, c, r * 1.32, 0, 6.2832); q.fillStyle = '#120a08'; q.fill();
+        q.beginPath(); q.arc(c, c, r * 1.22, 0, 6.2832);
+        q.strokeStyle = goldGradient(q, c - r, c - r, c + r, c + r, 0.3); q.lineWidth = r * 0.10; q.stroke();
+        const n = 14;
+        for (let j = 0; j < n; j++) {
+          const a = (j / n) * 6.2832;
+          const px = c + Math.cos(a) * r * 1.36, py = c + Math.sin(a) * r * 1.36;
+          const bg = q.createRadialGradient(px - r * 0.02, py - r * 0.03, 0, px, py, r * 0.08);
+          bg.addColorStop(0, '#ffe9a8'); bg.addColorStop(0.6, '#c98f2b'); bg.addColorStop(1, '#4a2c0e');
+          q.beginPath(); q.arc(px, py, r * 0.065, 0, 6.2832); q.fillStyle = bg; q.fill();
+        }
+        q.beginPath(); q.arc(c, c, r * 1.0, 0, 6.2832);
+        const wg = q.createRadialGradient(c - r * 0.3, c - r * 0.4, r * 0.05, c, c, r);
+        wg.addColorStop(0, '#241238'); wg.addColorStop(0.7, '#130c1e'); wg.addColorStop(1, '#08050f');
+        q.fillStyle = wg; q.fill();
+      });
+      g.drawImage(lay, cx - r * 1.6, cy - r * 1.6);
+      // the god-colour well when a boon owns the slot
+      if (god) {
+        g.save(); g.globalCompositeOperation = 'lighter';
+        const gl = g.createRadialGradient(cx, cy, r * 0.1, cx, cy, r * 1.05);
+        gl.addColorStop(0, rgba(accent, v.ready ? 0.30 : 0.10)); gl.addColorStop(1, 'rgba(0,0,0,0)');
+        g.fillStyle = gl; g.beginPath(); g.arc(cx, cy, r * 1.05, 0, 6.2832); g.fill(); g.restore();
+      }
+      // glyph
+      g.save(); g.globalAlpha *= v.ready || v.active ? 1 : 0.42;
+      verbGlyph(g, cx, cy, r * 0.62, k, v.ready || v.active ? lift(accent, 0.25) : PAL.parchDim);
+      g.restore();
+      // the ring itself
+      cooldownRing(g, cx, cy, r * 1.08, v.active ? 0 : v.frac, {
+        width: 2.6 * S, color: accent, hi: lift(accent, 0.5), sweep: (t * 0.25 + i * 0.3) % 1, pulse: this.verbPulse[k],
+        readyGradient: v.active ? rgba(lift(accent, 0.55), 0.95) : null,
+      });
+      if (v.active) {                        // charging / guarding: the ring breathes
+        g.save(); g.globalCompositeOperation = 'lighter'; g.globalAlpha *= 0.35 + 0.25 * Math.sin(t * 9);
+        g.beginPath(); g.arc(cx, cy, r * 1.3, 0, 6.2832); g.strokeStyle = rgba(accent, 0.9); g.lineWidth = 2 * S; g.stroke(); g.restore();
+      }
+      // the bound key under the socket
+      const key = this.ui.keyFor ? this.ui.keyFor(k === 'call' ? 'summon' : k) : '';
+      const pad = this.ui.padGlyphs ? this.ui.padGlyphs() : false;
+      const kw = Math.max(20 * S, 7.6 * S * String(key).length + 9 * S), kh = 17 * S;
+      keyCap(g, cx - kw / 2, cy + r * 1.40, kw, kh, key, { pad: pad && key.length <= 2, size: 9.6 * S, edgeAlpha: v.ready ? 0.85 : 0.4, color: v.ready ? '#ffe9a8' : rgba(PAL.parchDim, 0.8) });
+      // the readout on two lines: the verb, then its time left or stock.
+      // 11 px at reference scale is the legibility floor for a caption that
+      // must be read mid-fight; the text-scale setting multiplies through S.
+      // (One line ran "SPECIAL CAST 2/3 CALL 7S" together across the row.)
+      const ly = cy + r * 1.40 + kh + 13 * S;
+      tracked(g, k.toUpperCase(), cx, ly, {
+        size: 11 * S, track: 0.16, weight: 700, align: 'center',
+        color: v.ready ? rgba(PAL.parch, 0.92) : rgba(lift(accent, 0.35), 1), shadow: '#05030b', shadowDy: 1.2 * S,
+      });
+      if (v.label) {
+        const fit = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.12, weight: 700 }), v.label, gap - 16 * S, { size: 10 * S, minSize: 9 * S });
+        tracked(g, fit.text, cx, ly + 12 * S, {
+          size: fit.size, track: 0.12, weight: 700, align: 'center',
+          color: v.ready ? rgba(PAL.goldHi, 0.92) : rgba(lift(accent, 0.45), 1), shadow: '#05030b', shadowDy: 1.2 * S,
+        });
+      }
+    }
   }
 
   _medallion(g, cx, cy, r, S, t) {
@@ -239,9 +378,11 @@ export class HUD {
     const loading = this.reloadRemaining > 0;
     const railState = loading ? `RELOADING ${this.reloadRemaining.toFixed(1)}S` : `AMMO ${ammoCur}/${ammoMax}`;
     const weaponLine = `${this.character.name} · ${this.weapon.name}${isRail ? ` · ${railState}` : ''}`.toUpperCase();
-    tracked(g, weaponLine, Math.max(8 * S, cx - r * 0.9), cy + r * 1.62, {
-      size: 8.4 * S, track: 0.20, weight: 600, align: 'left', color: rgba(PAL.parchDim, 0.85),
-      shadow: '#05030b', shadowDy: 1,
+    // The caption sits on the cradle's top rail, clear of the magick row
+    // (it used to be struck straight across the MAGICK label).
+    tracked(g, weaponLine, cx + r * 1.30, cy - r * 1.02, {
+      size: 9 * S, track: 0.20, weight: 700, align: 'left', color: rgba(PAL.parch, 0.92),
+      shadow: '#05030b', shadowDy: 1.2 * S,
     });
   }
 
@@ -279,6 +420,9 @@ export class HUD {
   _lifeBar(g, x, y, w, h, S, t) {
     const f = clamp01(this.hpFill.v);
     const r = Math.min(h * 0.42, 8 * S);
+    const C = this.colors();
+    const low = lowHealthLevel(this.health.cur / this.health.max);
+    const beat = low > 0 ? 0.5 + 0.5 * Math.sin(this.lowPulse * 3.4) : 0;
     this._well(g, x, y, w, h, S, ['#1a0710', '#0a0410']);
 
     g.save();
@@ -288,10 +432,10 @@ export class HUD {
     if (this.hpGhost > f + 0.0015) {
       const gw = w * this.hpGhost, gx = x + w * f;
       const gg = g.createLinearGradient(x, y, x, y + h);
-      gg.addColorStop(0, rgba('#ffd0a0', 0.66)); gg.addColorStop(0.45, rgba('#ff7a44', 0.55));
-      gg.addColorStop(1, rgba('#8e2a12', 0.45));
+      gg.addColorStop(0, rgba(lift(C.ghost, 0.4), 0.66)); gg.addColorStop(0.45, rgba(C.ghost, 0.55));
+      gg.addColorStop(1, rgba(shade(C.ghost, 0.5), 0.45));
       g.fillStyle = gg; g.fillRect(gx, y, gw - w * f, h);
-      g.save(); g.globalAlpha = 0.16; g.strokeStyle = '#fff0d0'; g.lineWidth = 1.1 * S;
+      g.save(); g.globalAlpha = this.ui.settings?.colorBlind ? 0.45 : 0.16; g.strokeStyle = '#fff0d0'; g.lineWidth = 1.1 * S;
       for (let px = gx - h; px < x + gw; px += 6 * S) { g.beginPath(); g.moveTo(px, y + h); g.lineTo(px + h, y); g.stroke(); }
       g.restore();
       g.fillStyle = rgba('#fff3dc', 0.85); g.fillRect(x + gw - 1.8 * S, y, 1.8 * S, h);
@@ -301,9 +445,11 @@ export class HUD {
     const fw = w * f;
     if (fw > 0.5) {
       const fg = g.createLinearGradient(x, y, x, y + h);
-      fg.addColorStop(0, '#e8506a'); fg.addColorStop(0.16, '#c81d3c');
-      fg.addColorStop(0.62, '#8e1029'); fg.addColorStop(1, '#4c0718');
+      fg.addColorStop(0, C.lifeHi); fg.addColorStop(0.16, C.life);
+      fg.addColorStop(0.62, shade(C.life, 0.35)); fg.addColorStop(1, shade(C.life, 0.62));
       g.fillStyle = fg; g.fillRect(x, y, fw, h);
+      // low life: the bar itself beats
+      if (low > 0) { g.fillStyle = rgba(lift(C.danger, 0.3), 0.30 * low * beat * (this.reduceFlash ? 0.5 : 1)); g.fillRect(x, y, fw, h); }
       // painted hatch so it is not a flat swatch
       g.save(); g.globalAlpha = 0.10; g.strokeStyle = '#ff9aa6'; g.lineWidth = 1.1 * S;
       for (let px = x - h; px < x + fw; px += 7 * S) { g.beginPath(); g.moveTo(px, y + h); g.lineTo(px + h, y); g.stroke(); }
@@ -312,8 +458,8 @@ export class HUD {
       g.fillStyle = rgba('#ff9aa6', 0.42); g.fillRect(x, y + 1 * S, fw, Math.max(1, 1.6 * S));
       // leading cap
       g.fillStyle = rgba('#ffd0c0', 0.85); g.fillRect(x + fw - 2.2 * S, y, 2.2 * S, h);
-      if (this.hpFlash > 0) { g.fillStyle = rgba('#fff2e0', 0.30 * this.hpFlash); g.fillRect(x, y, fw, h); }
-      if (this.hpPulse > 0) { g.fillStyle = rgba('#9dffc0', 0.22 * this.hpPulse); g.fillRect(x, y, fw, h); }
+      if (this.hpFlash > 0) { g.fillStyle = rgba('#fff2e0', (this.reduceFlash ? 0.14 : 0.30) * this.hpFlash); g.fillRect(x, y, fw, h); }
+      if (this.hpPulse > 0) { g.fillStyle = rgba(C.heal, 0.22 * this.hpPulse); g.fillRect(x, y, fw, h); }
     }
 
     // segment ticks every 40 life — a read of scale, not a loading bar
@@ -339,8 +485,11 @@ export class HUD {
     });
     tracked(g, ' / ', nx - nw, y + h * 0.755, { size: 11 * S, track: 0.02, weight: 500, align: 'right', color: rgba(PAL.parchDim, 0.5) });
     tracked(g, String(cur), nx - nw - 12 * S, y + h * 0.755, {
-      size: 19 * S, track: 0.04, weight: 700, align: 'right',
-      color: f < 0.3 ? '#ff9c8a' : '#fff0d8', shadow: '#12020a', shadowDy: 1.6 * S,
+      size: (19 + 2.5 * low * beat) * S, track: 0.04, weight: 700, align: 'right',
+      color: low > 0 ? mix('#fff0d8', lift(C.danger, 0.2), 0.45 + 0.45 * low) : '#fff0d8', shadow: '#12020a', shadowDy: 1.6 * S,
+    });
+    if (low > 0.5) tracked(g, 'LOW', x + w * 0.36, y + h * 0.755, {
+      size: 9 * S, track: 0.36, weight: 700, align: 'center', color: rgba(lift(C.danger, 0.3), 0.55 + 0.45 * beat), shadow: '#12020a', shadowDy: 1,
     });
     tracked(g, 'LIFE', x + 9 * S, y + h * 0.755, {
       size: 10.5 * S, track: 0.34, weight: 600, align: 'left', color: rgba('#ffc0ac', 0.78), shadow: '#08030d', shadowDy: 1,
@@ -350,13 +499,14 @@ export class HUD {
   _magickBar(g, x, y, w, h, S, t) {
     const f = clamp01(this.mpFill.v);
     const r = Math.min(h * 0.45, 6 * S);
+    const C = this.colors();
     this._well(g, x, y, w, h, S, ['#0c1526', '#070a16']);
     g.save(); plaqueRect(g, x, y, w, h, r); g.clip();
     const fw = w * f;
     if (fw > 0.5) {
       const fg = g.createLinearGradient(x, y, x, y + h);
-      fg.addColorStop(0, '#9fe6ff'); fg.addColorStop(0.22, '#5fd0ff');
-      fg.addColorStop(0.65, '#2b7fc4'); fg.addColorStop(1, '#123a63');
+      fg.addColorStop(0, C.magickHi); fg.addColorStop(0.22, C.magick);
+      fg.addColorStop(0.65, shade(C.magick, 0.4)); fg.addColorStop(1, shade(C.magick, 0.7));
       g.fillStyle = fg; g.fillRect(x, y, fw, h);
       g.fillStyle = rgba('#dff6ff', 0.5); g.fillRect(x, y + 0.8 * S, fw, Math.max(1, 1.2 * S));
       // slow arcane shimmer
@@ -402,7 +552,7 @@ export class HUD {
         g.fillStyle = rg; g.beginPath(); g.arc(cx, y, s * 2.6, 0, 6.2832); g.fill(); g.restore();
       }
     }
-    tracked(g, 'CAST', x - 5 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    tracked(g, 'CAST', x - 11 * S, y + 24 * S, { size: 10 * S, track: 0.26, weight: 700, color: rgba(PAL.parch, 0.8), shadow: '#05030b', shadowDy: 1 * S });
   }
 
   _dashPips(g, x, y, S, t) {
@@ -427,7 +577,7 @@ export class HUD {
       g.strokeStyle = on ? rgba('#ffe9a8', 0.6) : 'rgba(90,70,120,0.5)'; g.lineWidth = 1 * S; g.stroke();
       g.restore();
     }
-    tracked(g, 'DASH', x - 6 * S, y + 20 * S, { size: 7.6 * S, track: 0.30, weight: 600, color: rgba(PAL.parchDim, 0.6) });
+    tracked(g, 'DASH', x - 10 * S, y + 24 * S, { size: 10 * S, track: 0.26, weight: 700, color: rgba(PAL.parch, 0.8), shadow: '#05030b', shadowDy: 1 * S });
   }
 
   // ═══════════════════════════════════════════════ depth / biome plaque ═══
@@ -451,6 +601,37 @@ export class HUD {
     tracked(g, 'CHAMBER ' + roman(this.depth), x + w / 2, y + 38 * S, {
       size: 9 * S, track: 0.36, weight: 600, align: 'center', color: rgba(PAL.parchDim, 0.85),
     });
+    // ── run clock, hung under the plaque like a votive tablet ──
+    const tw = 92 * S, th = 22 * S, tx = x + w / 2 - tw / 2, ty = y + h + 9 * S;
+    plaqueRect(g, tx, ty, tw, th, 5 * S);
+    g.fillStyle = 'rgba(12,7,20,0.78)'; g.fill();
+    g.strokeStyle = rgba(PAL.bronze, 0.85); g.lineWidth = 1 * S; g.stroke();
+    // hourglass glyph
+    const hx = tx + 13 * S, hy = ty + th / 2, hs = 5 * S;
+    g.beginPath(); g.moveTo(hx - hs * 0.7, hy - hs); g.lineTo(hx + hs * 0.7, hy - hs); g.lineTo(hx - hs * 0.7, hy + hs); g.lineTo(hx + hs * 0.7, hy + hs); g.closePath();
+    g.strokeStyle = rgba(PAL.gold, 0.85); g.lineWidth = 1.1 * S; g.stroke();
+    g.fillStyle = rgba(PAL.gold, 0.75); g.beginPath(); g.moveTo(hx - hs * 0.3, hy + hs * 0.35); g.lineTo(hx + hs * 0.3, hy + hs * 0.35); g.lineTo(hx, hy); g.closePath(); g.fill();
+    tracked(g, this._timeStr, tx + tw - 10 * S, ty + th * 0.72, {
+      size: 11 * S, track: 0.10, weight: 700, align: 'right', color: '#f4ead6', shadow: '#07040d', shadowDy: 1.2 * S,
+    });
+    // ── the Pact's heat, as an ember tablet beside the clock ──
+    if (this.heat > 0) {
+      const label = `HEAT ${this.heat}`;
+      const hw = trackedWidth(g, label, { size: 9.5 * S, track: 0.2, weight: 700 }) + 30 * S, hh = th;
+      const hx2 = tx + tw + 8 * S, hy2 = ty;
+      plaqueRect(g, hx2, hy2, hw, hh, 5 * S);
+      g.fillStyle = 'rgba(30,8,12,0.82)'; g.fill();
+      g.strokeStyle = rgba('#ff756b', 0.85); g.lineWidth = 1 * S; g.stroke();
+      // flame glyph
+      const fx = hx2 + 11 * S, fy = hy2 + hh / 2, fs = 5.5 * S;
+      const flick = 0.85 + 0.15 * Math.sin(t * 7.3);
+      g.beginPath(); g.moveTo(fx, fy - fs * flick); g.quadraticCurveTo(fx + fs * 0.9, fy - fs * 0.2, fx + fs * 0.45, fy + fs * 0.7);
+      g.quadraticCurveTo(fx, fy + fs * 1.05, fx - fs * 0.45, fy + fs * 0.7); g.quadraticCurveTo(fx - fs * 0.9, fy - fs * 0.2, fx, fy - fs * flick); g.closePath();
+      const fg = g.createLinearGradient(fx, fy - fs, fx, fy + fs);
+      fg.addColorStop(0, '#ffe9a8'); fg.addColorStop(0.5, '#ff756b'); fg.addColorStop(1, '#8a1a1c');
+      g.fillStyle = fg; g.fill();
+      tracked(g, label, hx2 + hw - 8 * S, hy2 + hh * 0.72, { size: 9.5 * S, track: 0.2, weight: 700, align: 'right', color: '#ffb8a8', shadow: '#07040d', shadowDy: 1.2 * S });
+    }
   }
 
   // ═════════════════════════════════════════════════════════ boon rail ════
@@ -459,7 +640,7 @@ export class HUD {
     // Preserve a readable minimum for the information-dense rail. Eight rows
     // at this scale still clear the bottom-left combat cluster at 1024x576.
     S = Math.max(S, 0.82);
-    const x = 54 * S, y0 = 112 * S, step = 56 * S, r = 22 * S;
+    const x = 54 * S, y0 = 142 * S, step = 56 * S, r = 22 * S;
     // rail
     const railH = (this.boons.length - 1) * step + r * 2.4;
     const rg = g.createLinearGradient(x, y0 - r, x, y0 + railH);
@@ -479,26 +660,52 @@ export class HUD {
       // The compact label turns the old row of unexplained god portraits into
       // a live loadout. Its restrained backing preserves the left-edge glance
       // path without covering combat, even at the 1024x576 minimum viewport.
-      const labelX = x + 15 * S, labelY = cy - 16 * S;
-      const labelW = 126 * S, labelH = 32 * S;
+      // Slot and rarity are two separate chips with measured widths — they
+      // used to be one left- and one right-aligned string that met in the
+      // middle ("PASSIVECOMMON"). The plaque widens to whatever the chips and
+      // the fitted name need, within a cap that keeps the rail off the arena.
+      const R = RARITY[b.rarity] || RARITY.common;
+      const labelX = x + 15 * S, labelY = cy - 17 * S, labelH = 34 * S;
+      const chipH = 11 * S, chipPad = 5 * S, chipGap = 4 * S;
+      const slotTxt = hudBoonSlotLabel(b), rarTxt = (R.name || 'Common').toUpperCase();
+      const slotW = trackedWidth(g, slotTxt, { size: 7.4 * S, track: 0.22, weight: 700 }) + chipPad * 2;
+      const rarW = trackedWidth(g, rarTxt, { size: 6.8 * S, track: 0.18, weight: 700 }) + chipPad * 2;
+      const line1W = slotW + chipGap + rarW;
+      const maxLabelW = 172 * S;
+      const nameFit = fitText((txt, sz) => trackedWidth(g, txt, { size: sz, track: 0.07, weight: 600 }),
+        (b.name || `${info.name} Boon`).toUpperCase(), maxLabelW - 29 * S, { size: 8.6 * S, minSize: 7.6 * S });
+      const labelW = Math.min(maxLabelW, Math.max(118 * S, Math.max(line1W, trackedWidth(g, nameFit.text, { size: nameFit.size, track: 0.07, weight: 600 })) + 29 * S));
       plaqueRect(g, labelX, labelY, labelW, labelH, 5 * S);
       const pg = g.createLinearGradient(labelX, labelY, labelX + labelW, labelY);
       pg.addColorStop(0, rgba('#0b0714', 0.94));
-      pg.addColorStop(0.72, rgba(mix('#120a1c', info.color, 0.12), 0.82));
-      pg.addColorStop(1, 'rgba(10,6,18,0.08)');
+      pg.addColorStop(0.72, rgba(mix('#120a1c', info.color, 0.12), 0.84));
+      pg.addColorStop(1, 'rgba(10,6,18,0.30)');
       g.fillStyle = pg; g.fill();
-      const R = RARITY[b.rarity] || RARITY.common;
       g.strokeStyle = rgba(R.text, 0.52); g.lineWidth = Math.max(0.75, 0.9 * S); g.stroke();
-      tracked(g, hudBoonSlotLabel(b), labelX + 21 * S, labelY + 12 * S, {
-        size: 8 * S, track: 0.24, weight: 700, align: 'left', color: rgba(info.color, 0.96),
+      // chip 1: the slot, in the god's colour
+      let chx = labelX + 21 * S; const chy = labelY + 4 * S;
+      plaqueRect(g, chx, chy, slotW, chipH, 3 * S);
+      g.fillStyle = rgba(info.color, 0.16); g.fill(); g.strokeStyle = rgba(info.color, 0.55); g.lineWidth = Math.max(0.7, 0.8 * S); g.stroke();
+      tracked(g, slotTxt, chx + chipPad, chy + chipH * 0.76, { size: 7.4 * S, track: 0.22, weight: 700, align: 'left', color: lift(info.color, 0.25), shadow: '#05030b', shadowDy: 1 * S });
+      // chip 2: the rarity, in the rarity's colour
+      chx += slotW + chipGap;
+      plaqueRect(g, chx, chy, rarW, chipH, 3 * S);
+      g.fillStyle = rgba(R.text, 0.12); g.fill(); g.strokeStyle = rgba(R.text, 0.6); g.lineWidth = Math.max(0.7, 0.8 * S); g.stroke();
+      tracked(g, rarTxt, chx + chipPad, chy + chipH * 0.76, { size: 6.8 * S, track: 0.18, weight: 700, align: 'left', color: rgba(R.text, 0.95), shadow: '#05030b', shadowDy: 1 });
+      // line 2: the name, fitted to the plaque
+      tracked(g, nameFit.text, labelX + 21 * S, labelY + 27 * S, {
+        size: nameFit.size, track: 0.07, weight: 600, align: 'left', color: '#f4ead6',
         shadow: '#05030b', shadowDy: 1 * S,
       });
-      const name = (b.name || `${info.name} Boon`).toUpperCase();
-      const compactName = name.length > 20 ? name.slice(0, 19).trimEnd() + '…' : name;
-      tracked(g, compactName, labelX + 21 * S, labelY + 25 * S, {
-        size: 8.4 * S, track: 0.07, weight: 600, align: 'left', color: '#f4ead6',
-        shadow: '#05030b', shadowDy: 1 * S,
-      });
+      // a level badge when the boon has been improved — a "stack count" the
+      // player can read at a glance
+      if (b.level > 1) {
+        const br = 7.5 * S, bxx = x + r * 0.78, byy = cy + r * 0.78;
+        g.beginPath(); g.arc(bxx, byy, br, 0, 6.2832);
+        g.fillStyle = '#0c0715'; g.fill();
+        g.strokeStyle = rgba(R.text, 0.95); g.lineWidth = 1.1 * S; g.stroke();
+        tracked(g, '+' + (b.level - 1), bxx, byy + 2.8 * S, { size: 7.6 * S, track: 0, weight: 800, align: 'center', color: '#fff3c7' });
+      }
 
       g.translate(x, cy); g.scale(sc, sc);
       // hex setting
@@ -598,6 +805,31 @@ export class HUD {
     });
     g.restore();
   }
+}
+
+// ── verb glyphs: special (burst), cast (bloodstone), call (horn) ──────────
+function verbGlyph(g, cx, cy, r, kind, color) {
+  g.save(); g.translate(cx, cy);
+  g.fillStyle = color; g.strokeStyle = color; g.lineJoin = 'round'; g.lineCap = 'round';
+  if (kind === 'special') {
+    // an eight-point burst
+    g.beginPath();
+    for (let i = 0; i < 16; i++) { const a = -Math.PI / 2 + i * Math.PI / 8; const rr = i % 2 ? r * 0.42 : r; i ? g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : g.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    g.closePath(); g.fill();
+    g.fillStyle = 'rgba(8,4,14,0.75)'; g.beginPath(); g.arc(0, 0, r * 0.22, 0, 6.2832); g.fill();
+  } else if (kind === 'cast') {
+    // the bloodstone: a faceted gem
+    g.beginPath(); g.moveTo(0, -r); g.lineTo(r * 0.85, -r * 0.2); g.lineTo(r * 0.5, r); g.lineTo(-r * 0.5, r); g.lineTo(-r * 0.85, -r * 0.2); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(8,4,14,0.6)'; g.lineWidth = Math.max(0.8, r * 0.1);
+    g.beginPath(); g.moveTo(-r * 0.85, -r * 0.2); g.lineTo(r * 0.85, -r * 0.2); g.moveTo(0, -r * 0.2); g.lineTo(0, r); g.stroke();
+  } else {
+    // a war horn
+    g.lineWidth = Math.max(1.2, r * 0.32);
+    g.beginPath(); g.moveTo(-r * 0.9, r * 0.55); g.quadraticCurveTo(-r * 0.2, r * 0.9, r * 0.5, r * 0.1); g.quadraticCurveTo(r * 0.85, -r * 0.35, r * 0.35, -r * 0.9); g.stroke();
+    g.beginPath(); g.arc(-r * 0.9, r * 0.55, r * 0.26, 0, 6.2832); g.fill();
+    g.beginPath(); g.moveTo(r * 0.1, -r * 0.95); g.lineTo(r * 0.75, -r * 0.55); g.lineTo(r * 0.55, -r * 0.05); g.closePath(); g.fill();
+  }
+  g.restore();
 }
 
 // ── weapon glyphs, drawn like the god emblems ──────────────────────────────

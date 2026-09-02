@@ -2,18 +2,30 @@
 // ---------------------------------------------------------------------------
 // spawner.js — THE ENCOUNTER DIRECTOR.
 //
-// A Hades room is not "N enemies appear". It is a SCRIPT with a rhythm:
+// A Hades room is not "N enemies appear". It is a SCRIPT with a rhythm, and
+// every wave is authored to one of four BEATS:
 //
-//   BEAT 1  pressure    a small, legible wave you can beat by moving
-//   BEAT 2  breath      ~1.6s of nothing while the last body dissolves
-//   BEAT 3  escalation  a wave with a different SHAPE — a brute to flank, or
-//                       three hounds so the room suddenly has velocity
-//   BEAT 4  breath
-//   BEAT 5  the ask     the composition that requires the room's actual answer
+//   OPENER    cheap melee only, four bodies at most. You learn the room's
+//             shape by moving, and nothing shoots at you yet.
+//   PRESSURE  a MIXED composition: at least one ranged family plus melee, so
+//             the room has a target priority (kill the caster, or turn and
+//             deal with what is closing). From depth 4 this wave also gets
+//             REINFORCEMENTS ON A TIMER — a trickle, not a dump.
+//   ELITE     the shape-changer (a brute to flank, a lancer lane, a herald to
+//             prioritise), and from depth 3 one body is an ELITE with an
+//             affix the player answers differently. Preceded by the room's
+//             longest breath: this is the wave that asks the question.
+//   SURGE     deep rooms only. Pack units, fast stagger, velocity.
 //
-// Waves are composed from a deterministic BUDGET (points scale with depth) and
-// a per-biome weighted pool, so a room is reproducible from (biome, depth,
-// seed) alone and the critic loop compares like-for-like.
+// Between waves there is a BREATHER — a beat of silence authored per beat, so
+// pressure reads as pressure and relief as relief. A wave never lands on the
+// frame the previous one died.
+//
+// Waves are composed from a deterministic BUDGET (points scale with depth AND
+// biome) and a per-biome weighted pool, so a room is reproducible from
+// (biome, depth, seed) alone and the critic loop compares like-for-like.
+// Concurrency is capped (MAX_ALIVE): reinforcements queue behind the cap so a
+// room escalates instead of saturating.
 //
 // The two rules that keep it fair:
 //   * NEVER spawn on top of the player — every point goes through
@@ -71,6 +83,18 @@ export const ENCOUNTER_POOLS = {
 // mechanic
 const PACK = { hound: 3, shade: 2 };
 
+// ── threat by biome: the same depth is a harder room deeper in the descent
+export const BIOME_THREAT = { tartarus: 1.0, asphodel: 1.15, elysium: 1.32 };
+export const BEATS = Object.freeze(['opener', 'pressure', 'elite', 'surge']);
+export const ELITE_AFFIXES = Object.freeze(['armoured', 'swift', 'volatile', 'warded']);
+const RANGED = new Set(['hexer', 'herald', 'oracle']);
+const CHEAP = new Set(['shade', 'hound']);
+const SHAPERS = ['herald', 'brute', 'lancer', 'siren', 'oracle', 'riftstalker'];
+// breath before each beat (seconds of quiet after the previous wave thins)
+const BREATH = { opener: 0.55, pressure: 1.4, elite: 2.1, surge: 1.2 };
+/** how many bodies may be alive at once; reinforcements queue behind this */
+export function maxAliveFor(depth) { return clamp(4 + Math.floor((depth | 0) / 2), 4, 9); }
+
 // Boss cadence is every five depths. The first encounter remains the Warden;
 // the second and third are distinct mythic opponents instead of repeats.
 export const BOSS_SEQUENCE = ['warden', 'minotaur', 'heracles'];
@@ -83,6 +107,8 @@ export function bossForDepth(depth, character = 'zagreus') {
 }
 
 const _v = new THREE.Vector3();
+/** no arrival may land farther than this from the hero (the dead-time guard) */
+export const SPAWN_MAX_DIST = 14.0;
 
 export class Spawner {
   constructor() {
@@ -113,41 +139,88 @@ export class Spawner {
    * shallow early (rooms 1-3 teach) and then linear, because difficulty in a
    * rogue-lite comes from COMPOSITION, not from arithmetic.
    */
-  budget(depth) { return 4 + Math.floor(depth * 1.35) + (depth >= 6 ? 2 : 0); }
+  budget(depth, biome = 'tartarus') {
+    return Math.round((4 + Math.floor(depth * 1.35) + (depth >= 6 ? 2 : 0)) * (BIOME_THREAT[biome] || 1));
+  }
 
-  /** compose a deterministic wave list for (biome, depth). */
-  compose(biome, depth) {
+  /** which beat a wave index plays in a room of nWaves */
+  beatFor(w, nWaves, depth) {
+    if (w === 0) return 'opener';
+    if (nWaves === 2) return 'pressure';
+    if (w === 1) return 'pressure';
+    if (w === 2) return depth >= 3 ? 'elite' : 'pressure';
+    return 'surge';
+  }
+
+  /**
+   * compose a deterministic wave list for (biome, depth).
+   * `trial` (from run.js) and `modifiers` (the run's pacts) shape the room:
+   * an ambush adds timed reinforcements, an elite trial adds a second elite,
+   * the RESTLESS pact trickles bodies into every wave past the opener.
+   */
+  compose(biome, depth, trial = null, modifiers = null) {
     const pool = ENCOUNTER_POOLS[biome] || ENCOUNTER_POOLS.tartarus;
     const live = pool.filter(p => p.w(depth) > 0);
-    const total = this.budget(depth);
+    const total = this.budget(depth, biome);
     // 2 waves shallow, 3 mid, 4 deep — pacing, not padding
     const nWaves = depth >= 7 ? 4 : depth >= 3 ? 3 : 2;
+    const split = nWaves === 2 ? [0.42, 0.58] : nWaves === 3 ? [0.30, 0.38, 0.32] : [0.24, 0.30, 0.26, 0.20];
+    const cheap = live.filter(p => CHEAP.has(p.kind));
+    const ranged = live.filter(p => RANGED.has(p.kind));
     const waves = [];
-    // the first wave is always the smallest: the room opens legibly
-    const split = [0.34, 0.30, 0.22, 0.14];
     for (let w = 0; w < nWaves; w++) {
-      let left = Math.max(2, Math.round(total * (split[w] ?? 0.2) * (1 + w * 0.18)));
+      const beat = this.beatFor(w, nWaves, depth);
+      let left = Math.max(2, Math.round(total * split[w]));
       const list = [];
       let guard = 0;
+      // the OPENER teaches: cheap melee only, and never more than four bodies
+      const source = beat === 'opener' && cheap.length ? cheap : beat === 'surge' && cheap.length ? cheap : live;
+      // PRESSURE forces a mixed composition: one ranged family first, so the
+      // wave has a priority target, then the rest by weight
+      if (beat === 'pressure' && depth >= 2 && ranged.length) {
+        const r = this.rng.weighted(ranged, (p) => p.w(depth));
+        if (r && r.cost <= left + 1) { list.push(r.kind); left -= r.cost; }
+      }
       while (left > 0 && guard++ < 24) {
-        const pick = this.rng.weighted(live, (p) => p.w(depth) * (p.cost <= left ? 1 : 0.001));
+        if (beat === 'opener' && list.length >= 4) break;
+        const pick = this.rng.weighted(source, (p) => p.w(depth) * (p.cost <= left ? 1 : 0.001));
         if (!pick || pick.cost > left + 1) break;
         const n = PACK[pick.kind] || 1;
         for (let i = 0; i < n && left > 0; i++) { list.push(pick.kind); left -= pick.cost; }
       }
-      // an escalation wave always carries one shape-changer if it can afford it
-      const shapers = ['herald', 'brute', 'lancer', 'siren', 'oracle', 'riftstalker'];
-      if (w === nWaves - 1 && depth >= 3 && !list.some(kind => shapers.includes(kind))) {
+      // the ELITE beat always carries one shape-changer if it can afford it
+      if (beat === 'elite' && !list.some(kind => SHAPERS.includes(kind))) {
         const specialist = depth >= 9 ? (depth % 2 ? 'riftstalker' : 'oracle') : depth >= 5 ? (depth % 2 ? 'siren' : 'herald') : 'lancer';
         list.push(specialist);
       }
+      if (beat === 'pressure' && nWaves === 2 && depth >= 3 && !list.some(kind => SHAPERS.includes(kind))) list.push('lancer');
+      // one body per elite wave becomes an ELITE from depth 3; an elite trial
+      // promotes one in the pressure wave as well
+      let elite = -1, affix = null;
+      if ((beat === 'elite' && depth >= 3) || (beat === 'pressure' && trial === 'elite')) {
+        let best = -1, bestCost = 0;
+        for (let i = 0; i < list.length; i++) {
+          const c = (pool.find(p => p.kind === list[i]) || { cost: 1 }).cost;
+          if (c > bestCost) { bestCost = c; best = i; }
+        }
+        elite = best; affix = this.rng.pick(ELITE_AFFIXES);
+      }
+      // REINFORCEMENTS ON A TIMER. Small, late, and behind the alive cap.
+      const trickle = [];
+      const restless = !!(modifiers && modifiers.has && modifiers.has('restless'));
+      if (beat === 'pressure' && depth >= 4) trickle.push({ kind: 'shade', at: 7.5 });
+      if (beat !== 'opener' && (trial === 'ambush' || restless)) {
+        const a = cheap.length ? this.rng.pick(cheap).kind : 'shade';
+        const b = cheap.length ? this.rng.pick(cheap).kind : 'shade';
+        trickle.push({ kind: a, at: 5.5 }, { kind: b, at: 10.5 });
+      }
       waves.push({
-        list,
-        // BREATH: the gap before this wave arrives. Wave 0 is nearly instant so
-        // the room starts; later waves get a real beat of silence.
-        delay: w === 0 ? 0.55 : (depth >= 6 ? 1.35 : 1.8),
+        beat, list, elite, affix, trickle,
+        // BREATH: the gap before this wave arrives. The opener is nearly
+        // instant so the room starts; the elite beat gets the longest silence.
+        delay: BREATH[beat] * (depth >= 6 && beat !== 'elite' ? 0.8 : 1),
         // arrivals inside a wave are staggered so six things never pop at once
-        stagger: 0.22,
+        stagger: beat === 'surge' ? 0.16 : 0.22,
         trigger: w === 0 ? 'immediate' : 'thinned',
       });
     }
@@ -158,29 +231,38 @@ export class Spawner {
   beginRoom(biome, depth = 0, opts = {}) {
     const ctx = this.ctx;
     this.roomId++;
+    this.roomT = 0;
     this.mgr.clear();
     this.biome = biome || (ctx.world && ctx.world.biome) || 'tartarus';
     this.depth = depth | 0;
     this.rng.reseed(('room:' + this.biome + ':' + this.depth + ':' + (opts.seed ?? this.roomId)));
     this.boss = !!opts.boss || (this.depth > 0 && this.depth % 5 === 0);
-    this.waves = this.boss ? this._bossWaves() : this.compose(this.biome, this.depth);
+    this.trial = opts.trial ?? ctx.run?.trial ?? null;
+    this.modifiers = opts.modifiers ?? ctx.run?.modifiers ?? null;
+    this.maxAlive = maxAliveFor(this.depth) + (this.modifiers?.has?.('frenzy') ? 1 : 0);
+    this.waves = this.boss ? this._bossWaves() : this.compose(this.biome, this.depth, this.trial, this.modifiers);
     this.wave = -1;
     this.timer = 0;
     this.pending.length = 0;
     this.active = true;
     this.cleared = false;
     this.spawnedTotal = 0;
-    ctx.events.emit('encounter.begin', { biome: this.biome, depth: this.depth, waves: this.waves.length, boss: this.boss });
+    this.elitesSpawned = 0;
+    ctx.events.emit('encounter.begin', { biome: this.biome, depth: this.depth, waves: this.waves.length, boss: this.boss, trial: this.trial, maxAlive: this.maxAlive });
     return this;
   }
 
   _bossWaves() {
     const character = this.ctx?.run?.selectedCharacter || this.ctx?.player?.characterId || 'zagreus';
     const boss = bossForDepth(this.depth, character);
-    return [
-      { list: [boss], delay: 1.1, stagger: 0, trigger: 'immediate' },
-      { list: ['shade', 'shade'], delay: 8.0, stagger: 0.3, trigger: 'timed' },
+    const waves = [
+      { beat: 'boss', list: [boss], delay: 1.1, stagger: 0, trigger: 'immediate', trickle: [], elite: -1 },
+      { beat: 'pressure', list: ['shade', 'shade'], delay: 8.0, stagger: 0.3, trigger: 'timed', trickle: [], elite: -1 },
     ];
+    // the later bosses get a second timed reinforcement so the arena never
+    // settles into a duel the player has already solved
+    if ((this.depth | 0) >= 10) waves.push({ beat: 'surge', list: ['hound', 'hound', 'hound'], delay: 34.0, stagger: 0.25, trigger: 'timed', trickle: [], elite: -1 });
+    return waves;
   }
 
   stop() { this.active = false; this.pending.length = 0; }
@@ -195,15 +277,28 @@ export class Spawner {
   update(dt, ctx) {
     if (!this.active) return;
     this.timer += dt;
+    this.roomT = (this.roomT || 0) + dt;
 
     // staged arrivals inside the current wave
     for (let i = this.pending.length - 1; i >= 0; i--) {
       const p = this.pending[i];
       p.t -= dt;
-      if (p.t <= 0) { this.pending.splice(i, 1); this._place(p.kind, p.index, p.count); }
+      if (p.t <= 0) { this.pending.splice(i, 1); this._place(p.kind, p.index, p.count, { elite: p.elite }); }
     }
 
     const alive = this.mgr.aliveCount;
+    // timed reinforcements inside the live wave, held behind the alive cap
+    const cur = this.wave >= 0 ? this.waves[this.wave] : null;
+    if (cur && cur.trickle && cur.trickle.length) {
+      for (let i = 0; i < cur.trickle.length; i++) {
+        const t = cur.trickle[i];
+        if (t.done || this.timer < t.at) continue;
+        if (this.mgr.aliveCount >= (this.maxAlive || 8)) continue;
+        t.done = true;
+        const e = this._place(t.kind, i, cur.trickle.length, { reinforcement: true });
+        if (e) ctx.events.emit('wave.reinforce', { index: this.wave, kind: t.kind, entity: e, depth: this.depth });
+      }
+    }
     const next = this.waves[this.wave + 1];
     if (next) {
       let go = false;
@@ -224,7 +319,8 @@ export class Spawner {
       this.mgr.telegraphs.clear();
       ctx.events.emit('room.cleared', {
         room: this.roomId, biome: this.biome, depth: this.depth,
-        boss: this.boss, spawned: this.spawnedTotal,
+        boss: this.boss, spawned: this.spawnedTotal, trial: this.trial, elites: this.elitesSpawned,
+        time: this.roomT || 0,
       });
       ctx.ui?.toast?.('Chamber cleared', { color: '#f2c14e' });
     }
@@ -235,9 +331,13 @@ export class Spawner {
     this.timer = 0;
     const w = this.waves[this.wave];
     if (!w) return;
-    this.ctx.events.emit('wave.begin', { index: this.wave, count: w.list.length, depth: this.depth });
+    if (w.trickle) for (let i = 0; i < w.trickle.length; i++) w.trickle[i].done = false;
+    this.ctx.events.emit('wave.begin', { index: this.wave, count: w.list.length, depth: this.depth, beat: w.beat, elite: w.elite >= 0 ? w.affix : null });
     for (let i = 0; i < w.list.length; i++) {
-      this.pending.push({ kind: w.list[i], t: i * (w.stagger || 0), index: i, count: w.list.length });
+      // the elite arrives LAST, announced, when the rest of its wave is already
+      // on the floor — the question is asked after the room is set
+      const order = w.elite === i ? w.list.length - 1 : (i > w.elite && w.elite >= 0 ? i - 1 : i);
+      this.pending.push({ kind: w.list[i], t: order * (w.stagger || 0) + (w.elite === i ? 0.35 : 0), index: i, count: w.list.length, elite: w.elite === i ? w.affix : null });
     }
   }
 
@@ -245,7 +345,7 @@ export class Spawner {
    * Place one arrival. Enemies come in AROUND the player at a ring the player
    * can see, never behind the camera and never inside the hero's dash range.
    */
-  _place(kind, index, count) {
+  _place(kind, index, count, o = {}) {
     const ctx = this.ctx;
     const p = ctx.player ? ctx.player.position : _v.set(0, 0, 0);
     const R = ctx.world && ctx.world.bounds ? ctx.world.bounds.r : 16;
@@ -253,12 +353,20 @@ export class Spawner {
     // the sides so nothing materialises directly in the hero's blind spot
     const base = this.rng.range(0, TAU);
     const a = base + (index / Math.max(1, count)) * TAU * 0.86;
-    const ring = clamp(R * 0.68, 9.0, 23.5) + this.rng.range(-1.8, 1.8);
-    const x = Math.cos(a) * ring, z = Math.sin(a) * ring;
+    // THE ARRIVAL RING IS MEASURED FROM THE HERO, NOT THE ORIGIN. A ring around
+    // the arena centre put a body 25-35 m from a hero standing near a wall,
+    // and that body spent six seconds walking (or, past its perception range,
+    // standing) while the wave "ended" without it. Arrivals now come in on the
+    // hero's side of the room: ~11 m out for a wave, ~7 m for a reinforcement,
+    // never past SPAWN_MAX_DIST, and the arena rim clamps whatever falls
+    // outside — which lands the body on the rim of the hero's half.
+    const want = o.reinforcement ? clamp(R * 0.42, 6.5, 9.0) : clamp(R * 0.62, 9.0, 12.5);
+    const ring = want + this.rng.range(-1.4, 1.4);
+    const x = p.x + Math.cos(a) * ring, z = p.z + Math.sin(a) * ring;
     const e = this.mgr.spawn(kind, { x, z }, {
-      depth: this.depth, wave: this.wave, minPlayerDist: 6.0,
+      depth: this.depth, wave: this.wave, minPlayerDist: 6.0, maxPlayerDist: SPAWN_MAX_DIST, elite: o.elite || null,
     });
-    if (e) this.spawnedTotal++;
+    if (e) { this.spawnedTotal++; if (e.elite) this.elitesSpawned++; }
     return e;
   }
 
@@ -266,7 +374,7 @@ export class Spawner {
   force(list, opts = {}) {
     this.mgr.clear();
     this.active = true; this.cleared = false;
-    this.waves = [{ list, delay: 0, stagger: opts.stagger ?? 0.15, trigger: 'immediate' }];
+    this.waves = [{ beat: 'forced', list, delay: 0, stagger: opts.stagger ?? 0.15, trigger: 'immediate', trickle: [], elite: opts.elite ?? -1, affix: opts.affix || null }];
     this.wave = -1; this.timer = 99; this.pending.length = 0;
     return this;
   }

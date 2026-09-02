@@ -29,6 +29,7 @@
 import * as THREE from 'three';
 import { hexToRgb } from '../materials/palette.js';
 import { setPaint } from '../materials/painterly.js';
+import { characterShader } from '../render/shaders/character.js';
 import { TAU, clamp, clamp01, lerp, smoothstep } from '../core/math.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -72,13 +73,59 @@ function ih(a, b, c) {
  * Exactly 1 at theta = 0 and 90 degrees, so the section's bounding box (and
  * therefore the part's silhouette) is unchanged.
  */
-function superellipse(n) {
+export function superellipse(n) {
   return (th) => {
     const c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
     return 1 / Math.pow(Math.pow(c, n) + Math.pow(s, n), 1 / n);
   };
 }
-const SECT5 = superellipse(5);
+/** a ground blade: two edges on the N axis, a ridge on the B axis */
+export const DIAMOND = superellipse(1.25);
+/** a struck plate: flat faces, tight corners */
+export const PLATE = superellipse(5);
+const SECT5 = PLATE;
+/** a fullered blade: the diamond with a groove down each flat */
+export function fullered(depth = 0.30) {
+  return (th) => {
+    const s = Math.abs(Math.sin(th));
+    const g = Math.exp(-Math.pow((1 - s) / 0.16, 2));
+    return DIAMOND(th) * (1 - depth * g);
+  };
+}
+
+/**
+ * THE ONE RING SPINE. Every horizontal band in the game — the hero's armour
+ * lames (bandAt below), the roster's ferrules and circlets (enemies/props.js
+ * ring), the arms' collars (player-weapons.js bandRing) — is a sweep of a
+ * plate section round +y, and they used to be three copies of the same loop.
+ *   { y|cy, R, th, hh, seg, a0, a1 (deg), cx, cz, ex, ez, rx(a), dy(a), prof(t) }
+ */
+export function ringSpine(o = {}, N = o.seg ?? 20) {
+  const A0 = (o.a0 ?? 0) * D2R, A1 = (o.a1 ?? 360) * D2R;
+  const cy = o.cy ?? o.y ?? 0;
+  const spine = [];
+  for (let i = 0; i < N; i++) {
+    const t = N > 1 ? i / (N - 1) : 0, a = lerp(A0, A1, t);
+    const prof = o.prof ? o.prof(t) : 1;
+    const R = (o.R ?? 0.18) * (o.rx ? o.rx(a) : 1);
+    spine.push({
+      p: [(o.cx ?? 0) + R * Math.sin(a) * (o.ex ?? 1),
+        cy + (o.dy ? o.dy(a) : 0),
+        (o.cz ?? 0) + R * Math.cos(a) * (o.ez ?? 1)],
+      r: 1, sx: o.th ?? 0.008, sz: (o.hh ?? 0.02) * prof,
+    });
+  }
+  return spine;
+}
+/** a chamfered ring around +y: ferrule, collar, circlet, lame. Plate section by default. */
+export function ringSweep(o = {}) {
+  const full = Math.abs((o.a1 ?? 360) - (o.a0 ?? 0)) >= 359.9;
+  const cap = o.cap ?? (full ? 'flat' : 'round');
+  return tubeGeo(ringSpine(o), {
+    radial: o.radial ?? 8, up: [0, 1, 0], capStart: cap, capEnd: cap,
+    shape: o.shape === undefined ? PLATE : o.shape,
+  });
+}
 
 const fade5 = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 /** C1 trilinear value noise, 0..1, wavelength 1 unit. */
@@ -384,6 +431,32 @@ export const HERO_SPEC = {
     // Player weapons are separate hand-mounted models (player-weapons.js),
     // allowing the equipped arm to change silhouette at runtime.
     weapon: 'none',        // 'xiphos' | 'none'
+    // ── BODY-PLAN LIBRARY (shared with the roster via mergeSpec) ──────────
+    // Every one of these is authored ONCE here and switched on per actor, so
+    // the roster reads as different BODY PLANS rather than recolours of one:
+    //   helm     'none' | 'corinthian' | 'attic' | 'horned'   (rigid to head)
+    //   hood     'none' | 'cowl' | 'deep'                     (head + chest)
+    //   robe     true: a closed, folded floor-length garment over the legs;
+    //            the skirt bones still exist and drive it, the pteruges do not draw
+    //   sleeves  true: wide hanging caster sleeves off both forearms
+    //   tabard   true: front/back hanging panels with a bordered emblem
+    //   spikes   true: three spikes on each pauldron cap
+    //   armlet   'left' | 'right' | 'both' | 'none' — a gold band on the bare upper arm
+    //   capeStyle 'scallop' | 'tattered' — the mantle's free hem
+    helm: 'none',
+    hood: 'none',
+    robe: false,
+    sleeves: false,
+    tabard: false,
+    spikes: false,
+    armlet: 'right',       // the pauldron is on the LEFT; the bare arm gets the band
+    capeStyle: 'scallop',
+    //   scabbard 'left' | 'right' | 'none' — an empty sheath on the hip, the
+    //            silhouette's second diagonal opposite the drawn blade
+    //   sash     true: a long hanging tongue of cloth down the front of the
+    //            pteruges, gold-tipped — the Hades hero's one loose end
+    scabbard: 'left',
+    sash: true,
   },
   // The eyes and the harness sigil are the only emissive on the character. At
   // 0.85 they clipped to white ping-pong balls instead of reading as the
@@ -461,6 +534,9 @@ export const MELINOE_SPEC = {
     // where the spectral rings and the cast VFX live.
     openHand: 'left',
     weapon: 'none',
+    armlet: 'none',        // her free arm is the spectral one — keep it clean
+    scabbard: 'none',
+    sash: true,
   },
   glowIntensity: 0.28,
   density: 2.0,
@@ -1637,19 +1713,7 @@ function buildParts(spec) {
     // n = 5 against the radial count the ornament zones supply (10 -> ~28)
     // puts 3-4 samples across the corner, which is what "resolvable" means.
     const N = Math.max(2, Math.round((o.seg ?? 26) * (1 + (bg - 1) * 0.75)));
-    const A0 = (o.a0 ?? 0) * D2R, A1 = (o.a1 ?? 360) * D2R;
-    const spine = [];
-    for (let i = 0; i < N; i++) {
-      const t = N > 1 ? i / (N - 1) : 0, a = lerp(A0, A1, t);
-      const prof = o.prof ? o.prof(t) : 1;
-      const R = (o.R ?? 0.18) * (o.rx ? o.rx(a) : 1);
-      spine.push({
-        p: [(o.cx ?? 0) + R * Math.sin(a) * (o.ex ?? 1),
-        (o.cy ?? 0) + (o.dy ? o.dy(a) : 0),
-        (o.cz ?? 0) + R * Math.cos(a) * (o.ez ?? 1)],
-        r: 1, sx: o.th, sz: o.hh * prof,
-      });
-    }
+    const spine = ringSpine(o, N);
     const g = tubeGeo(spine, {
       radial: Math.max(3, Math.round((o.radial ?? 10) * (1 + (bg - 1) * 1.45))), up: [0, 1, 0],
       capStart: o.cap ?? 'flat', capEnd: o.cap ?? 'flat',
@@ -2059,6 +2123,17 @@ function buildParts(spec) {
       { p: [BX(s) + o.px * s + 0.010 * s, o.py + o.scale[1] * 1.02, 0.004], r: 0.0145, sx: 0.8, sz: 1.2 },
       { p: [BX(s) + o.px * s, o.py + o.scale[1] * 0.56, o.scale[2] * 0.90], r: 0.0085, sx: 0.8, sz: 1.2 },
     ], { radial: 7, capStart: 'round', capEnd: 'round' }), 'metal', P.metalHot, { mode: 'rigid', bone });
+    // SPIKES — the brute's read. Three tapered spikes standing out of the cap,
+    // each one a notch cut in the shoulder's outline (§1.1 silhouette first).
+    if (F.spikes) for (let i = -1; i <= 1; i++) {
+      const cx = BX(s) + o.px * s, z = 0.004 + i * o.scale[2] * 0.55;
+      add(TUBE([
+        { p: [cx + 0.020 * s, o.py + o.scale[1] * 0.70, z], r: 0.024 },
+        { p: [cx + 0.060 * s, o.py + o.scale[1] * 1.55, z * 1.25], r: 0.014 },
+        { p: [cx + 0.096 * s, o.py + o.scale[1] * 2.45 + 0.04, z * 1.5], r: 0.003 },
+      ], { radial: 7, capStart: 'flat', capEnd: 'round' }), 'metal',
+        (x, y) => (y > o.py + 0.075 ? P.metalHot : P.metal), { mode: 'rigid', bone });
+    }
   };
   const pauldron = (s) => {
     // 0.070 -> 0.054 of cap height. At 0.070 the dome was still the largest
@@ -2087,6 +2162,23 @@ function buildParts(spec) {
   else if (F.pauldron !== 'none') smallCap(1);
   if (F.pauldron === 'right' || F.pauldron === 'both') pauldron(-1);
   else if (F.pauldron !== 'none') smallCap(-1);
+
+  // ── ARMLET — a gold band on the BARE upper arm ───────────────────────────
+  // The un-pauldroned arm was 30cm of unbroken skin from the deltoid to the
+  // bracer. A Hades hero wears a band there; it is the one ornament on that
+  // side of the silhouette, and it gives the arm's key a hard arris to catch.
+  for (const s of [1, -1]) {
+    const S = s > 0 ? 'left' : 'right';
+    if (F.armlet !== S && F.armlet !== 'both') continue;
+    // never under a full pauldron: the third lame already owns that height
+    if (F.pauldron === 'both' || F.pauldron === S) continue;
+    const S2 = s > 0 ? 'L' : 'R';
+    add(band({ cx: 0.238 * SW * s, cy: 1.318, cz: -0.004, R: 0.082 * BK, th: 0.0085, hh: 0.026, seg: 22, radial: 8 }),
+      'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { mode: 'rigid', bone: 'arm' + S2 });
+    // a struck boss on the outer face, the same idiom as the girdle studs
+    add(BALL(8, 6, { pos: [(0.238 * SW + 0.084 * BK) * s, 1.318, -0.004], scale: [0.010, 0.024, 0.020] }),
+      'metal', P.metalHot, { mode: 'rigid', bone: 'arm' + S2 });
+  }
 
   // ── harness, gorget, medallion ───────────────────────────────────────────
   if (F.harness) {
@@ -2160,7 +2252,9 @@ function buildParts(spec) {
   // and they are cut in a long-short rhythm; that rhythm plus the taper is the
   // whole reason a Hades skirt reads as cloth in motion rather than as a barrel.
   const NS = F.skirt | 0;
-  for (let i = 0; i < NS; i++) {
+  // A robe REPLACES the panels but keeps their bones: the skirt chains are what
+  // make the garment swing, and the closed cloth is authored over them below.
+  for (let i = 0; i < (F.robe ? 0 : NS); i++) {
     const a0 = (22.5 + i * (360 / NS)) * D2R;
     // 0.76 of the pitch left 11 degrees of bare thigh between neighbouring
     // panels, and in 03_hero_char the skirt read as four crimson STRAPS over
@@ -2211,7 +2305,16 @@ function buildParts(spec) {
       // hem: five scallops, deep enough to notch the OUTLINE rather than just
       // shade the surface — the hem is the cape's only free edge and it is the
       // only place the cape can stop being a rectangle.
-      y -= 0.092 * Math.sin(v * Math.PI * 5.0) * smoothstep(clamp01((u - 0.46) / 0.54));
+      if (F.capeStyle === 'tattered') {
+        // A SHADE'S SHROUD. The hem is torn, not scalloped: a fast irregular
+        // saw of two incommensurate frequencies so no two notches match, deep
+        // enough (14cm) to cut the outline into rags at play distance.
+        const rag = Math.pow(Math.abs(Math.sin(v * Math.PI * 9.0 + 0.7)), 0.55) * 0.105
+          + Math.abs(Math.sin(v * Math.PI * 23.0 + 2.1)) * 0.040;
+        y -= rag * smoothstep(clamp01((u - 0.40) / 0.60));
+      } else {
+        y -= 0.092 * Math.sin(v * Math.PI * 5.0) * smoothstep(clamp01((u - 0.46) / 0.54));
+      }
       return V(RR * Math.sin(ang), y, zc - RR * Math.cos(ang));
     }, 0.024), 'cloth',
       (x, y, z, u, v, side) => (side < 0 ? P.capeLine : (u > 0.62 ? (P.capeDeep || P.cape) : P.cape)),
@@ -2399,27 +2502,260 @@ function buildParts(spec) {
       'metal', chamfer(P.metalHot, P.metal, P.metalDeep), { only: ['foot' + S, 'shin' + S] });
   }
 
+  // ═══ BODY-PLAN LIBRARY ═══════════════════════════════════════════════════
+  // Everything from here to the xiphos is OPT-IN per spec.features. The hero
+  // takes none of it except the armlet; the roster takes what its ROLE needs
+  // (base.js: swarm small, brutes wide, casters tall and robed, champions
+  // ornamented). All of it lives inside the one skinned mesh, so a helm or a
+  // hood is a silhouette change at zero draw calls.
+
+  // ── HELM ─────────────────────────────────────────────────────────────────
+  // A bowl that stops at the brow (the eyes are the family's emissive and must
+  // stay visible), a chamfered rim band, two rear neck lames, and then the
+  // identity piece: Corinthian cheek-plates + nasal + horsehair crest, an Attic
+  // peak + plume, or a pair of horns.
+  if (F.helm && F.helm !== 'none') {
+    const HB = { pos: [0, 1.702, 0.004], scale: [0.172, 0.190, 0.180] };
+    const hg = DENS === 1 ? 1 : gainAt('metal', 0, 1.80, 0.0);
+    const bowl = prim(new THREE.SphereGeometry(1, Math.round(22 * hg), Math.round(11 * hg), 0, TAU, 0, 1.32), HB);
+    bowl.userData.dk = 'mt.plate'; bowl.userData.dc = [0, 1.75, 0.004, 0.14];
+    add(bowl, 'metal', (x, y) => (y > 1.862 ? P.metalHot : P.metal), RH);
+    add(band({ cy: 1.748, cz: 0.004, R: 0.170, ez: 1.05, th: 0.010, hh: 0.022, seg: 34, radial: 8 }),
+      'metal', chamfer(P.metalHot, P.metal, P.metalDeep), RH);
+    // neck lames: two stepped plates over the nape
+    add(band({ cy: 1.712, cz: -0.004, R: 0.178, ez: 1.04, a0: 118, a1: 242, th: 0.011, hh: 0.040, seg: 14, radial: 8 }),
+      'metal', chamfer(P.metalHot, P.metalDeep, P.metalDeep), RH);
+    add(band({ cy: 1.668, cz: -0.012, R: 0.186, ez: 1.04, a0: 126, a1: 234, th: 0.010, hh: 0.036, seg: 12, radial: 8 }),
+      'metal', chamfer(P.metalHot, P.metalDeep, P.metalDeep), RH);
+    if (F.helm === 'corinthian') {
+      for (const s of [1, -1]) add(TUBE([
+        { p: [0.158 * s, 1.746, 0.060], r: 0.050, sx: 0.24, sz: 1.00 },
+        { p: [0.150 * s, 1.690, 0.078], r: 0.052, sx: 0.24, sz: 1.00 },
+        { p: [0.132 * s, 1.610, 0.096], r: 0.040, sx: 0.24, sz: 0.90 },
+        { p: [0.118 * s, 1.566, 0.104], r: 0.022, sx: 0.24, sz: 0.70 },
+      ], { radial: 8, capStart: 'flat', capEnd: 'round', shape: SECT5 }), 'metal',
+        (x, y, z, u) => (((u > 0.18 && u < 0.32) || (u > 0.68 && u < 0.82)) ? P.metalHot : P.metal), RH);
+      add(TUBE([
+        { p: [0, 1.752, 0.150], r: 0.016, sx: 1.0, sz: 0.55 },
+        { p: [0, 1.700, 0.170], r: 0.014, sx: 1.0, sz: 0.55 },
+        { p: [0, 1.652, 0.178], r: 0.010, sx: 1.0, sz: 0.55 },
+      ], { radial: 6, capStart: 'flat', capEnd: 'round' }), 'metal', P.metalHot, RH);
+      // CREST: a fore-aft fan of horsehair on a metal box. The tallest thing on
+      // the figure, and the one shape that names "hoplite" from a thumbnail.
+      add(SHEET(4, 16, (u, v) => {
+        const ph = lerp(0.95, -1.62, v);
+        const h = 0.050 + 0.115 * Math.sin(Math.PI * Math.pow(v, 0.78));
+        const R = 1.03 + u * (h / 0.19);
+        return V(0, 1.702 + 0.190 * R * Math.cos(ph), 0.004 + 0.180 * R * Math.sin(ph));
+      }, 0.028), 'hair', (x, y, z, u) => (u < 0.20 ? P.metal : (u > 0.84 ? (P.capeLine || P.hairTip) : P.cloth)), RH, 'no');
+    } else if (F.helm === 'attic') {
+      // a forward PEAK over the brow, hinged cheek flaps and a horse-tail plume
+      add(SHEET(3, 12, (u, v) => {
+        const a = (v - 0.5) * 2.4;
+        const r = 0.174 + u * 0.062;
+        return V(r * Math.sin(a), 1.748 - u * 0.030 - 0.012 * Math.abs(a), 0.004 + r * Math.cos(a) * 1.05);
+      }, 0.012), 'metal', (x, y, z, u) => (u > 0.78 ? P.metalHot : P.metal), RH);
+      for (const s of [1, -1]) add(TUBE([
+        { p: [0.156 * s, 1.740, 0.046], r: 0.044, sx: 0.24, sz: 1.0 },
+        { p: [0.148 * s, 1.672, 0.058], r: 0.046, sx: 0.24, sz: 1.0 },
+        { p: [0.130 * s, 1.612, 0.072], r: 0.030, sx: 0.24, sz: 0.8 },
+      ], { radial: 8, capStart: 'flat', capEnd: 'round', shape: SECT5 }), 'metal', P.metalDeep, RH);
+      add(TUBE([
+        { p: [0, 1.888, -0.030], r: 0.026 },
+        { p: [0, 1.905, -0.140], r: 0.036 },
+        { p: [0, 1.840, -0.262], r: 0.032 },
+        { p: [0, 1.716, -0.334], r: 0.018 },
+        { p: [0, 1.596, -0.352], r: 0.005 },
+      ], { radial: 8, capStart: 'round', capEnd: 'round' }), 'hair',
+        (x, y, z) => (z < -0.24 ? (P.capeLine || P.hairTip) : P.cloth), RH, 'no');
+    } else if (F.helm === 'horned') {
+      for (const s of [1, -1]) add(TUBE([
+        { p: [0.120 * s, 1.800, -0.010], r: 0.052, sx: 1.0, sz: 0.9 },
+        { p: [0.215 * s, 1.870, -0.050], r: 0.044 },
+        { p: [0.290 * s, 1.990, -0.110], r: 0.030 },
+        { p: [0.318 * s, 2.130, -0.170], r: 0.016 },
+        { p: [0.300 * s, 2.250, -0.215], r: 0.004 },
+      ], { radial: 9, capStart: 'flat', capEnd: 'round' }), 'metal',
+        (x, y) => (y > 2.05 ? P.metalHot : (y < 1.86 ? P.metalDeep : P.metal)), RH, 'mt.orn');
+      add(prim(new THREE.OctahedronGeometry(0.030, 0), { pos: [0, 1.800, 0.176], scale: [0.8, 1.3, 0.5] }),
+        'glow', P.glow, RH);
+    }
+  }
+
+  // ── HOOD ─────────────────────────────────────────────────────────────────
+  // A cowl over the skull whose face opening narrows to a brow overhang at the
+  // top and widens to the chest at the bottom, falling into a short mantle
+  // ('cowl') or a full shoulder cape ('deep'). The inside is the ink colour,
+  // so the face — and the eyes, the family's emissive — sit in a real shadow.
+  if (F.hood && F.hood !== 'none') {
+    const DEEP = F.hood === 'deep';
+    const HC = V(0, 1.700, -0.012), HR = V(0.190, 0.202, 0.198);
+    const TH1 = 1.42;
+    add(SHEET(12, 22, (u, v) => {
+      const th = u * (DEEP ? 2.75 : 2.30);
+      const t = (v - 0.5) * 2;
+      const op = lerp(0.50, DEEP ? 1.05 : 1.30, smoothstep(clamp01((th - 0.35) / 1.4)));
+      const phi = Math.PI - t * (Math.PI - op);
+      const fold = 1 + 0.028 * Math.cos(phi * 7.0) * smoothstep(clamp01((th - 0.7) / 0.9));
+      let x, y, z;
+      if (th <= TH1) {
+        x = HR.x * fold * Math.sin(th) * Math.sin(phi);
+        y = HR.y * Math.cos(th);
+        z = HR.z * fold * Math.sin(th) * Math.cos(phi);
+      } else {
+        const k = th - TH1;
+        const flare = 1 + k * (DEEP ? 0.62 : 0.50);
+        x = HR.x * fold * Math.sin(TH1) * flare * Math.sin(phi);
+        y = HR.y * Math.cos(TH1) - k * 0.36;
+        z = HR.z * fold * Math.sin(TH1) * flare * Math.cos(phi) - k * 0.06;
+      }
+      const edge = Math.pow(Math.abs(t), 4.0);
+      const brow = (1 - smoothstep(clamp01(th / 0.9))) * 0.075 * edge;
+      z += brow; y += brow * 0.35;
+      return V(HC.x + x, HC.y + y, HC.z + z);
+    }, 0.022), 'cloth',
+      (x, y, z, u, v, side) => (side < 0 ? (P.capeDeep || P.clothDeep)
+        : (Math.abs(v - 0.5) > 0.47 ? P.capeLine : (u > 0.62 ? (P.capeDeep || P.cape) : P.cape))),
+      { only: ['head', 'neck', 'chest', 'clavL', 'clavR'], bias: { head: 3.0 } }, 'cl.cape');
+  }
+
+  // ── ROBE ─────────────────────────────────────────────────────────────────
+  // The caster's TRIANGLE: a closed garment from the girdle to the floor with
+  // sixteen deepening folds, a dragged hem, a front stole with braided edges
+  // and a gold hem band. It rides the skirt chains so it swings on the walk.
+  if (F.robe) {
+    const NF = 16;
+    const RW = lerp(1, BK, 0.7);
+    const skirtBones = [];
+    for (let i = 0; i < NS; i++) skirtBones.push(`skirt${i}A`, `skirt${i}B`);
+    add(SHEET(14, 40, (u, v) => {
+      const a = -v * TAU;
+      const e = Math.pow(u, 0.85);
+      const fold = Math.cos(a * NF + 0.4) * (0.006 + 0.046 * e);
+      const rr = lerp(0.192 * RW, 0.430, e) + fold;
+      const hem = 0.045 * Math.pow(u, 6) * (0.5 + 0.5 * Math.cos(a * NF * 0.5 + 1.1));
+      const y = lerp(0.955, 0.062, u) + hem;
+      return V(rr * Math.sin(a), y, rr * Math.cos(a) * 0.94 - 0.035 * e);
+    }, 0.022), 'cloth',
+      (x, y, z, u, v) => {
+        const a = v * TAU, front = Math.cos(a) > 0 ? Math.abs(Math.sin(a)) : 1;
+        if (u > 0.945) return P.metal;
+        if (u > 0.885) return P.clothDeep;
+        if (front < 0.20) return P.cape;
+        if (front < 0.25) return P.metalDeep;
+        return u > 0.55 ? P.clothDeep : P.cloth;
+      },
+      { only: ['pelvis', 'spine1', ...skirtBones, 'thighL', 'thighR', 'shinL', 'shinR'], bias: { pelvis: 0.9 } }, 'cl.cape');
+  }
+
+  // ── SLEEVES ──────────────────────────────────────────────────────────────
+  // Wide hanging sleeves off both forearms, the mouth falling past the wrist.
+  if (F.sleeves) for (const s of [1, -1]) {
+    const S = s > 0 ? 'L' : 'R';
+    add(TUBE([
+      { p: [0.243 * SW * s, 1.200, -0.010], r: 0.078 * BK, sx: 1.0, sz: 1.0 },
+      { p: [0.246 * SW * s, 1.080, -0.004], r: 0.088 * BK, sx: 1.05, sz: 1.0 },
+      { p: [0.249 * SW * s, 0.960, 0.006], r: 0.112 * BK, sx: 1.10, sz: 1.05 },
+      { p: [0.250 * SW * s, 0.880, 0.012], r: 0.128 * BK, sx: 1.12, sz: 1.10 },
+    ], { radial: 14, capStart: 'flat', capEnd: 'flat' }), 'cloth',
+      (x, y) => (y < 0.90 ? P.metal : (y < 0.99 ? P.clothDeep : P.cloth)),
+      { mode: 'rigid', bone: 'fore' + S }, 'cl.cape');
+  }
+
+  // ── TABARD ───────────────────────────────────────────────────────────────
+  // Front and back panels hung from the girdle to the knee: a bordered field
+  // with the family's identity colour as an emblem. The brute's heraldry.
+  if (F.tabard) for (const s of [1, -1]) {
+    add(SHEET(8, 4, (u, v) => {
+      const w = 0.108 * (1 - 0.12 * u) * SW;
+      const x = -s * (v - 0.5) * 2 * w;
+      const y = lerp(0.950, 0.395, u) + 0.055 * u * u * Math.abs(v - 0.5) * 2;
+      const z = s * lerp(0.190, 0.242, u) * lerp(1, BK, 0.7) + 0.014 * Math.sin(u * Math.PI * 2.5) * s;
+      return V(x, y, z);
+    }, 0.020), 'cloth',
+      (x, y, z, u, v) => ((Math.abs(v - 0.5) > 0.40 || u > 0.90) ? P.metal
+        : ((u > 0.30 && u < 0.58 && Math.abs(v - 0.5) < 0.19) ? P.capeLine : P.cape)),
+      { only: ['pelvis', 'spine1', 'thighL', 'thighR'], bias: { pelvis: 1.2 } }, 'cl.cape');
+  }
+
+  // ── SCABBARD ─────────────────────────────────────────────────────────────
+  // An empty sheath hung from the girdle, angled back down the hip: a leather
+  // body with a gold throat, a locket band and a chape at the point. It is
+  // the second diagonal in the black shape, crossing the drawn blade's.
+  if (F.scabbard && F.scabbard !== 'none') {
+    const s = F.scabbard === 'left' ? 1 : -1;
+    const SB = lerp(1, BK, 0.7);
+    add(TUBE([
+      { p: [0.205 * SB * s, 0.905, -0.050], r: 0.034, sx: 1.55, sz: 0.55 },
+      { p: [0.232 * SB * s, 0.760, -0.130], r: 0.036, sx: 1.55, sz: 0.55 },
+      { p: [0.250 * SB * s, 0.560, -0.230], r: 0.030, sx: 1.45, sz: 0.52 },
+      { p: [0.256 * SB * s, 0.420, -0.300], r: 0.016, sx: 1.30, sz: 0.50 },
+    ], { radial: 10, capStart: 'flat', capEnd: 'round', shape: SECT5 }), 'cloth',
+      (x, y, z, u, v) => ((Math.floor(v * 5) % 2) ? P.leather : P.clothDeep),
+      { only: ['pelvis', 'thigh' + (s > 0 ? 'L' : 'R')], bias: { pelvis: 2.0 } }, 'cl.leather');
+    // throat, locket and chape: three gold bands that catch the key down the line
+    for (const [t, y, z, r] of [[0, 0.895, -0.055, 0.040], [1, 0.730, -0.146, 0.040], [2, 0.445, -0.288, 0.026]]) {
+      add(TUBE([
+        { p: [(0.205 + 0.017 * t) * SB * s, y + 0.012, z + 0.006], r, sx: 1.6, sz: 0.62 },
+        { p: [(0.205 + 0.017 * t) * SB * s, y - 0.012, z - 0.006], r, sx: 1.6, sz: 0.62 },
+      ], { radial: 10, capStart: 'flat', capEnd: 'flat', shape: SECT5 }), 'metal',
+        t === 1 ? P.metalDeep : P.metalHot, { only: ['pelvis', 'thigh' + (s > 0 ? 'L' : 'R')], bias: { pelvis: 2.0 } });
+    }
+  }
+
+  // ── SASH ─────────────────────────────────────────────────────────────────
+  // A long tongue of cloth hanging from the buckle down the front, swinging
+  // on the skirt chains, its end weighted with a gold tip. On a figure whose
+  // skirt is a rhythm of short panels this is the one long vertical.
+  if (F.sash && !F.robe) {
+    const sashBones = ['pelvis'];
+    for (let i = 0; i < NS; i++) sashBones.push(`skirt${i}A`, `skirt${i}B`);
+    add(SHEET(9, 3, (u, v) => {
+      const w = 0.046 * (1 - 0.18 * u);
+      const x = -(v - 0.5) * 2 * w + 0.010 * Math.sin(u * Math.PI * 1.6);
+      const y = lerp(0.930, 0.270, u) + 0.030 * u * u * Math.abs(v - 0.5) * 2;
+      const z = lerp(0.166, 0.252, u) * lerp(1, BK, 0.7) + 0.016 * Math.sin(u * Math.PI * 2.2);
+      return V(x, y, z);
+    }, 0.016), 'cloth',
+      (x, y, z, u, v, side) => (u > 0.90 ? P.metalHot : (u > 0.84 ? P.metal : (Math.abs(v - 0.5) > 0.40 ? P.metalDeep : (side < 0 ? P.clothDeep : P.cloth)))),
+      { only: sashBones, bias: { pelvis: 0.6 } }, 'cl.cape');
+  }
+
   // ── xiphos (AGENT-COMBAT can hide this: rig.setWeaponVisible(false)) ─────
+  // Rebuilt as a DIAMOND-SECTION leaf on a hex quillon. The old blade was a
+  // 17mm sheet: one normal per face, one value per face, a pale plate. A
+  // superellipse(1.25) section gives it a central ridge and two ground edges,
+  // so the key breaks over it the way it does on player-weapons.js's xiphos.
   if (F.weapon === 'xiphos') {
     const HB = 'handR';
-    // Reseated so the grip runs THROUGH the fist (0.900..0.792) and the guard
-    // sits just clear of the little finger: hand and hilt now share one
-    // silhouette instead of the blade floating beside a block.
-    add(TUBE([{ p: [-0.250, 0.922, 0.012], r: 0.019 }, { p: [-0.253, 0.800, 0.046], r: 0.017 }],
-      { radial: 8, capStart: 'round', capEnd: 'flat' }), 'cloth', P.leather, { mode: 'rigid', bone: HB }, 'cl.leather');
-    add(BALL(12, 10, { pos: [-0.249, 0.934, 0.008], scale: [0.028, 0.024, 0.028] }),
+    add(TUBE([{ p: [-0.250, 0.924, 0.010], r: 0.020 }, { p: [-0.253, 0.802, 0.044], r: 0.018 }],
+      { radial: 9, capStart: 'flat', capEnd: 'flat' }), 'cloth',
+      (x, y, z, u, v) => ((Math.floor(v * 6) % 2) ? P.leather : P.clothDeep), { mode: 'rigid', bone: HB }, 'cl.leather');
+    add(prim(new THREE.OctahedronGeometry(0.030, 0), { pos: [-0.249, 0.938, 0.006], scale: [1, 0.85, 1] }),
       'metal', P.metalHot, { mode: 'rigid', bone: HB });
-    add(TUBE([{ p: [-0.309, 0.788, 0.048], r: 0.015, sx: 0.62, sz: 1.55 },
-    { p: [-0.197, 0.788, 0.048], r: 0.015, sx: 0.62, sz: 1.55 }],
-      { radial: 8, capStart: 'round', capEnd: 'round', up: [0, 1, 0] }), 'metal', P.metalHot, { mode: 'rigid', bone: HB });
+    add(TUBE([
+      { p: [-0.320, 0.786, 0.048], r: 0.015, sx: 0.66, sz: 1.30 },
+      { p: [-0.292, 0.789, 0.048], r: 0.018, sx: 0.72, sz: 1.55 },
+      { p: [-0.212, 0.789, 0.048], r: 0.018, sx: 0.72, sz: 1.55 },
+      { p: [-0.184, 0.786, 0.048], r: 0.015, sx: 0.66, sz: 1.30 },
+    ], { radial: 6, capStart: 'round', capEnd: 'round', up: [0, 1, 0] }), 'metal',
+      (x, y, z, u) => ((u > 0.20 && u < 0.30) ? P.metalHot : ((u > 0.70 && u < 0.80) ? P.metalDeep : P.metal)),
+      { mode: 'rigid', bone: HB });
     const base = V(-0.255, 0.776, 0.052);
     const dir = V(-0.115, -1, 0.30).normalize();
-    const across = V(1, 0, 0.28).normalize();
-    add(SHEET(10, 3, (u, v) => {
-      const L = 0.60;
-      const w = 0.058 * (0.52 + 0.48 * Math.sin(Math.PI * Math.pow(clamp01(u), 0.82))) * (1 - Math.pow(u, 3.4));
-      return base.clone().addScaledVector(dir, L * u).addScaledVector(across, (v - 0.5) * 2 * w);
-    }, 0.017), 'metal', (x, y, z, u, v, side) => (side === 0 ? P.bladeEdge : P.blade), { mode: 'rigid', bone: HB }, 'mt.blade');
+    const across = V(1, 0, 0.28); across.addScaledVector(dir, -across.dot(dir)).normalize();
+    const bup = new THREE.Vector3().crossVectors(dir, across);
+    const L = 0.62, NST = 9, spine = [];
+    for (let i = 0; i < NST; i++) {
+      const u = i / (NST - 1);
+      const w = 0.060 * (0.50 + 0.50 * Math.sin(Math.PI * Math.pow(u, 0.82))) * (1 - Math.pow(u, 3.6)) + 0.004;
+      const th = 0.017 * (1 - u * 0.75) + 0.002;
+      const p = base.clone().addScaledVector(dir, L * u);
+      spine.push({ p: [p.x, p.y, p.z], r: w, sx: 1, sz: th / w });
+    }
+    add(TUBE(spine, { radial: 10, capStart: 'flat', capEnd: 'round', capScale: 0.3, up: [bup.x, bup.y, bup.z], shape: superellipse(1.25) }),
+      'metal', (x, y, z, u) => ((u < 0.06 || u > 0.94 || (u > 0.44 && u < 0.56)) ? P.bladeEdge : P.blade),
+      { mode: 'rigid', bone: HB }, 'mt.blade');
   }
 
   return parts;
@@ -2560,6 +2896,9 @@ function slotMaterial(ctx, slot, spec) {
       rimColor: tune.rimColor, rimDir: tune.rimDir,
     };
   }
+  // §1.2 / §4: the character shader — constant complement rim, painted ramp,
+  // colour-shifted contour, metal glint, and the rim-outline hurt flash.
+  characterShader(m, { metal: slot === 'metal', glow: slot === 'glow', familyRim: spec.rim && spec.rim.color });
   m.needsUpdate = true;
   return m;
 }
@@ -2848,4 +3187,4 @@ export function buildHumanoid(spec_, ctx) {
   return rig;
 }
 
-export default { buildHumanoid, HERO_SPEC, HERO_PALETTE, MELINOE_SPEC, MELINOE_PALETTE, mergeSpec, tubeGeo, sheetGeo, prim, solveSkinWeights, linRGB };
+export default { buildHumanoid, HERO_SPEC, HERO_PALETTE, MELINOE_SPEC, MELINOE_PALETTE, mergeSpec, tubeGeo, sheetGeo, prim, solveSkinWeights, linRGB, superellipse, DIAMOND, PLATE, fullered, ringSpine, ringSweep };

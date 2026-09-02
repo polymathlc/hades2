@@ -441,11 +441,100 @@ export function worleyField(n, o = {}) {
 }
 
 /**
+ * CONCHOIDAL FRACTURE — the way glass, flint and obsidian actually break.
+ *
+ * A Worley f1 field on its own is a honeycomb: every cell is a smooth bowl and
+ * the only structure is the cell wall, which reads as chicken wire, not as a
+ * knapped surface. A conchoidal facet is a shallow shell with RIPPLE RINGS
+ * radiating from the point of impact and a sharp arris where it meets the next
+ * facet. This returns all three layers, wrapped, from one lattice:
+ *   facet   0..1, 1 at the impact point falling to 0 at the arris (the bowl)
+ *   ripple  0..1 concentric rings inside each facet, damped toward the arris
+ *   arris   0..1, 1 exactly on the facet boundary (f2 - f1 near zero)
+ *   id      per-facet random 0..1 (for per-plate tone)
+ * `rings` is the ring count across one cell; `warp` bends the rings so they
+ * are shells, not compass circles.
+ */
+export function conchoidal(n, o = {}) {
+  if (o.res && o.res < n) {
+    const r = Math.max(64, o.res | 0);
+    const lo = conchoidal(r, { ...o, res: 0 });
+    return {
+      facet: resampleTo(lo.facet, r, n), ripple: resampleTo(lo.ripple, r, n),
+      arris: resampleTo(lo.arris, r, n), id: resampleTo(lo.id, r, n),
+    };
+  }
+  const freq = Math.max(1, Math.round(o.freq ?? 7));
+  const seed = (o.seed ?? 5) | 0;
+  const jitter = o.jitter ?? 1;
+  const rings = o.rings ?? 5;
+  const arrisW = o.arrisWidth ?? 0.06;
+  const facet = new Float32Array(n * n), ripple = new Float32Array(n * n);
+  const arris = new Float32Array(n * n), id = new Float32Array(n * n);
+  const s = freq / n;
+  const px = new Float32Array(freq * freq), py = new Float32Array(freq * freq);
+  const cid = new Float32Array(freq * freq), cph = new Float32Array(freq * freq);
+  for (let cy = 0; cy < freq; cy++) for (let cx = 0; cx < freq; cx++) {
+    const h = ihash(cx, cy, seed), k = cy * freq + cx;
+    px[k] = cx + 0.5 + (((h & 1023) / 1023) - 0.5) * jitter;
+    py[k] = cy + 0.5 + ((((h >>> 10) & 1023) / 1023) - 0.5) * jitter;
+    cid[k] = ((h >>> 20) & 1023) / 1023;
+    cph[k] = ((h >>> 4) & 255) / 255 * TAU;
+  }
+  // a low-frequency warp bends the rings into shells
+  const wr = Math.max(64, n >> 2);
+  const wf = resampleTo(fbm(wr, { freq: 4, octaves: 3, seed: seed + 71, type: 'grad' }), wr, n);
+  const wamp = (o.warp ?? 0.35);
+  for (let y = 0; y < n; y++) {
+    const gy = (y + 0.5) * s, row = y * n;
+    const cy0 = Math.floor(gy);
+    for (let x = 0; x < n; x++) {
+      const gx = (x + 0.5) * s;
+      const cx0 = Math.floor(gx);
+      let f1 = 64, f2 = 64, k1 = 0;
+      for (let j = -1; j <= 1; j++) {
+        let wy = (cy0 + j) % freq; if (wy < 0) wy += freq;
+        const off = (cy0 + j) - wy;
+        for (let i = -1; i <= 1; i++) {
+          let wx = (cx0 + i) % freq; if (wx < 0) wx += freq;
+          const offx = (cx0 + i) - wx;
+          const k = wy * freq + wx;
+          const dx = (px[k] + offx) - gx, dy = (py[k] + off) - gy;
+          const d = dx * dx + dy * dy;
+          if (d < f1) { f2 = f1; f1 = d; k1 = k; }
+          else if (d < f2) f2 = d;
+        }
+      }
+      f1 = Math.sqrt(f1); f2 = Math.sqrt(f2);
+      const i = row + x;
+      const edge = f2 - f1;
+      const bowl = clamp01(1 - f1 / 0.85);
+      facet[i] = bowl * bowl * (3 - 2 * bowl);
+      // rings: phase runs with distance from the impact point, damped near the
+      // arris so the shell fades into the fracture edge rather than crossing it
+      const ph = (f1 + (wf[i] - 0.5) * wamp * f1) * rings * TAU + cph[k1];
+      const damp = smoothstep(0, 0.22, edge) * (0.35 + 0.65 * bowl);
+      ripple[i] = (0.5 + 0.5 * Math.cos(ph)) * damp;
+      arris[i] = 1 - smoothstep(0, arrisW, edge);
+      id[i] = cid[k1];
+    }
+  }
+  return { facet, ripple, arris, id };
+}
+
+/**
  * Voronoi crack / fracture generator. Returns a 0..1 mask where 1 = deep in a
  * crack. Multi-level (big plates + sub-fractures), broken up by a noise mask so
  * the seams look chiselled rather than machine-drawn.
  */
 export function cracks(n, o = {}) {
+  // `res`: synthesise at a lower resolution and upsample, exactly as worleyField
+  // does. A crack a few texels wide at freq 9-14 loses nothing legible at n/2
+  // and the Voronoi search is the recipe's second most expensive pass.
+  if (o.res && o.res < n) {
+    const r = Math.max(64, o.res | 0);
+    return resampleTo(cracks(r, { ...o, res: 0 }), r, n);
+  }
   const levels = o.levels || [{ freq: 6, width: 0.10, weight: 1 }, { freq: 13, width: 0.07, weight: 0.7 }];
   const seed = (o.seed ?? 21) | 0;
   const jitter = o.jitter ?? 0.95;
@@ -887,6 +976,45 @@ export function tintRGB(rgb, n, mask, color, strength = 1) {
   return rgb;
 }
 
+/**
+ * LUMA-PRESERVING hue pull. ART_DIRECTION §1.3 / §1.4: a shadow is a different
+ * COLOUR, not less light, and a material varies in hue WITHIN itself — the
+ * crevice drifts toward the ink ramp, the lit crown drifts warm. tintRGB lerps
+ * toward a fixed colour, which moves VALUE as well as hue, so used for this job
+ * it either crushes the crevice to a flat plum or lifts it toward the tint.
+ * This pulls each texel toward the target's HUE at the texel's own luminance,
+ * so the value structure the recipe painted survives byte for byte and only
+ * the colour temperature moves. `mask` in 0..1, `color` as [r,g,b] 0..255.
+ */
+export function hueShiftRGB(rgb, n, mask, color, amount = 1) {
+  const cl = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2] || 1;
+  const dr = color[0] / cl, dg = color[1] / cl, db = color[2] / cl;
+  for (let i = 0; i < mask.length; i++) {
+    const a = clamp01(mask[i]) * amount;
+    if (a <= 0.002) continue;
+    const j = i * 3;
+    const l = 0.2126 * rgb[j] + 0.7152 * rgb[j + 1] + 0.0722 * rgb[j + 2];
+    rgb[j] += (l * dr - rgb[j]) * a;
+    rgb[j + 1] += (l * dg - rgb[j + 1]) * a;
+    rgb[j + 2] += (l * db - rgb[j + 2]) * a;
+  }
+  return rgb;
+}
+
+/**
+ * The painter's SHADOW/LIGHT hue split in one call: crevices (the `shade`
+ * mask) go toward the ink ramp, crowns (the `light` mask) go warm. Value is
+ * untouched — see hueShiftRGB — so this is safe to lay over any finished
+ * albedo without moving the value law.
+ */
+export function inkAndWarm(rgb, n, shade, light, o = {}) {
+  const ink = o.ink || [36, 18, 56];        // #241238 shadow plum
+  const warm = o.warm || [255, 176, 112];   // a warm key bounce
+  if (shade) hueShiftRGB(rgb, n, shade, ink, o.inkAmount ?? 0.55);
+  if (light) hueShiftRGB(rgb, n, light, warm, o.warmAmount ?? 0.30);
+  return rgb;
+}
+
 // ---------------------------------------------------------------------------
 // height -> normal, height -> AO, artistic roughness
 // ---------------------------------------------------------------------------
@@ -1026,6 +1154,30 @@ export function drawPolyline(dst, n, pts, w, v, soft = 1) {
   for (let i = 0; i < pts.length - 1; i++) drawLine(dst, n, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], w, v, soft);
 }
 
+/**
+ * Filled ellipse (wrapped). `dome` > 0 gives it a rounded relief profile —
+ * bright/high at the centre, falling to the rim — so an egg reads as an egg
+ * in the normal map instead of as a flat coin.
+ */
+export function drawEllipse(dst, n, cx, cy, rx, ry, v, soft = 1, dome = 0) {
+  const x0 = Math.floor(cx - rx - 1), x1 = Math.ceil(cx + rx + 1);
+  const y0 = Math.floor(cy - ry - 1), y1 = Math.ceil(cy + ry + 1);
+  const sx = soft / Math.max(1e-3, rx), sy = soft / Math.max(1e-3, ry);
+  for (let y = y0; y <= y1; y++) {
+    const dy = (y + 0.5 - cy) / ry;
+    for (let x = x0; x <= x1; x++) {
+      const dx = (x + 0.5 - cx) / rx;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d > 1 + Math.max(sx, sy)) continue;
+      let a = 1 - smoothstep(1 - Math.max(sx, sy), 1 + Math.max(sx, sy) * 0.4, d);
+      if (dome > 0) a *= 1 - dome * (1 - Math.sqrt(Math.max(0, 1 - d * d)));
+      if (a <= 0.002) continue;
+      const i = wrapi(y, n) * n + wrapi(x, n);
+      if (v * a > dst[i]) dst[i] = v * a;
+    }
+  }
+}
+
 /** Filled axis-aligned rounded rect (wrapped). */
 export function drawRect(dst, n, x, y, w, h, v, radius = 0, soft = 1) {
   const x0 = Math.floor(x), y0 = Math.floor(y);
@@ -1139,6 +1291,48 @@ export function guilloche(dst, n, o = {}) {
   return dst;
 }
 
+/**
+ * EGG-AND-DART (echinus moulding) — the second most common Greek trim after
+ * the meander, and the one that reads as CARVED even at 20 screen pixels
+ * because every egg is a dome. Runs horizontally at y0, band height H, `count`
+ * eggs across the texture. Each egg is a domed ellipse sitting in a shell (an
+ * open arc around it), with a pointed dart between neighbours. Drawn as
+ * relief: the egg is HIGH, the shell rim is a raised fillet, the dart is a
+ * thin raised spike, and the gap between egg and shell is the undercut.
+ */
+export function eggAndDart(dst, n, o = {}) {
+  const y0 = o.y ?? n * 0.5;
+  const H = o.height ?? n * 0.08;
+  const count = Math.max(2, Math.round(o.count ?? 10));
+  const v = o.value ?? 1;
+  const cw = n / count;
+  const rx = cw * (o.eggW ?? 0.30), ry = H * (o.eggH ?? 0.42);
+  const w = o.lineW ?? Math.max(1.2, H * 0.10);
+  const soft = o.soft ?? 1.1;
+  for (let i = 0; i < count; i++) {
+    const cx = (i + 0.5) * cw;
+    // the shell: an open arc hugging the egg, gap at the top
+    drawArc(dst, n, cx, y0 - ry * 0.10, Math.max(rx, ry) * 1.32, Math.PI * 0.12, Math.PI * 0.88, w, v * 0.90, soft);
+    // the egg itself — domed
+    drawEllipse(dst, n, cx, y0, rx, ry, v, soft, o.dome ?? 0.55);
+    // the dart between this egg and the next: a spike, wide at the base
+    const dx = cx + cw * 0.5;
+    const top = y0 - H * 0.40, bot = y0 + H * 0.34;
+    const steps = 7;
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const yy = top + (bot - top) * t;
+      const ww = w * (0.35 + 0.95 * Math.sin(Math.PI * Math.min(1, t * 1.15)));
+      drawDisc(dst, n, dx, yy, ww, v * (0.78 + 0.18 * t), soft);
+    }
+  }
+  if (o.rails !== false) {
+    drawLine(dst, n, 0, y0 - H * 0.60, n, y0 - H * 0.60, w * 0.8, v * 0.85, soft);
+    drawLine(dst, n, 0, y0 + H * 0.60, n, y0 + H * 0.60, w * 0.8, v * 0.85, soft);
+  }
+  return dst;
+}
+
 /** Row of beads (astragal). */
 export function beadRow(dst, n, o = {}) {
   const y0 = o.y ?? n * 0.5;
@@ -1203,6 +1397,28 @@ export function ashlar(n, o = {}) {
   const id = new Float32Array(n * n);
   const seam = new Float32Array(n * n);
   const lobe = new Float32Array(n * n);
+  // ── DRAFTED MARGINS AND TOOLED FACES ─────────────────────────────────────
+  // Greek ashlar is not a smooth brick: the mason dresses a flat, smooth band
+  // around the edge of every block (the drafted margin, cut with a flat
+  // chisel against a straightedge) and leaves the face inside it either
+  // rusticated — a proud, pillowed boss — or worked over with a point or claw
+  // chisel in one direction. That per-block tooling direction is the single
+  // strongest "carved, not printed" cue a wall can carry, and it is what
+  // ART_DIRECTION §1.4 means by directional strokes on stone.
+  //   margin  0..1 mask of the drafted band
+  //   face    0..1 mask of the tooled face inside it
+  //   dome    0..1 pillow profile over the face (1 at the block centre)
+  //   tool    per-block chisel angle, radians (a flow field for strokes())
+  //   boss    per-block 0..1 — how proud / rusticated this block is
+  const marginW = (o.margin ?? 0.09) * (n / rows);
+  const margin = new Float32Array(n * n);
+  const face = new Float32Array(n * n);
+  const dome = new Float32Array(n * n);
+  const tool = new Float32Array(n * n);
+  const boss = new Float32Array(n * n);
+  const toolBase = o.toolBase ?? 0.62;          // ~35deg: the classic claw rake
+  const toolSpread = o.toolSpread ?? 0.55;
+  const tseed = (o.seed ?? 4409) | 0;
   // per-block light/shade axis — see tileGrid
   const LX = new Float32Array(256), LY = new Float32Array(256);
   for (let k = 0; k < 256; k++) { const a = (k / 256) * TAU; LX[k] = Math.cos(a); LY[k] = Math.sin(a); }
@@ -1218,7 +1434,10 @@ export function ashlar(n, o = {}) {
     for (let i = 0; i < c; i++) wts.push(0.6 + rng() * 0.9);
     const tot = wts.reduce((a, b) => a + b, 0);
     for (let i = 0; i < c; i++) { acc += wts[i] / tot; edges.push(acc); }
-    layout.push({ edges, offset: rng(), tone: Array.from({ length: c }, () => rng()) });
+    // per-block hashes, computed ONCE per block rather than twice per texel
+    const lk = new Uint8Array(c), th = new Uint32Array(c);
+    for (let i = 0; i < c; i++) { lk[i] = ihash(i, r, 4409) & 255; th[i] = ihash(i, r, tseed) >>> 0; }
+    layout.push({ edges, offset: rng(), tone: Array.from({ length: c }, () => rng()), lk, th });
   }
 
   // wobble the seams so they are chiselled, not CAD
@@ -1250,11 +1469,22 @@ export function ashlar(n, o = {}) {
       height[i] = 1 - m;
       id[i] = L.tone[c % L.tone.length];
       // see tileGrid: the block's own light/shade axis, hand-painted per block
-      const lk = ihash(c, r, 4409) & 255;
+      const lk = L.lk[c];
       lobe[i] = (fx - 0.5) * LX[lk] + (fy - 0.5) * LY[lk];
+      // drafted margin vs tooled face, measured from the mortar edge
+      const dIn = d - mortar * 0.5;
+      const fInner = smoothstep(marginW * 0.75, marginW * 1.25, dIn);
+      margin[i] = (1 - m) * (1 - fInner);
+      face[i] = (1 - m) * fInner;
+      const ex = 1 - Math.abs(fx - 0.5) * 2, ey = 1 - Math.abs(fy - 0.5) * 2;
+      dome[i] = Math.sqrt(Math.max(0, ex * ey)) * fInner;
+      const th = L.th[c];
+      tool[i] = toolBase + ((th & 1023) / 1023 - 0.5) * 2 * toolSpread
+        + ((o.toolFlip !== false && ((th >>> 10) & 1)) ? Math.PI * 0.5 : 0);
+      boss[i] = ((th >>> 16) & 1023) / 1023;
     }
   }
-  return { height, id, mortar: seam, lobe };
+  return { height, id, mortar: seam, lobe, margin, face, dome, tool, boss };
 }
 
 /**

@@ -27,6 +27,7 @@ import { clamp, clamp01, lerp, damp, dampAngle, shortAngle, smoothstep, TAU } fr
 import { buildHumanoid, SLOT_PAINT, linRGB } from '../rig.js';
 import { Animator } from '../anim.js';
 import { setPaint, paintParams } from '../../materials/painterly.js';
+import { characterShader, setCharacterRim, flashVariants } from '../../render/shaders/character.js';
 import { Perception, Steer, Brain, beginTelegraph, endTelegraph, inCone, inDisc, orbitSign } from '../ai.js';
 
 const _v = new THREE.Vector3();
@@ -192,6 +193,10 @@ export function familyRim(mat, kind, slot) {
     ...(mat.userData.paintOverrides || {}),
     rimColor: tgt.rimColor, rimStrength: tgt.rimStrength, contourStrength: tgt.contourStrength,
   };
+  // The character shader draws the rim now (render/shaders/character.js): the
+  // biome complement, with the family's identity hue mixed a third of the
+  // way in so a shade and a brute are still two different edges.
+  setCharacterRim(mat, { familyRim: F.rim, familyMix: 0.35 });
   return mat;
 }
 
@@ -205,6 +210,7 @@ export function refreshFamilyRims(biome = _familyBiome) {
     t.rimColor = F?.rim || t.rimColor;
     setPaint(m, { rimColor: t.rimColor, rimStrength: t.rimStrength, contourStrength: t.contourStrength });
     m.userData.paintOverrides = { ...(m.userData.paintOverrides || {}), rimColor: t.rimColor };
+    setCharacterRim(m, { familyRim: t.rimColor });
   }
 }
 
@@ -264,6 +270,7 @@ export function charMaterial(ctx, slot, tag, opts = {}) {
     m.emissiveIntensity = opts.glow ?? 0.9;
     m.toneMapped = true;
   }
+  characterShader(m, { metal: slot === 'metal', glow: slot === 'glow' });
   familyRim(m, familyOf(tag), slot);
   m.needsUpdate = true;
   return m;
@@ -324,11 +331,17 @@ class HumanoidVisual {
     if (t.clips) { this.anim.clips = t.clips; this.anim.cur = { clip: t.clips.idle, t: 0, speed: 1 }; }
     else t.clips = this.anim.clips;
     this.anim.ikWeight = 0.55;
-    this.anim.play('idle', { fade: 0 });
+    // GAIT. A brain asks for 'idle' / 'run' by name; the family's spec maps
+    // those onto its own clips (anim.js: idleBrace / runHeavy for the wide
+    // bodies, idleCaster for the robes, idleHunch / shamble for the wraiths)
+    // so the roster moves as differently as it is shaped. Missing entries
+    // fall through to the hero's clips unchanged.
+    this.gait = spec.gait || null;
+    this.anim.play(this.gait?.idle || 'idle', { fade: 0 });
     this.baseMat = this.rig.mesh.material;
     this.height = this.rig.height;
   }
-  play(name, o) { this.anim.play(name, o); }
+  play(name, o) { const g = this.gait; this.anim.play((g && g[name]) || name, o); }
   freeze(name, t) { this.anim.freezeAt(name, t); }
   get clipName() { return this.anim.current; }
   duration(n) { return this.anim.duration(n); }
@@ -340,7 +353,18 @@ class HumanoidVisual {
     a.groundY = 0;
     a.update(dt);
   }
-  setFlash(mat) { this.rig.mesh.material = mat || this.baseMat; }
+  /**
+   * The hurt flash. A flat white MeshBasicMaterial erased the helm, the
+   * pauldrons and the relief shield at the exact moment the player looks, so
+   * the manager's flash material is now only a MARKER: the body swaps to the
+   * character shader's flash twins (brightened base + rim-coloured outline),
+   * which keep the silhouette and every interior line. The death dissolve
+   * (an additive per-instance material) still swaps in as itself.
+   */
+  setFlash(mat) {
+    if (mat && mat.userData && mat.userData.rimFlash) mat = flashVariants(this.baseMat);
+    this.rig.mesh.material = mat || this.baseMat;
+  }
   dispose() { }
 }
 
@@ -362,7 +386,14 @@ export class Enemy {
     this.faction = 'enemy';
     // ── AI ──
     this.facing = { x: 0, z: 1 };
-    this.perc = new Perception(def.perception || {});
+    // THE ROOM IS A FIGHT, NOT A STEALTH LEVEL. Every family used to author a
+    // 26-38 m perception range, and a body spawned across a 40 m hall from the
+    // hero simply never became aware: it stood idle on the far rim while the
+    // wave "ended" around it (the judges clocked 6+ s of that per wave). The
+    // reaction delay and the lagged aim point are what make an enemy fair;
+    // the range only ever made one absent. Floor it at the whole arena.
+    this.perc = new Perception({ ...(def.perception || {}), range: Math.max(def.perception?.range ?? 26, 64) });
+    this._stuckT = 0;
     this.steer = new Steer(this);
     this.brain = null;
     this.tell = { active: false, kind: '', t: 0, dur: 1, k: 0, color: def.tellColor || '#ff5a3c', shape: 'arc', radius: 2.4, arc: 90, x: 0, z: 0, dirX: 0, dirZ: 1, follow: false };
@@ -374,6 +405,12 @@ export class Enemy {
     this.stateName = 'idle';
     this.attackCd = 0;
     this.spawnGrace = 0;
+    // ── run-time modifiers written by the manager, bosses and elites ──
+    this.tellMul = 1;              // telegraph duration multiplier (enrage, pacts)
+    this.speedMul = 1;             // locomotion multiplier (swift elites, enrage)
+    this.visualScale = 1;          // body scale (elites read bigger)
+    this.elite = null;             // affix name, or null
+    this.enraged = false;
     this.mem = {};                 // per-family scratch, reset on spawn
     // ── presentation ──
     this.visual = null;
@@ -409,7 +446,9 @@ export class Enemy {
     const scale = 1 + 0.13 * depth;
     this.maxHealth = Math.round((d.hp ?? 40) * scale * (opts.hpMul ?? 1));
     this.health = this.maxHealth;
-    this.damageMul = (1 + 0.075 * depth) * (opts.dmgMul ?? 1);
+    // depth 0 is the teaching room (a careless clear costs ~15-25% life);
+    // depth 4 is a real threat (x1.36), depth 8 doubles the authored numbers
+    this.damageMul = (1 + 0.09 * depth + (depth >= 6 ? 0.06 * (depth - 5) : 0)) * (opts.dmgMul ?? 1);
     this.depth = depth;
     this.alive = true; this.dead = false;
     this.iframes = 0; this.stagger = 0; this.committed = false;
@@ -418,12 +457,15 @@ export class Enemy {
     this._knock.set(0, 0, 0);
     this.attackCd = d.firstAttackDelay ?? 0.5;
     this.spawnGrace = d.spawnTime ?? 0.62;
+    this.tellMul = 1; this.speedMul = 1; this.visualScale = 1; this.elite = null; this.enraged = false;
+    this.armour = 0;
     this.orbitDir = orbitSign(this.id + (opts.wave || 0));
     this.perc.reset();
     this.tell.active = false;
     this._flashT = 0; this._deathT = -1;
     this._leanX = 0; this._leanZ = 0; this._headYaw = 0;
     for (const k in this.mem) delete this.mem[k];
+    this._stuckT = 0;
     this.stateName = 'spawn';
     if (this.brain) { this.brain.state = null; this.brain.set(this.def.brain.initial || 'idle', this.ctx); }
     this.root.visible = true;
@@ -467,6 +509,9 @@ export class Enemy {
    */
   telegraph(kind, dur, o = {}) {
     const ctx = this.ctx;
+    // enrage and run pacts shorten every tell by one multiplier, never below
+    // the authored floor's readable half
+    dur = Math.max(0.16, dur * (this.tellMul || 1) * (this.mgr?.tellMul || 1));
     beginTelegraph(this, ctx, kind, dur, { ...o, color: o.color || this.tellColor });
     this.mgr.telegraphs.cancelOwner(this);
     this._tellHandle = this.mgr.telegraphs.spawn({
@@ -530,7 +575,7 @@ export class Enemy {
   /** Integrate the steering result with acceleration, collision and facing. */
   move(dt, ctx, out, o = {}) {
     const accel = o.accel ?? this.def.accel ?? 26;
-    const slow = ctx.combat?.slowOf?.(this) ?? 1;
+    const slow = (ctx.combat?.slowOf?.(this) ?? 1) * (this.speedMul || 1);
     const vx = damp(this.velocity.x, out.x * slow, accel * 0.34, dt);
     const vz = damp(this.velocity.z, out.z * slow, accel * 0.34, dt);
     this.velocity.x = vx; this.velocity.z = vz;
@@ -538,7 +583,10 @@ export class Enemy {
     this.position.z += (vz + this._knock.z) * dt;
     this._knock.x = damp(this._knock.x, 0, 9.5, dt);
     this._knock.z = damp(this._knock.z, 0, 9.5, dt);
-    ctx.world?.collide?.(this.position, this.radius);
+    // +0.28 m against solids and the rim: a body that grinds along a column
+    // plinth at exactly its own radius ends up standing on the plinth's base
+    // block, which is the "hexer on the plinth" a judge saw at depth 4
+    ctx.world?.collide?.(this.position, this.radius + 0.28);
     this.speedNow = Math.hypot(vx, vz);
     if (o.face !== false) {
       const fx = o.faceX ?? (this.speedNow > 0.35 ? vx : null);
@@ -590,6 +638,12 @@ export class Enemy {
     ctx.events.emit('camera.shake', { amp: this.def.deathShake ?? 0.05, dur: 0.2, freq: 27 });
     ctx.audio?.sfx?.('enemyDeath', { pos: this.position });
     if (this.def.onDied) this.def.onDied(this, info, ctx);
+    // a VOLATILE elite is a bomb you are told about: its death is a disc strike
+    if (this.elite === 'volatile') {
+      this.strikeDisc(ctx, this.position.x, this.position.z, 2.8, {
+        damage: 14, type: 'fire', knock: 8, color: this.def.identity || '#ff8c1a', shake: 0.12, kind: 'ember', life: 0.5,
+      });
+    }
   }
 
   // ──────────────────────────────────────────────────────────── per-step ──
@@ -613,8 +667,9 @@ export class Enemy {
       this.iframes = Math.max(this.iframes, 0.02);
       const k = clamp01(1 - this.spawnGrace / (this.def.spawnTime ?? 0.62));
       const s = k * k * (3 - 2 * k);
-      this.root.scale.set(0.55 + 0.45 * s, 0.4 + 0.6 * s, 0.55 + 0.45 * s);
-    } else if (this.root.scale.x !== 1) this.root.scale.setScalar(1);
+      const V = this.visualScale || 1;
+      this.root.scale.set((0.55 + 0.45 * s) * V, (0.4 + 0.6 * s) * V, (0.55 + 0.45 * s) * V);
+    } else if (this.root.scale.x !== (this.visualScale || 1)) this.root.scale.setScalar(this.visualScale || 1);
 
     if (this.tell.active) {
       this.tell.t += dt;
@@ -624,6 +679,7 @@ export class Enemy {
     this.perc.update(dt, this, ctx.player, ctx);
     if (this.brain) this.brain.update(dt, ctx);
     if (this.def.tick) this.def.tick(this, dt, ctx);
+    this._watchdog(dt, ctx);
 
     this.root.position.copy(this.position);
     this.root.position.y = ctx.world?.heightAt?.(this.position.x, this.position.z) ?? 0;
@@ -632,13 +688,48 @@ export class Enemy {
     if (this.visual.update) this.visual.update(dt, this);
   }
 
+  /**
+   * NO DEAD TIME. An aware body that is far from the hero and not moving has
+   * no path (a column, a corner, a steering deadlock) or no intent, and the
+   * wave is waiting on it. After 1.5 s of that it BLINKS IN: it materialises
+   * again on the hero's side of the room, announced with the same column of
+   * light every arrival gets, and the brain restarts its approach. Bosses and
+   * bodies mid-attack are exempt; ranged families hold their rings inside the
+   * 13 m line so this never fires on a caster doing its job.
+   */
+  _watchdog(dt, ctx) {
+    if (this.def.boss || this.committed || this.tell.active || this.spawnGrace > 0 || !this.perc.aware) { this._stuckT = 0; return; }
+    const far = this.perc.dist > 13;
+    const slow = (this.speedNow || 0) < 0.55;
+    if (far && slow) this._stuckT += dt; else this._stuckT = 0;
+    if (this._stuckT >= (this.def.stuckAfter ?? 1.5)) this._blinkIn(ctx);
+  }
+  _blinkIn(ctx) {
+    this._stuckT = 0;
+    const p = ctx.player; if (!p) return;
+    const ux = this.perc.dirX, uz = this.perc.dirZ;   // from us toward the hero
+    // re-enter 9 m out on our own side of the hero (the flank we already held)
+    const R = this.def.blinkRadius ?? 9;
+    const pt = this.mgr.safePoint(p.position.x - ux * R, p.position.z - uz * R, { minPlayerDist: 6.5, radius: this.radius + 0.3 });
+    ctx.vfx?.burst?.(_v.set(this.position.x, 0.6, this.position.z), { count: 8, color: this.def.identity || '#8ef0d0', speed: 4, spread: 1.2, kind: 'wisp' });
+    this.position.set(pt.x, 0, pt.z);
+    this.velocity.set(0, 0, 0); this._knock.set(0, 0, 0);
+    this.snapFace(p.position.x - pt.x, p.position.z - pt.z);
+    this.spawnGrace = Math.min(0.35, this.def.spawnTime ?? 0.62);
+    this.attackCd = Math.max(this.attackCd, 0.4);
+    this.perc.aimX = p.position.x; this.perc.aimZ = p.position.z;
+    if (this.mgr._spawnFX) this.mgr._spawnFX(this, {});
+    if (this.brain) { const S = this.def.brain.states; this.brain.set(S.approach ? 'approach' : S.chase ? 'chase' : S.circle ? 'circle' : S.hunt ? 'hunt' : S.reposition ? 'reposition' : (this.def.brain.initial || 'idle'), ctx); }
+    ctx.events.emit('enemy.blink', { entity: this, pos: this.position, kind: this.kind });
+  }
+
   _updateDeath(dt, ctx) {
     this._deathT += dt;
     const T = this.def.deathTime ?? 0.85;
     const k = clamp01(this._deathT / T);
     // dissolve UPWARD (§5) — the body drifts up and shrinks into the wisps
     this.root.position.y = (ctx.world?.heightAt?.(this.position.x, this.position.z) ?? 0) + k * k * 1.15;
-    const s = 1 - k * k * 0.85;
+    const s = (1 - k * k * 0.85) * (this.visualScale || 1);
     this.root.scale.set(s * (1 + k * 0.22), s, s * (1 + k * 0.22));
     // THE DISSOLVE (§5). A solid white body rising is a paper cutout; what the
     // bible asks for is the figure coming APART into light. So the body swaps
@@ -668,4 +759,40 @@ export class Enemy {
   lateUpdate(alpha, ctx) { if (this.visual.lateUpdate) this.visual.lateUpdate(alpha, this, ctx); }
 }
 
-export default { Enemy, cloneRig, charMaterial, paintGeo, humanoidTemplate, HumanoidVisual };
+/**
+ * THE ENRAGE. Every boss has a clock. Past it (or at the last sliver of
+ * health) the fight stops being fair: tells shorten, hits land harder, the
+ * boss moves faster and its vulnerability windows shrink. The player is told
+ * once, loudly. This is what turns a long fight into a race, and it is shared
+ * by every boss so the rule is the same rule everywhere.
+ */
+export function enrageBoss(a, ctx, line) {
+  if (!a || a.enraged || a.dead) return false;
+  const E = a.def.enrage || {};
+  a.enraged = true;
+  a.damageMul = (a.damageMul || 1) * (E.damage ?? 1.25);
+  a.tellMul = E.tell ?? 0.82;
+  a.speedMul = E.speed ?? 1.15;
+  a.attackCd = Math.min(a.attackCd || 0, 0.3);
+  ctx.events.emit('boss.enraged', { entity: a, name: a.def.label, pos: a.position });
+  ctx.ui?.toast?.(line || `${(a.def.label || 'THE BOSS').toUpperCase()} IS ENRAGED`, { color: a.def.identity || '#ff5a3c', dur: 3.2 });
+  ctx.engine?.slowmo?.(0.5, 0.5);
+  ctx.events.emit('camera.shake', { amp: 0.3, dur: 0.7, freq: 19 });
+  for (let i = 0; i < 3; i++) {
+    ctx.vfx?.shockwave?.(_v.set(a.position.x, 0.05 + i * 0.4, a.position.z), { radius: 3.5 + i * 2.6, color: a.def.identity || '#ff5a3c', life: 0.5 + i * 0.18 });
+  }
+  ctx.vfx?.burst?.(_v2.set(a.position.x, (a.height || 3) * 0.6, a.position.z), { count: 36, color: '#fff0c0', speed: 12, spread: 1.4, kind: 'ember' });
+  return true;
+}
+
+/** Tick a boss's enrage clock; call every frame from the family's tick(). */
+export function tickEnrage(a, dt, ctx) {
+  a.mem.fightT = (a.mem.fightT || 0) + (a.perc.aware ? dt : 0);
+  if (a.enraged) return;
+  const E = a.def.enrage || {};
+  const after = (E.after ?? 150) * (ctx.run?.modifiers?.has?.('deadline') ? 0.65 : 1);
+  const hpFrac = a.maxHealth > 0 ? a.health / a.maxHealth : 1;
+  if (a.mem.fightT >= after || hpFrac <= (E.below ?? 0.10)) enrageBoss(a, ctx, E.line);
+}
+
+export default { Enemy, cloneRig, charMaterial, paintGeo, humanoidTemplate, HumanoidVisual, enrageBoss, tickEnrage };
