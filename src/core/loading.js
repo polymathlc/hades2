@@ -74,9 +74,28 @@ const CSS = `
   text-shadow:0 0 14px rgba(242,193,78,.45)}
 #erebus-load .note{margin:14px 6px 0;font-size:10.5px;letter-spacing:.16em;color:#6f6455;
   text-transform:uppercase;min-height:13px}
+/* the descent ladder: one rung per bake phase, lit as the forge reaches it */
+#erebus-load .ladder{display:flex;justify-content:space-between;margin:20px 2px 0;gap:6px}
+#erebus-load .rung{flex:1;display:flex;flex-direction:column;align-items:center;gap:6px;
+  font-size:8.5px;letter-spacing:.2em;text-transform:uppercase;color:#5a4f44;transition:color .4s}
+#erebus-load .rung i{display:block;width:9px;height:9px;transform:rotate(45deg);
+  border:1px solid #6d4416;background:#150e21;box-shadow:inset 0 0 0 1px rgba(0,0,0,.6);transition:all .35s}
+#erebus-load .rung.lit{color:#a2937a}
+#erebus-load .rung.lit i{background:linear-gradient(135deg,#ffe9a8,#c98f2b 60%,#6d4416);border-color:#ffe9a8;
+  box-shadow:0 0 8px rgba(242,193,78,.75)}
+#erebus-load .rung.now{color:#ffe9a8}
+#erebus-load .rung.now i{animation:erebus-rung 1.1s ease-in-out infinite}
+@keyframes erebus-rung{0%,100%{box-shadow:0 0 6px rgba(242,193,78,.55)}50%{box-shadow:0 0 16px rgba(255,233,168,1)}}
+/* the counsel line: one real control per phase, so the wait teaches the game */
+#erebus-load .tip{margin:22px 6px 0;font-size:11px;letter-spacing:.14em;color:#c4b48f;
+  text-transform:uppercase;min-height:14px;opacity:.9}
+#erebus-load .tip b{display:inline-block;padding:1px 6px;margin:0 3px;border:1px solid #c98f2b;border-radius:3px;
+  color:#ffe9a8;font-weight:700;background:linear-gradient(180deg,#3a2b16,#160e08);font-size:10px;letter-spacing:.08em}
+#erebus-load .tally{margin:6px 6px 0;font-size:9.5px;letter-spacing:.2em;color:#6f6455;text-transform:uppercase}
 @media (prefers-reduced-motion: reduce){
   #erebus-load .fill::after{animation:none}
   #erebus-load .fill{transition:none}
+  #erebus-load .rung.now i{animation:none}
 }
 `;
 
@@ -114,6 +133,22 @@ const FRAME_SVG = (() => {
 
 const BEADS = 24;
 
+// The bake phases in the order preload.js runs them, with the bar position at
+// which each begins. The ladder lights a rung as the pour passes it, so the
+// player reads WHERE the boot is, not just how far.
+const PHASES = [
+  ['Surfaces', 0.02], ['Upload', 0.62], ['Roster', 0.66], ['Shaders', 0.72], ['Strings', 0.96], ['Descend', 1.0],
+];
+// A real control per phase — the wait is the first tutorial the player sees.
+const TIPS = [
+  ['Move with', 'W A S D', 'and aim with the cursor'],
+  ['Hold', 'RMB', 'on the shield to block and reflect'],
+  ['Press', 'SPACE', 'to dash through attacks — you are invulnerable mid-dash'],
+  ['Press', 'Q', 'to hurl your Bloodstone cast; it returns from the foe'],
+  ['Press', 'H', 'at any time for the controls guide'],
+  ['Press', 'ESC', 'to pause · settings hold comfort and accessibility options'],
+];
+
 export class LoadingScreen {
   constructor() {
     this.el = null; this.fill = null; this.pctEl = null; this.phaseEl = null;
@@ -138,6 +173,9 @@ export class LoadingScreen {
       <div class="beads">${'<i></i>'.repeat(BEADS)}</div>
       <div class="row"><span class="phase">Kindling the forge</span><span class="pct">0%</span></div>
       <p class="note"></p>
+      <div class="ladder">${PHASES.map(([n]) => `<span class="rung"><i></i>${n}</span>`).join('')}</div>
+      <p class="tip"></p>
+      <p class="tally"></p>
     </div>`;
     document.body.appendChild(el);
     this.el = el;
@@ -146,7 +184,20 @@ export class LoadingScreen {
     this.phaseEl = el.querySelector('.phase');
     this.noteEl = el.querySelector('.note');
     this.beads = [...el.querySelectorAll('.beads i')];
+    this.rungs = [...el.querySelectorAll('.rung')];
+    this.tipEl = el.querySelector('.tip');
+    this.tallyEl = el.querySelector('.tally');
+    this._tip = -1; this._tipAt = 0;
+    this._t0 = (typeof performance !== 'undefined' ? performance.now() : 0);
+    this._setTip(0);
     return this;
+  }
+
+  _setTip(i) {
+    if (!this.tipEl || i === this._tip) return;
+    this._tip = i;
+    const [a, key, b] = TIPS[i % TIPS.length];
+    this.tipEl.innerHTML = `${a} <b>${key}</b> ${b}`;
   }
 
   /** progress in 0..1, a phase label, and an optional detail line. */
@@ -160,6 +211,22 @@ export class LoadingScreen {
     if (note !== undefined) this.noteEl.textContent = note || '';
     const lit = Math.round(this.p * BEADS);
     for (let i = 0; i < this.beads.length; i++) this.beads[i].classList.toggle('lit', i < lit);
+    // the ladder: every phase the pour has passed is lit, the current one glows
+    let now = 0;
+    for (let i = 0; i < PHASES.length; i++) if (this.p >= PHASES[i][1] - 1e-6) now = i;
+    for (let i = 0; i < this.rungs.length; i++) {
+      this.rungs[i].classList.toggle('lit', i <= now);
+      this.rungs[i].classList.toggle('now', i === now && this.p < 1);
+    }
+    // rotate the counsel with the phase (and every ~4 s inside a long one)
+    const t = (typeof performance !== 'undefined' ? performance.now() : 0);
+    if (now !== this._phaseIdx || t - this._tipAt > 4000) { this._phaseIdx = now; this._tipAt = t; this._setTip(this._tip + 1); }
+    // the honest tally: what is being baked and for how long
+    if (this.tallyEl) {
+      const secs = Math.max(0, (t - this._t0) / 1000);
+      const m = note && /(\d+)\s*(?:\/|of)\s*(\d+)/.exec(note);
+      this.tallyEl.textContent = (m ? `${m[1]} of ${m[2]} baked · ` : '') + `${secs.toFixed(0)}s elapsed · everything is synthesised, nothing is downloaded`;
+    }
     return this;
   }
 

@@ -52,6 +52,11 @@ canvas{display:block;width:100vw;height:100vh;position:fixed;inset:0}
 }
 .erebus-body{font-family:var(--ui-body);letter-spacing:.02em;color:var(--parch)}
 
+/* The cursor is part of the interface: a crosshair in play so the aim point
+   is always legible against a dark chamber; the default arrow on menus. */
+body.booted canvas:not(#ui-canvas){cursor:crosshair}
+body.booted.ui-modal canvas:not(#ui-canvas){cursor:default}
+
 /* Boot state: the canvas fades up rather than snapping on. */
 body:not(.booted) #ui{opacity:0}
 #ui{transition:opacity .5s ease}

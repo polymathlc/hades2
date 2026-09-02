@@ -14,18 +14,12 @@
 import * as THREE from 'three';
 import {
   PAL, RARITY, plaqueRect, roundRect, goldGradient, tracked, trackedWidth,
-  rgba, mix, shade, lift, displayFont, bodyFont, ease, clamp01, meander, palmette,
+  rgba, mix, shade, lift, displayFont, bodyFont, ease, clamp01, meander, palmette, keyCap,
 } from './ornament.js';
 import { godEmblem } from './boons.js';
+import { damageColor, DAMAGE_TYPE_COLORS, DAMAGE_TYPE_GLYPH } from './hud-boons.js';
 
-const TYPE_COL = {
-  physical:  '#fff1d8',
-  fire:      '#ff9a3c',
-  lightning: '#ffe14d',
-  frost:     '#7fe2ff',
-  poison:    '#7ee06a',
-  arcane:    '#c9a0ff',
-};
+const TYPE_COL = DAMAGE_TYPE_COLORS.normal;
 
 const NUM_POOL = 72, BAR_POOL = 24;
 
@@ -108,9 +102,14 @@ export class WorldLabels {
 
   prompt(worldPos, text, o = {}) {
     if (!worldPos) return;
+    // `key` may be a literal cap ("W") or an ACTION name ("interact") — an
+    // action resolves to the live binding and to the pad glyph when a pad is
+    // in use, so a remapped key never leaves a stale prompt in the world.
+    const key = o.key || 'interact';
+    const action = o.action || ({ E: 'interact', F: 'interact', Q: 'cast', R: 'summon', SPACE: 'dash' }[String(key).toUpperCase()] || null);
     this.prompts.push({ p: new THREE.Vector3(worldPos.x, (worldPos.y || 0) + (o.height != null ? o.height : 1.6), worldPos.z),
       world: new THREE.Vector3(worldPos.x, worldPos.y || 0, worldPos.z),
-      text: String(text), key: o.key || 'E', until: this.ui.now() + (o.dur || 1e9), t0: this.ui.now(), maxDistance: o.maxDistance ?? Infinity });
+      text: String(text), key, action, until: this.ui.now() + (o.dur || 1e9), t0: this.ui.now(), maxDistance: o.maxDistance ?? Infinity, near: 0 });
     if (this.prompts.length > 24) this.prompts.shift();
     this.ui.dirty = true;
   }
@@ -179,13 +178,21 @@ export class WorldLabels {
     }
 
     // ── interaction prompts ──
+    // In range: the full plaque with its key cap. Out of range but nearby: a
+    // small gold marker so the player knows something can be used there. The
+    // marker eases up into the plaque as they approach — no popping.
     for (const pr of this.prompts) {
       const player = this.ui.ctx?.player?.position;
-      if (player && Number.isFinite(pr.maxDistance)
-        && Math.hypot(player.x - pr.world.x, player.z - pr.world.z) > pr.maxDistance) continue;
+      let near = 1;
+      if (player && Number.isFinite(pr.maxDistance)) {
+        const d = Math.hypot(player.x - pr.world.x, player.z - pr.world.z);
+        if (d > pr.maxDistance * 3.2) continue;
+        near = d <= pr.maxDistance ? 1 : clamp01(1 - (d - pr.maxDistance) / (pr.maxDistance * 0.9));
+      }
       this._proj(pr.p, cam, W, H, o);
       if (!o.ok) continue;
-      this._prompt(g, o.x, o.y, S, t, pr);
+      if (near >= 0.999) this._prompt(g, o.x, o.y, S, t, pr);
+      else this._marker(g, o.x, o.y, S, t, pr, near);
     }
 
     // ── damage numbers (always on top) ──
@@ -211,7 +218,11 @@ export class WorldLabels {
     const drift = n.dx * S * (0.35 + f * 0.65);
     const px = x + drift, py = y + n.dy * S - rise;
     const size = (n.crit ? 33 : 22) * S * pop;
-    const col = n.crit ? null : TYPE_COL[n.type];
+    const cb = !!this.ui.settings?.colorBlind;
+    const col = n.crit ? null : damageColor(n.type, cb);
+    // with the safe palette a type also carries a glyph, so hue is never the
+    // only channel telling the player what kind of damage that was
+    const suffix = cb && DAMAGE_TYPE_GLYPH[n.type] ? DAMAGE_TYPE_GLYPH[n.type] : '';
 
     g.save();
     g.globalAlpha *= alpha;
@@ -232,11 +243,27 @@ export class WorldLabels {
         size: size * 0.8, track: 0, weight: 800, align: 'center', color: '#ffe9a8', shadow: 'rgba(20,4,2,0.9)', shadowDy: 3 * S,
       });
     } else {
-      tracked(g, txt, px, py, {
+      const w = tracked(g, txt, px, py, {
         size, track: 0.02, weight: 700, align: 'center', color: col,
         shadow: 'rgba(8,2,10,0.9)', shadowDy: 2.4 * S, shadowAlpha: 0.9,
       });
+      if (suffix) tracked(g, suffix, px + w / 2 + size * 0.34, py, {
+        size: size * 0.6, track: 0, weight: 700, align: 'center', color: col, shadow: 'rgba(8,2,10,0.9)', shadowDy: 2 * S,
+      });
     }
+    g.restore();
+  }
+
+  /** The out-of-range affordance: a bobbing gold lozenge with a faint tether. */
+  _marker(g, x, y, S, t, pr, near) {
+    const bob = Math.sin(t * 2.4 + x * 0.02) * 2 * S;
+    const s = (5 + 5 * near) * S;
+    g.save(); g.globalAlpha *= 0.35 + 0.65 * near;
+    g.translate(x, y + bob);
+    g.beginPath(); g.moveTo(0, -s * 1.4); g.lineTo(s * 0.8, 0); g.lineTo(0, s * 1.4); g.lineTo(-s * 0.8, 0); g.closePath();
+    g.fillStyle = 'rgba(10,6,18,0.85)'; g.fill();
+    g.strokeStyle = goldGradient(g, -s, -s, s, s, (t * 0.4) % 1); g.lineWidth = 1.3 * S; g.stroke();
+    g.beginPath(); g.arc(0, 0, s * 0.28, 0, 6.2832); g.fillStyle = rgba(PAL.goldHi, 0.85); g.fill();
     g.restore();
   }
 
@@ -321,21 +348,20 @@ export class WorldLabels {
   _prompt(g, x, y, S, t, pr) {
     const bob = Math.sin(t * 2.4) * 2 * S;
     const size = 12 * S;
+    const pad = this.ui.padGlyphs ? this.ui.padGlyphs() : false;
+    const key = pr.action && this.ui.keyFor ? this.ui.keyFor(pr.action) : String(pr.key);
     const tw = trackedWidth(g, pr.text.toUpperCase(), { size, track: 0.22, weight: 600 });
-    const kw = 20 * S, w = tw + kw + 30 * S, h = 26 * S;
+    const kw = Math.max(20 * S, 8 * S * key.length + 8 * S), kh = 20 * S, w = tw + kw + 30 * S, h = 26 * S;
     const bx = x - w / 2, by = y - h / 2 + bob;
     g.save();
+    // a faint tether down to the thing the prompt belongs to
+    const tg = g.createLinearGradient(0, by + h, 0, by + h + 22 * S);
+    tg.addColorStop(0, rgba(PAL.gold, 0.55)); tg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = tg; g.fillRect(x - 0.6 * S, by + h, 1.2 * S, 22 * S);
     plaqueRect(g, bx, by, w, h, 5 * S);
     g.fillStyle = 'rgba(10,6,18,0.86)'; g.fill();
     g.strokeStyle = goldGradient(g, bx, by, bx + w, by + h, (t * 0.4) % 1); g.lineWidth = 1.4 * S; g.stroke();
-    // key cap
-    const kx = bx + 9 * S, ky = by + (h - kw) / 2;
-    plaqueRect(g, kx, ky, kw, kw, 3 * S);
-    const kg = g.createLinearGradient(kx, ky, kx, ky + kw);
-    kg.addColorStop(0, '#3a2b16'); kg.addColorStop(1, '#160e08');
-    g.fillStyle = kg; g.fill();
-    g.strokeStyle = rgba(PAL.gold, 0.8); g.lineWidth = 1.1 * S; g.stroke();
-    tracked(g, pr.key, kx + kw / 2, ky + kw * 0.72, { size: 11 * S, track: 0, weight: 700, align: 'center', color: '#ffe9a8' });
+    keyCap(g, bx + 9 * S, by + (h - kh) / 2, kw, kh, key, { pad: pad && key.length <= 2, size: 10.5 * S });
     tracked(g, pr.text.toUpperCase(), bx + kw + 20 * S, by + h * 0.66, {
       size, track: 0.22, weight: 600, align: 'left', color: '#efe2c6', shadow: '#07040d', shadowDy: 1.4 * S,
     });
