@@ -35,7 +35,7 @@
 // ---------------------------------------------------------------------------
 
 import { GOD_INFO, GOD_KEYS } from './boons.js';
-import { MetaProgression } from './meta.js';
+import { MetaProgression, RUN_MODIFIERS, heatOf } from './meta.js';
 import { HomeBase, NectarDrop, TitanBloodDrop } from '../world/homebase.js';
 import { CHARACTER_INFO, characterInfo, characterOwnsWeapon, godIdsForCharacter } from './characters.js';
 import { FINAL_BOSS_DEPTH } from '../entities/spawner.js';
@@ -44,6 +44,17 @@ import { FINAL_BOSS_DEPTH } from '../entities/spawner.js';
 // and 15 are regional bosses; clearing Heracles jumps directly to the
 // heir-specific finale instead of clamping into endless Elysium.
 const BIOMES = ['tartarus', 'asphodel', 'elysium'];
+
+// ── CHAMBER TRIALS: what the NEXT room asks, decided when this one is won.
+//    A trial is a deterministic function of (seed, depth) unless a door
+//    reward forces one: taking Charon's gold is greed, and greed is answered
+//    by an ambush; a Centaur Heart buys a quiet room. The reward for meeting
+//    the trial is paid on the clear, so the choice at the door shapes the
+//    fight after it and the fight pays back into the run.
+export const TRIALS = Object.freeze({
+  ambush: { name: 'Ambush', text: 'Reinforcements will arrive mid-fight. Bonus Obols on the clear.', obols: 30, darkness: 0 },
+  elite: { name: 'Elite', text: 'A second elite stalks this chamber. Bonus Darkness on the clear.', obols: 12, darkness: 1 },
+});
 
 export class RunState {
   constructor() {
@@ -69,6 +80,11 @@ export class RunState {
     this._rewardedBosses = new Set();
     this.selectedWeapon = null;
     this.selectedCharacter = 'zagreus';
+    // ── run modifiers (the Pact) and chamber trials ──
+    this.modifiers = new Set();
+    this.heat = 0;
+    this.trial = null;          // the live chamber's trial, or null
+    this.nextTrial = undefined; // forced by a door reward; undefined = roll it
   }
 
   async init(ctx) {
@@ -83,6 +99,7 @@ export class RunState {
     this.meta = new MetaProgression(ctx).load();
     ctx.meta = this.meta;
     this.nectar = this.meta.nectar;
+    this._syncModifiers();
     ctx.boons?.rebuild?.();
     ctx.boons?._syncPlayer?.();
 
@@ -94,6 +111,7 @@ export class RunState {
     ctx.events.on('boss.defeated', (i) => this._onBossDefeated(i));
     ctx.events.on('run.start', () => { if (this.state === 'home') this.startRun(); });
     ctx.events.on('run.abandon', () => this.enterHome());
+    ctx.events.on('pact.toggle', (e) => this.setModifier(e?.id, e?.on));
     ctx.events.on('home.altarClosed', () => this._home?.releaseAltar?.());
     ctx.events.on('capture.state', ({ name, args }) => {
       if (name === 'home') {
@@ -138,6 +156,30 @@ export class RunState {
   }
   /** Pure function of (runSeed, depth) — the same run replays identically. */
   seedFor(depth) { return (this.seed * 2654435761 + depth * 40503) >>> 0; }
+
+  /** The trial a chamber at `depth` asks: forced by a door, else rolled. */
+  trialFor(depth, forced = undefined) {
+    if (forced !== undefined) return forced;
+    if (depth < 2 || depth % 5 === 0) return null;
+    const r = this.seedFor(depth) % 7;
+    return r <= 1 ? 'ambush' : r === 2 ? 'elite' : null;
+  }
+
+  // ── the Pact ──────────────────────────────────────────────────────────────
+  /** Toggle a run modifier at the Crossroads; persisted through meta. */
+  setModifier(id, on) {
+    if (this.state !== 'home' || !RUN_MODIFIERS.some(m => m.id === id)) return false;
+    const r = this.meta?.togglePact?.(id, on);
+    if (!r?.ok) return false;
+    this._syncModifiers();
+    this.ctx?.ui?.toast?.(`${r.on ? 'PACT SEALED' : 'PACT RELEASED'} · ${RUN_MODIFIERS.find(m => m.id === id).name.toUpperCase()} · HEAT ${this.heat}`, { color: '#ff756b', dur: 2.2 });
+    return true;
+  }
+  _syncModifiers() {
+    this.modifiers = new Set(this.meta?.pacts || []);
+    this.heat = heatOf(this.modifiers);
+    this.ctx?.events?.emit?.('run.modifiers', { modifiers: [...this.modifiers], heat: this.heat });
+  }
 
   // ══════════════════════════════════════════════════════════ Crossroads ═══
   /** Return to the persistent home base. No encounter begins until the portal is crossed. */
@@ -234,12 +276,16 @@ export class RunState {
     ctx.player?.respawn?.();
     ctx.ui?.clearRunBoons?.();
     ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
+    this._syncModifiers();
+    this.nextTrial = undefined;
     this.biome = 'tartarus';
     this.enterRoom(0, 'tartarus');
     ctx.events.emit('run.started', {
       seed: this.seed, biome: this.biome, nectar: this.meta?.nectar || 0, darkness: this.meta?.darkness || 0,
       weapon: this.selectedWeapon, character: this.selectedCharacter,
+      modifiers: [...this.modifiers], heat: this.heat,
     });
+    if (this.heat > 0) ctx.ui?.toast?.(`PACT · HEAT ${this.heat} · +${this.heat} DARKNESS PER CLEAR`, { color: '#ff756b', dur: 3 });
     return true;
   }
 
@@ -265,6 +311,10 @@ export class RunState {
     this.roomCleared = false;
     this.state = 'playing';
     this._pending = null;
+    // the trial is decided BEFORE the world builds: spawner.js composes the
+    // encounter on room.built and reads ctx.run.trial as it does
+    this.trial = this.trialFor(depth, this.nextTrial);
+    this.nextTrial = undefined;
 
     const world = ctx.world;
     const changedBiome = biome && biome !== this.biome;
@@ -307,6 +357,11 @@ export class RunState {
       ctx.spawner.beginRoom(this.biome, depth, { seed: this.seedFor(depth) });
     }
     ctx.ui?.setDepth?.(depth, this.biome);
+    if (this.trial && TRIALS[this.trial]) {
+      const T = TRIALS[this.trial];
+      ctx.events.emit('room.trial', { depth, trial: this.trial, name: T.name, text: T.text });
+      ctx.ui?.toast?.(`TRIAL · ${T.name.toUpperCase()} — ${T.text}`, { color: '#f2c14e', dur: 3.4 });
+    }
     return this;
   }
 
@@ -369,8 +424,18 @@ export class RunState {
       this.ctx.player.health = Math.min(this.ctx.player.maxHealth, this.ctx.player.health + heal);
       this.ctx.ui?.setHealth?.(this.ctx.player.health, this.ctx.player.maxHealth);
     }
+    // the trial pays on the clear; the Pact pays its heat on every clear
+    const T = this.trial && TRIALS[this.trial];
+    let trialDarkness = 0;
+    if (T) {
+      this.obols += T.obols + this.depth * 2;
+      trialDarkness = T.darkness;
+      this.ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
+      this.ctx.ui?.toast?.(`TRIAL MET · ${T.name.toUpperCase()} · +${T.obols + this.depth * 2} OBOLS${T.darkness ? ` · +${T.darkness} DARKNESS` : ''}`, { color: '#f2c14e', dur: 3 });
+      this.ctx.events.emit('run.trialMet', { depth: this.depth, trial: this.trial, obols: T.obols + this.depth * 2, darkness: T.darkness });
+    }
     if (!this.ctx.CAPTURE) {
-      const darkness = e?.boss ? 3 : 1;
+      const darkness = (e?.boss ? 3 : 1) + trialDarkness + this.heat;
       this.meta?.awardDarkness?.(darkness, { source: e?.boss ? 'boss' : 'chamber' });
     }
     this.ctx.events.emit('run.roomCleared', {
@@ -412,14 +477,18 @@ export class RunState {
   _applyReward(kind) {
     const ctx = this.ctx;
     if (kind === 'health' && ctx.player) {
-      const heal = Math.max(35, ctx.player.maxHealth * 0.35);
+      const heal = Math.max(35, ctx.player.maxHealth * 0.35) * (this.modifiers.has('lean') ? 0.5 : 1);
       ctx.player.health = Math.min(ctx.player.maxHealth, ctx.player.health + heal);
       ctx.ui?.setHealth?.(ctx.player.health, ctx.player.maxHealth);
       ctx.ui?.toast?.('Centaur Heart', { color: '#de526f' });
+      // a heart buys a quiet chamber: no trial next room
+      this.nextTrial = null;
     } else if (kind === 'gold') {
       this.obols += 75 + this.depth * 5;
       ctx.ui?.setResources?.(this.obols, this.meta?.nectar || 0, this.meta?.titanBlood || 0, this.meta?.darkness || 0);
       ctx.ui?.toast?.('Charon’s Obols', { color: '#f2c14e' });
+      // greed is answered: the next chamber is an ambush (and pays again)
+      if (this.depth + 1 >= 2 && (this.depth + 1) % 5 !== 0) this.nextTrial = 'ambush';
     }
   }
 

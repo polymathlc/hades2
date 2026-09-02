@@ -64,6 +64,26 @@ export const MIRROR_TALENTS = Object.freeze({
 });
 export const MIRROR_TRACKS = Object.freeze(Object.keys(MIRROR_TALENTS));
 
+// ── RUN MODIFIERS (the Pact). Chosen at the Crossroads, persisted, and read
+//    live by the spawner and the roster through ctx.run.modifiers. Each one
+//    changes how a room PLAYS, not just a number, and each pays Darkness per
+//    clear equal to its heat. The data lives here (not run.js) so the home
+//    base and the tests can read it without importing the run director.
+export const RUN_MODIFIERS = Object.freeze([
+  { id: 'hardened', name: 'Hardened Shells', heat: 1, text: 'Foes have 25% more life.' },
+  { id: 'restless', name: 'Restless Dead', heat: 1, text: 'Reinforcements trickle into every wave after the opener.' },
+  { id: 'swift', name: 'Quickened Blades', heat: 2, text: 'Enemy tells are 15% shorter.' },
+  { id: 'frenzy', name: 'Frenzied Ranks', heat: 1, text: 'One more foe may commit to an attack at once; one more may be alive.' },
+  { id: 'deadline', name: 'Tight Deadline', heat: 1, text: 'Bosses enrage 35% sooner.' },
+  { id: 'lean', name: 'Lean Rations', heat: 1, text: 'Centaur Hearts restore half as much.' },
+]);
+export const RUN_MODIFIER_IDS = Object.freeze(RUN_MODIFIERS.map(m => m.id));
+export function heatOf(ids) {
+  let h = 0;
+  for (const id of ids || []) { const m = RUN_MODIFIERS.find(x => x.id === id); if (m) h += m.heat; }
+  return h;
+}
+
 export const GOD_LEGACIES = {
   zeus:      { name: 'Olympian Authority', text: r => `All damage +${r * 2}%`, apply: (m, r) => { m.dmgMul *= 1 + r * 0.02; } },
   poseidon:  { name: 'Ocean’s Force', text: r => `All knockback +${(r * 0.6).toFixed(1)}m`, apply: (m, r) => { m.knockback += r * 0.6; } },
@@ -111,6 +131,7 @@ export class MetaProgression {
     this.gods = blankGods();
     this.weapons = blankWeapons();
     this.mirror = blankMirror();
+    this.pacts = [];
     this.version = 3;
   }
 
@@ -132,6 +153,7 @@ export class MetaProgression {
     }
     this.mirror = blankMirror();
     for (const talent of MIRROR_TRACKS) this.mirror[talent] = cleanMirrorRank(talent, data?.mirror?.[talent]);
+    this.pacts = Array.isArray(data?.pacts) ? data.pacts.filter(id => RUN_MODIFIER_IDS.includes(id)) : [];
     this.ctx?.events?.emit?.('meta.loaded', this.snapshot());
     return this;
   }
@@ -146,7 +168,23 @@ export class MetaProgression {
     for (const god of GOD_KEYS) gods[god] = { ...this.gods[god] };
     const weapons = {};
     for (const weapon of Object.keys(META_WEAPONS)) weapons[weapon] = { ...this.weapons[weapon] };
-    return { version: this.version, nectar: this.nectar, titanBlood: this.titanBlood, darkness: this.darkness, gods, weapons, mirror: { ...this.mirror } };
+    return { version: this.version, nectar: this.nectar, titanBlood: this.titanBlood, darkness: this.darkness, gods, weapons, mirror: { ...this.mirror }, pacts: this.pacts.slice() };
+  }
+
+  // ── the Pact ─────────────────────────────────────────────────────────────
+  hasPact(id) { return this.pacts.includes(id); }
+  heat() { return heatOf(this.pacts); }
+  /** toggle one run modifier on/off; returns the new state, persisted. */
+  togglePact(id, on) {
+    if (!RUN_MODIFIER_IDS.includes(id)) return { ok: false, reason: 'invalid' };
+    const has = this.pacts.includes(id);
+    const want = on == null ? !has : !!on;
+    if (want && !has) this.pacts.push(id);
+    else if (!want && has) this.pacts.splice(this.pacts.indexOf(id), 1);
+    this.save();
+    const result = { ok: true, id, on: want, pacts: this.pacts.slice(), heat: this.heat() };
+    this.ctx?.events?.emit?.('pact.changed', result);
+    return result;
   }
 
   rank(god, track = 'boon') { return cleanRank(this.gods[god]?.[track]); }

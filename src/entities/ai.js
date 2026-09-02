@@ -404,6 +404,14 @@ export const TELEGRAPH = {
   bossSlam: 0.85,
   bossSweep: 0.95,
   bossVolley: 1.10,
+  // follow-ups and specialists. A combo's SECOND swing may be quicker than a
+  // first because the first already announced the fight; a blink strike is
+  // read from the arrival mark, so its own tell is short but never absent.
+  comboFollow: 0.30,
+  blinkStrike: 0.36,
+  shieldCharge: 0.80,
+  volley: 0.90,
+  guardBreak: 0.55,
 };
 
 /**
@@ -467,7 +475,42 @@ export function inDisc(x, z, target, radius) {
  */
 export function orbitSign(id) { return (id & 1) ? 1 : -1; }
 
+/**
+ * SURROUND SLOTS — the flanking formation.
+ *
+ * Every melee agent without the token owns a SLOT on the standoff ring, fanned
+ * across the player's sides and back, away from where the hero is looking.
+ * Rank is by id, so the assignment is deterministic and stable until someone
+ * dies, at which point the ring closes up. Pure orbiting produces a conga line
+ * that the player can face all at once; slots produce a pincer that forces the
+ * camera-side read — "who is behind me" — which is the whole reason a pack of
+ * shades is scarier than one.
+ *
+ * Writes into `out` ({x,z}); allocation-free.
+ */
+export function surroundSlot(a, list, tx, tz, faceX, faceZ, radius, out, filter = null) {
+  let n = 0, rank = 0;
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i];
+    if (!o || o.dead || o.alive === false || !o.position) continue;
+    const d = o.def;
+    if (d && (d.boss || d.tokenPool === 'ranged' || d.tokenPool === 'free')) continue;
+    if (filter && !filter(o)) continue;
+    if (o.id < a.id) rank++;
+    n++;
+  }
+  const fl = Math.hypot(faceX, faceZ) || 1;
+  // behind the player's facing; a lone agent sits square behind, a pack fans
+  // out to a pincer, never a full ring (the front stays open to read)
+  const base = Math.atan2(faceZ / fl, faceX / fl) + Math.PI;
+  const spread = n <= 1 ? 0 : Math.min(TAU * 0.72, 0.85 * n);
+  const ang = n <= 1 ? base : base + (rank / (n - 1) - 0.5) * spread;
+  out.x = tx + Math.cos(ang) * radius;
+  out.z = tz + Math.sin(ang) * radius;
+  return out;
+}
+
 export default {
   TokenPool, Perception, Steer, Brain, TELEGRAPH,
-  beginTelegraph, endTelegraph, inCone, inDisc, orbitSign, V2,
+  beginTelegraph, endTelegraph, inCone, inDisc, orbitSign, surroundSlot, V2,
 };

@@ -32,7 +32,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, clamp01, lerp, TAU } from '../../core/math.js';
 import { TELEGRAPH, inDisc } from '../ai.js';
-import { charMaterial, paintGeo } from './base.js';
+import { charMaterial, paintGeo, tickEnrage } from './base.js';
 
 const WARDEN_PALETTE = {
   skin: '#c08a6a', skinDeep: '#5e2f22',
@@ -119,6 +119,8 @@ export const WARDEN = {
   hp: 1150, radius: 1.25, speed: 3.4, accel: 15, turn: 3.4,
   poise: 999, poiseMax: 260, staggerTime: 0.0, knockResist: 0.95, crowdPad: 0.9,
   tokenPool: 'boss', threat: 20, cost: 20, boss: true,
+  // THE CLOCK: 150s (or the last 10% of health) and the Warden stops teaching
+  enrage: { after: 150, below: 0.10, damage: 1.25, tell: 0.82, speed: 1.15, line: "THE WARDEN'S FURY" },
   deathScale: 2.6, deathShake: 0.3, deathTime: 1.5, spawnTime: 1.2,
   perception: { range: 60, reaction: 0.25, aimLambda: 4.2 },
   spec: {
@@ -154,6 +156,7 @@ export const WARDEN = {
     ctx.ui?.toast?.(WARDEN.label, { color: '#ff5a3c' });
   },
   tick(a, dt, ctx) {
+    tickEnrage(a, dt, ctx);
     const ph = phaseFor(a);
     if (ph !== a.mem.phase) {
       a.mem.phase = ph;
@@ -411,7 +414,7 @@ export const WARDEN = {
           a.vulnerable = true;
           a.resist = { physical: -1, fire: -1, lightning: -1, frost: -1, poison: -1, arcane: -1 };
           a.play('hurt', { fade: 0.14, restart: true, speed: 0.42 });
-          ctx.events.emit('boss.exposed', { entity: a, pos: a.position.clone(), dur: a.mem.exposeDur = 2.4 * (1 - 0.16 * a.mem.phase) });
+          ctx.events.emit('boss.exposed', { entity: a, pos: a.position.clone(), dur: a.mem.exposeDur = 2.4 * (1 - 0.16 * a.mem.phase) * (a.enraged ? 0.72 : 1) });
           ctx.vfx?.burst?.(a.position.clone().setY(2.0), { count: 18, color: '#fff6d8', speed: 5, spread: 1.2, kind: 'ember' });
           a.mgr.telegraphs.spawn({
             x: a.position.x, z: a.position.z, radius: 2.6, shape: 'ring', inner: 0.72,

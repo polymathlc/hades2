@@ -20,8 +20,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, clamp01, lerp, damp, TAU } from '../../core/math.js';
-import { TELEGRAPH, inDisc } from '../ai.js';
+import { TELEGRAPH, inDisc, surroundSlot } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
+
+const _slot = { x: 0, z: 0 };
+const isHound = (o) => o.kind === 'hound';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // a tiny visual driver for hand-animated procedural bodies
@@ -202,9 +205,14 @@ export const HOUND = {
           const p = a.perc;
           a.mem.t += dt;
           if (a.mem.t > 1.7) { a.mem.t = 0; a.orbitDir *= -1; }
-          // hounds harry: they hold a TIGHT ring and dart in and out
-          a.steer.begin(a.def.speed * 0.8)
-            .orbit(p.aimX, p.aimZ, 4.4 + 0.7 * Math.sin(a.id * 1.7), a.orbitDir, 1.0, 1.15)
+          // hounds harry: they hold a TIGHT ring and dart in and out, and the
+          // PACK spreads itself across the hero's flanks — three hounds never
+          // arrive from one side
+          const pl = ctx.player;
+          surroundSlot(a, a.mgr.list, p.aimX, p.aimZ, pl?.facing?.x ?? -p.dirX, pl?.facing?.y ?? -p.dirZ, 4.6, _slot, isHound);
+          a.steer.begin(a.def.speed * 0.85)
+            .arrive(_slot.x, _slot.z, 1.8, 0.9)
+            .orbit(p.aimX, p.aimZ, 4.4 + 0.7 * Math.sin(a.id * 1.7), a.orbitDir, 0.7, 1.15)
             .separation(a.mgr.list, 2.2).avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ, turn: 13 });
           if (a.attackCd <= 0 && p.dist < 7.5 && a.wantToken('melee', -p.dist + 0.5)) return 'crouch';
@@ -217,7 +225,7 @@ export const HOUND = {
           const p = a.perc;
           a.snapFace(p.dirX, p.dirZ);
           a.mem.lungeX = p.dirX; a.mem.lungeZ = p.dirZ;
-          a.telegraph('lunge', 0.46, {
+          a.telegraph('lunge', TELEGRAPH.dash, {
             shape: 'line', radius: 6.4, inner: 0.14, dirX: p.dirX, dirZ: p.dirZ,
             follow: true, color: '#ff5a3c',
           });

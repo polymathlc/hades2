@@ -374,6 +374,12 @@ export class Enemy {
     this.stateName = 'idle';
     this.attackCd = 0;
     this.spawnGrace = 0;
+    // ── run-time modifiers written by the manager, bosses and elites ──
+    this.tellMul = 1;              // telegraph duration multiplier (enrage, pacts)
+    this.speedMul = 1;             // locomotion multiplier (swift elites, enrage)
+    this.visualScale = 1;          // body scale (elites read bigger)
+    this.elite = null;             // affix name, or null
+    this.enraged = false;
     this.mem = {};                 // per-family scratch, reset on spawn
     // ── presentation ──
     this.visual = null;
@@ -418,6 +424,8 @@ export class Enemy {
     this._knock.set(0, 0, 0);
     this.attackCd = d.firstAttackDelay ?? 0.5;
     this.spawnGrace = d.spawnTime ?? 0.62;
+    this.tellMul = 1; this.speedMul = 1; this.visualScale = 1; this.elite = null; this.enraged = false;
+    this.armour = 0;
     this.orbitDir = orbitSign(this.id + (opts.wave || 0));
     this.perc.reset();
     this.tell.active = false;
@@ -467,6 +475,9 @@ export class Enemy {
    */
   telegraph(kind, dur, o = {}) {
     const ctx = this.ctx;
+    // enrage and run pacts shorten every tell by one multiplier, never below
+    // the authored floor's readable half
+    dur = Math.max(0.16, dur * (this.tellMul || 1) * (this.mgr?.tellMul || 1));
     beginTelegraph(this, ctx, kind, dur, { ...o, color: o.color || this.tellColor });
     this.mgr.telegraphs.cancelOwner(this);
     this._tellHandle = this.mgr.telegraphs.spawn({
@@ -530,7 +541,7 @@ export class Enemy {
   /** Integrate the steering result with acceleration, collision and facing. */
   move(dt, ctx, out, o = {}) {
     const accel = o.accel ?? this.def.accel ?? 26;
-    const slow = ctx.combat?.slowOf?.(this) ?? 1;
+    const slow = (ctx.combat?.slowOf?.(this) ?? 1) * (this.speedMul || 1);
     const vx = damp(this.velocity.x, out.x * slow, accel * 0.34, dt);
     const vz = damp(this.velocity.z, out.z * slow, accel * 0.34, dt);
     this.velocity.x = vx; this.velocity.z = vz;
@@ -590,6 +601,12 @@ export class Enemy {
     ctx.events.emit('camera.shake', { amp: this.def.deathShake ?? 0.05, dur: 0.2, freq: 27 });
     ctx.audio?.sfx?.('enemyDeath', { pos: this.position });
     if (this.def.onDied) this.def.onDied(this, info, ctx);
+    // a VOLATILE elite is a bomb you are told about: its death is a disc strike
+    if (this.elite === 'volatile') {
+      this.strikeDisc(ctx, this.position.x, this.position.z, 2.8, {
+        damage: 14, type: 'fire', knock: 8, color: this.def.identity || '#ff8c1a', shake: 0.12, kind: 'ember', life: 0.5,
+      });
+    }
   }
 
   // ──────────────────────────────────────────────────────────── per-step ──
@@ -613,8 +630,9 @@ export class Enemy {
       this.iframes = Math.max(this.iframes, 0.02);
       const k = clamp01(1 - this.spawnGrace / (this.def.spawnTime ?? 0.62));
       const s = k * k * (3 - 2 * k);
-      this.root.scale.set(0.55 + 0.45 * s, 0.4 + 0.6 * s, 0.55 + 0.45 * s);
-    } else if (this.root.scale.x !== 1) this.root.scale.setScalar(1);
+      const V = this.visualScale || 1;
+      this.root.scale.set((0.55 + 0.45 * s) * V, (0.4 + 0.6 * s) * V, (0.55 + 0.45 * s) * V);
+    } else if (this.root.scale.x !== (this.visualScale || 1)) this.root.scale.setScalar(this.visualScale || 1);
 
     if (this.tell.active) {
       this.tell.t += dt;
@@ -638,7 +656,7 @@ export class Enemy {
     const k = clamp01(this._deathT / T);
     // dissolve UPWARD (§5) — the body drifts up and shrinks into the wisps
     this.root.position.y = (ctx.world?.heightAt?.(this.position.x, this.position.z) ?? 0) + k * k * 1.15;
-    const s = 1 - k * k * 0.85;
+    const s = (1 - k * k * 0.85) * (this.visualScale || 1);
     this.root.scale.set(s * (1 + k * 0.22), s, s * (1 + k * 0.22));
     // THE DISSOLVE (§5). A solid white body rising is a paper cutout; what the
     // bible asks for is the figure coming APART into light. So the body swaps
@@ -668,4 +686,40 @@ export class Enemy {
   lateUpdate(alpha, ctx) { if (this.visual.lateUpdate) this.visual.lateUpdate(alpha, this, ctx); }
 }
 
-export default { Enemy, cloneRig, charMaterial, paintGeo, humanoidTemplate, HumanoidVisual };
+/**
+ * THE ENRAGE. Every boss has a clock. Past it (or at the last sliver of
+ * health) the fight stops being fair: tells shorten, hits land harder, the
+ * boss moves faster and its vulnerability windows shrink. The player is told
+ * once, loudly. This is what turns a long fight into a race, and it is shared
+ * by every boss so the rule is the same rule everywhere.
+ */
+export function enrageBoss(a, ctx, line) {
+  if (!a || a.enraged || a.dead) return false;
+  const E = a.def.enrage || {};
+  a.enraged = true;
+  a.damageMul = (a.damageMul || 1) * (E.damage ?? 1.25);
+  a.tellMul = E.tell ?? 0.82;
+  a.speedMul = E.speed ?? 1.15;
+  a.attackCd = Math.min(a.attackCd || 0, 0.3);
+  ctx.events.emit('boss.enraged', { entity: a, name: a.def.label, pos: a.position });
+  ctx.ui?.toast?.(line || `${(a.def.label || 'THE BOSS').toUpperCase()} IS ENRAGED`, { color: a.def.identity || '#ff5a3c', dur: 3.2 });
+  ctx.engine?.slowmo?.(0.5, 0.5);
+  ctx.events.emit('camera.shake', { amp: 0.3, dur: 0.7, freq: 19 });
+  for (let i = 0; i < 3; i++) {
+    ctx.vfx?.shockwave?.(_v.set(a.position.x, 0.05 + i * 0.4, a.position.z), { radius: 3.5 + i * 2.6, color: a.def.identity || '#ff5a3c', life: 0.5 + i * 0.18 });
+  }
+  ctx.vfx?.burst?.(_v2.set(a.position.x, (a.height || 3) * 0.6, a.position.z), { count: 36, color: '#fff0c0', speed: 12, spread: 1.4, kind: 'ember' });
+  return true;
+}
+
+/** Tick a boss's enrage clock; call every frame from the family's tick(). */
+export function tickEnrage(a, dt, ctx) {
+  a.mem.fightT = (a.mem.fightT || 0) + (a.perc.aware ? dt : 0);
+  if (a.enraged) return;
+  const E = a.def.enrage || {};
+  const after = (E.after ?? 150) * (ctx.run?.modifiers?.has?.('deadline') ? 0.65 : 1);
+  const hpFrac = a.maxHealth > 0 ? a.health / a.maxHealth : 1;
+  if (a.mem.fightT >= after || hpFrac <= (E.below ?? 0.10)) enrageBoss(a, ctx, E.line);
+}
+
+export default { Enemy, cloneRig, charMaterial, paintGeo, humanoidTemplate, HumanoidVisual, enrageBoss, tickEnrage };

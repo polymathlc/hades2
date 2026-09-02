@@ -75,9 +75,32 @@ const INTENSITY = {
   emitDelta: 0.02,
 };
 
+// ── the FEEL table: how a hit's WEIGHT becomes hit-stop, shake and push ─────
+// One place, because these numbers only mean anything relative to each other.
+// A light hit that stops the world as long as a finisher makes the finisher
+// feel light; a crit that stops it no longer than a normal hit is not a crit.
+export const FEEL = {
+  critHitstop: 1.35,        // crits hold the frame a third longer
+  staggerHitstop: 1.18,     // breaking poise is a beat of its own
+  finisherHitstop: 1.15,    // combo enders land heavier than their numbers
+  multiHitstop: 0.34,       // the 2nd..Nth victim of one swing adds a fraction
+  maxHitstopMs: 150,        // never let stacked weight freeze the fight
+  lowHealthKnock: 0.45,     // a near-dead foe flies up to 45% further
+  critKnock: 1.25,          // crits push harder
+  braceKnock: 0.28,         // braced (unstaggered) foes barely move
+  backstabArc: 0.35,        // cos threshold: hit from behind the victim's facing
+  perfectDodgeWindow: 1.5,  // seconds the riposte bonus stays armed
+  perfectDodgeBonus: 0.25,  // base riposte damage bonus (boons add to it)
+  perfectDodgeLock: 0.35,   // one reward per dodge, not one per pellet
+};
+
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3();
 
 export class CombatSystem {
+  // the outcome of the most recent applyDamage(), for hit()/projectileHit()
+  // to weight their hit-stop without a second lookup or an allocation. A
+  // class field so a harness that skips init() still has it.
+  _last = { crit: false, staggered: false, killed: false, amount: 0 };
 
   // ─────────────────────────────────────────────────────────────── init ────
   async init(ctx) {
@@ -363,8 +386,18 @@ export class CombatSystem {
     if (!t || t.dead || t.alive === false) return 0;
     const ctx = this.ctx;
 
+    const L = this._last;
+    L.crit = false; L.staggered = false; L.killed = false; L.amount = 0;
+
     // i-frames apply to ANY entity that carries them, not just the player.
-    if ((t.iframes || 0) > 0 && !info.ignoreIFrames) return 0;
+    if ((t.iframes || 0) > 0 && !info.ignoreIFrames) {
+      // A hit that would have landed while the hero was inside the dash's
+      // authored i-frame window is a PERFECT DODGE: the read the player made
+      // was correct, and the game says so.
+      if (t === ctx.player && t.state === 'dash' && info.source && info.source !== t && !info.boonProc
+        && (!t.dash || (t.dash.t || 0) <= (t.tune?.dashIFrames?.[1] ?? 0.215) + (ctx.boons?.mods?.iframeAdd || 0))) this._perfectDodge(t, info);
+      return 0;
+    }
     if (t.invulnerable) return 0;
 
     let amount = info.amount || 0;
@@ -404,16 +437,34 @@ export class CombatSystem {
     if (playerMods && exposure) amount *= 1 + exposure.bonus;
     const castMarked = !!(playerMods && t._castShardCount > 0 && (info.boonSlot === 'attack' || info.boonSlot === 'special'));
     if (castMarked) amount *= 1 + CAST_SHARD_BASE_BONUS + (playerMods.castShardBonus || 0);
+    let forcedCrit = !!info.crit;
     if (playerMods) {
       const hangover = this._stack(t, 'burn');
       if (hangover) {
         amount *= 1 + hangover * (playerMods.hangoverAmp || 0);
         if (this._stack(t, 'weak')) amount *= 1 + hangover * (playerMods.hangoverVsWeak || 0);
       }
+      // POSITION and TIMING pay. Behind the victim, on a staggered victim, on
+      // a dying victim, or inside the riposte window after a perfect dodge.
+      if (playerMods.backstab > 0 && info.dir && t.facing) {
+        const fz = t.facing.z ?? t.facing.y ?? 0;
+        if ((info.dir.x || 0) * t.facing.x + (info.dir.z ?? info.dir.y ?? 0) * fz > FEEL.backstabArc) {
+          amount *= 1 + playerMods.backstab;
+          ctx.events.emit('damage.backstab', { target: t, source: src });
+        }
+      }
+      if (playerMods.staggerBonus > 0 && ((t.stagger || 0) > 0 || t.vulnerable)) amount *= 1 + playerMods.staggerBonus;
+      if (playerMods.executeBonus > 0 && t.maxHealth > 0 && t.health / t.maxHealth < (playerMods.executeAt || 0.3)) amount *= 1 + playerMods.executeBonus;
+    }
+    if (src === ctx.player && (src._perfectDodgeT || 0) > 0 && !info.boonProc && (info.boonSlot === 'attack' || info.boonSlot === 'special' || info.riposte)) {
+      amount *= 1 + FEEL.perfectDodgeBonus + (playerMods?.perfectDodgeBonus || 0);
+      if (playerMods?.perfectDodgeCrit) forcedCrit = true;
+      src._perfectDodgeT = 0;
+      ctx.events.emit('player.riposte', { target: t, pos: t.position });
     }
 
     // ── crit ────────────────────────────────────────────────────────────
-    let crit = !!info.crit;
+    let crit = forcedCrit;
     if (!crit) {
       const chance = (info.critChance || 0) + ((src && src.critChance) || 0)
         + (playerMods ? (this._critMark.get(t)?.chance || 0) : 0)
@@ -451,10 +502,19 @@ export class CombatSystem {
     }
 
     // ── knockback with spring recovery ──────────────────────────────────
-    const kb = info.knockback || 0;
+    // THE KNOCKBACK CURVE: the impulse is not the authored number. A braced
+    // (unstaggered) body barely moves; a crit pushes harder; a near-dead foe
+    // is thrown, which is the visual grammar for "that one is about to die".
+    // The hero's own hurt reaction stays authored (player.js reads the raw
+    // value), so only enemies ride the curve.
+    let kb = info.knockback || 0;
+    if (kb > 0 && t !== ctx.player) {
+      const hpFrac = t.maxHealth > 0 ? Math.max(0, t.health) / t.maxHealth : 1;
+      kb *= (staggered ? 1 : FEEL.braceKnock) * (crit ? FEEL.critKnock : 1) * (1 + FEEL.lowHealthKnock * (1 - hpFrac));
+    }
     if (kb > 0 && info.dir) {
       const mass = t.mass || 1;
-      const k = (kb / mass) * (staggered ? 1 : 0.28);
+      const k = kb / mass;
       if (!t.knock) t.knock = new THREE.Vector3();
       t.knock.x += (info.dir.x || 0) * k;
       t.knock.z += (info.dir.z ?? info.dir.y ?? 0) * k;
@@ -469,7 +529,8 @@ export class CombatSystem {
 
     // ── the canonical event (§2.5) + the UI number ──────────────────────
     const pos = info.pos || t.position;
-    ctx.events.emit('damage.dealt', { target: t, amount, crit, dir: info.dir, pos, source: src, type, staggered, knockback: kb, castMarked });
+    L.crit = crit; L.staggered = staggered; L.amount = amount; L.killed = t.health <= 0;
+    ctx.events.emit('damage.dealt', { target: t, amount, crit, dir: info.dir, pos, source: src, type, staggered, knockback: kb, castMarked, tip: !!info.tip, finisher: !!info.finisher });
     ctx.events.emit('damage.number', { pos, amount, crit, type, target: t });
     ctx.ui?.damageNumber?.(pos, amount, { crit, type });
 
@@ -601,23 +662,45 @@ export class CombatSystem {
   // ────────────────────────────────────────── hitbox / projectile resolve ──
   /** Called by HitboxSystem when a live hitbox overlaps a valid target. */
   hit(h, e, nx, nz) {
+    // the Spear's spacing game: the far part of a capsule pays extra
+    const tip = h.tipBonus > 0 && this.hitboxes._frac >= h.tipFrom;
     const dealt = this.applyDamage({
-      target: e, amount: h.damage, type: h.type, crit: false,
-      critChance: h.critBonus > 0 ? h.critBonus : 0,
+      target: e, amount: h.damage * (tip ? 1 + h.tipBonus : 1), type: h.type, crit: false,
+      critChance: (h.critBonus > 0 ? h.critBonus : 0) + (tip ? 0.10 : 0),
       dir: _v.set(nx, 0, nz), pos: _v2.set(e.position.x, e.position.y + 1.0, e.position.z),
-      source: h.source, knockback: h.knockback, poiseDamage: h.poiseDamage,
+      source: h.source, knockback: h.knockback * (tip ? 1.3 : 1), poiseDamage: h.poiseDamage * (tip ? 1.5 : 1),
       status: h.statusKind, statusStacks: h.statusStacks,
       statusPower: h.statusPower, expose: h.expose, critMark: h.critMark, boonGod: h.boonGod, boonSlot: h.boonSlot,
+      tip, finisher: h.finisher,
     });
     if (dealt <= 0) return;
     const col = h.color || '#ffd27a';
+    const L = this._last;
     this.ctx.vfx?.impact?.(_v2.set(e.position.x, e.position.y + 1.0, e.position.z), _v.set(-nx, 0, -nz),
-      { type: h.type, scale: 0.6 + Math.min(0.9, h.damage / 34), color: col });
+      { type: h.type, scale: (0.6 + Math.min(0.9, h.damage / 34)) * (L.crit ? 1.35 : 1) * (tip ? 1.2 : 1), color: col });
+    if (tip) this.ctx.events.emit('weapon.tipHit', { target: e, source: h.source, pos: e.position, weapon: h.tag });
+    // HIT-STOP BY WEIGHT. The first victim carries the authored stop scaled by
+    // what actually happened (crit, poise break, finisher); every further
+    // victim of the same swing adds a fraction, so a sweep through six shades
+    // feels chunkier than a poke but never freezes the fight.
+    const ms = this.hitstopFor(h.hitstop, h.weight, L, h.finisher);
     if (h.hitCount === 1) {
-      this.hitstop(h.hitstop);
-      if (h.shake) this.ctx.events.emit('camera.shake', { amp: h.shake, dur: 0.22, freq: 30 });
-      this.ctx.audio?.sfx?.('hit', { pos: e.position });
+      this.hitstop(ms);
+      if (h.shake) this.ctx.events.emit('camera.shake', { amp: h.shake * (L.crit ? 1.3 : 1) * (L.staggered ? 1.15 : 1), dur: 0.22, freq: 30 });
+      this.ctx.audio?.sfx?.(L.crit ? 'crit' : 'hit', { pos: e.position });
+    } else if (ms > 0) {
+      this.hitstop(Math.round(ms * FEEL.multiHitstop));
     }
+  }
+
+  /** The one function that decides how long the world holds on a hit. */
+  hitstopFor(base, weight = 1, L = this._last, finisher = false) {
+    if (!base) return 0;
+    let ms = base * (weight || 1);
+    if (L.crit) ms *= FEEL.critHitstop;
+    if (L.staggered && (weight || 1) >= 1) ms *= FEEL.staggerHitstop;
+    if (finisher) ms *= FEEL.finisherHitstop;
+    return Math.min(FEEL.maxHitstopMs, Math.round(ms));
   }
 
   projectileHit(p, e, nx, nz) {
@@ -692,8 +775,57 @@ export class CombatSystem {
     if (p.castShard && p.hits === 0 && !e.dead && e.alive !== false) {
       this.projectiles.lodgeCastShard?.(p, e, p.castDuration || CAST_SHARD_DURATION);
     }
-    this.hitstop(p.hitstop);
-    if (p.shake) this.ctx.events.emit('camera.shake', { amp: p.shake, dur: 0.2, freq: 31 });
+    const L = this._last;
+    const ms = this.hitstopFor(p.hitstop, 1, L, false);
+    this.hitstop(p.hits === 0 ? ms : Math.round(ms * FEEL.multiHitstop));
+    if (p.shake) this.ctx.events.emit('camera.shake', { amp: p.shake * (L.crit ? 1.3 : 1), dur: 0.2, freq: 31 });
+  }
+
+  /**
+   * PERFECT DODGE. The hero was inside the dash's i-frames when a real attack
+   * arrived. Reward: the dash cooldown is refunded, the world slows for a
+   * beat, and the next Attack/Special inside the riposte window hits harder.
+   * Locked for a few frames so a multi-hit sweep pays once, not per pellet.
+   */
+  _perfectDodge(p, info) {
+    if ((p._perfectDodgeLock || 0) > 0) return;
+    const mods = this.ctx.boons?.mods;
+    p._perfectDodgeLock = FEEL.perfectDodgeLock;
+    p._perfectDodgeT = FEEL.perfectDodgeWindow + (mods?.perfectDodgeWindow || 0);
+    p.perfectDodges = (p.perfectDodges || 0) + 1;
+    this.hitstop(38);
+    this.ctx.engine?.slowmo?.(0.48, 0.20);
+    this.ctx.vfx?.burst?.(_v.set(p.position.x, p.position.y + 1.0, p.position.z), { count: 18, color: '#5fd0ff', speed: 9, spread: 1.0, kind: 'chev' });
+    this.ctx.vfx?.shockwave?.(_v2.set(p.position.x, 0.06, p.position.z), { radius: 1.6, color: '#5fd0ff', life: 0.28 });
+    this.ctx.audio?.sfx?.('charge.full', { pos: p.position, gain: 0.55, pitch: 1.35 });
+    this.ctx.events.emit('camera.shake', { amp: 0.05, dur: 0.14, freq: 30 });
+    this.ctx.events.emit('player.perfectDodge', { pos: p.position, source: info.source, window: p._perfectDodgeT });
+    if (mods?.perfectDodgeStrike > 0 && info.source && !info.source.dead && info.source.position) {
+      const s = info.source;
+      this.applyDamage({ target: s, amount: mods.perfectDodgeStrike, type: 'lightning', source: p,
+        pos: s.position, dir: null, poiseDamage: 40, status: 'shock', statusStacks: 1, boonProc: true, ignoreIFrames: true });
+      this.ctx.vfx?.beam?.(_v.set(p.position.x, 1.1, p.position.z), _v2.set(s.position.x, 1.1, s.position.z), { color: '#ffe14d', width: 0.2, life: 0.22 });
+    }
+  }
+
+  /**
+   * An ENEMY projectile. Every bolt a caster fires goes through here so it is
+   * hostile to the hero, scaled by the caster's depth multiplier, reflectable
+   * by the Shield and resolved by projectileHit() -> applyDamage() like every
+   * other source of harm in the game.
+   */
+  enemyProjectile(a, spec) {
+    if (!a || !spec) return 0;
+    const dmg = Math.round((spec.damage ?? 10) * (a.damageMul || 1));
+    return this.projectiles.fire({
+      x: spec.x ?? a.position.x, y: spec.y ?? 1.15, z: spec.z ?? a.position.z,
+      dx: spec.dx, dz: spec.dz, kind: spec.kind || 'straight', homing: spec.homing, target: spec.target,
+      speed: spec.speed ?? 14, radius: spec.radius ?? 0.3, life: spec.life ?? 3.2,
+      damage: dmg, type: spec.type || 'arcane', knockback: spec.knockback ?? 5, hitstop: spec.hitstop ?? 0,
+      color: spec.color || a.def?.tellColor || '#ff5a3c', size: spec.size ?? 1.0, coreSize: spec.coreSize ?? 1.0,
+      team: TEAM.ENEMY, source: a, solid: spec.solid !== false, reflectable: spec.reflectable !== false,
+      gravity: spec.gravity, rise: spec.rise, onExpire: spec.onExpire || 'burst', tag: spec.tag || ('enemy:' + (a.kind || 'bolt')),
+    });
   }
 
   _tryWallSlam(target, info, mods) {
@@ -771,6 +903,8 @@ export class CombatSystem {
     if (player) {
       player._boonCallCd = Math.max(0, (player._boonCallCd || 0) - dt);
       player._boonDeflectT = Math.max(0, (player._boonDeflectT || 0) - dt);
+      player._perfectDodgeT = Math.max(0, (player._perfectDodgeT || 0) - dt);
+      player._perfectDodgeLock = Math.max(0, (player._perfectDodgeLock || 0) - dt);
       if (player._boonDeflectT > 0) {
         this.projectiles.forEachIncoming(player, 2.0, (p) => this.projectiles.reflect(p, player, 1.65, 1.25));
       }

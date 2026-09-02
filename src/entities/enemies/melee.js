@@ -21,9 +21,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, clamp01, lerp, damp } from '../../core/math.js';
-import { TELEGRAPH, inCone } from '../ai.js';
+import { TELEGRAPH, inCone, inDisc, surroundSlot } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
 import { tubeGeo, prim } from '../rig.js';
+
+const _slot = { x: 0, z: 0 };   // surround-slot scratch (never allocate per frame)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // THE REUSABLE MELEE BRAIN
@@ -38,6 +40,13 @@ import { tubeGeo, prim } from '../rig.js';
  *   o.recover      seconds of punishable recovery after the swing
  *   o.token        which pool to compete in
  *   o.approachAt   distance at which it stops circling and closes
+ *   o.combo        { chance(a), max, windup, damageMul } — a follow-up swing
+ *                  after the first lands, with its own (shorter) tell
+ *   o.pickAttack   (a, ctx) -> state name, consulted when a token is won so a
+ *                  family can route to an alternate pattern (the brute's
+ *                  shield charge); default is the standard 'commit'
+ *   o.extraStates  merged into the machine for those alternate patterns
+ *   o.surround     radius of the flanking slot ring (default STANDOFF)
  */
 export function makeMeleeBrain(o = {}) {
   const STANDOFF = o.standoff ?? 3.4;
@@ -48,6 +57,7 @@ export function makeMeleeBrain(o = {}) {
   const RECOVER = o.recover ?? 0.46;
   const TOKEN = o.token || 'melee';
   const COMMIT = o.commitRange ?? (RANGE + 0.55);
+  const COMBO = o.combo || null;
 
   return {
     initial: 'idle',
@@ -97,20 +107,29 @@ export function makeMeleeBrain(o = {}) {
           a.mem.circleT += dt;
           // flip direction occasionally so the ring is not a carousel
           if (a.mem.circleT > 2.4) { a.mem.circleT = 0; a.orbitDir *= -1; }
-          a.steer.begin(a.def.speed * 0.78)
-            .orbit(p.aimX, p.aimZ, STANDOFF, a.orbitDir, 1.0, 0.85)
+          // FLANK. Each waiting body owns a slot behind and beside the hero;
+          // the tangential drift keeps the ring alive, the slot keeps it a
+          // pincer. What the player sees is a pack that gets around them.
+          const pl = ctx.player;
+          surroundSlot(a, a.mgr.list, p.aimX, p.aimZ, pl?.facing?.x ?? -p.dirX, pl?.facing?.y ?? -p.dirZ, o.surround ?? STANDOFF, _slot);
+          a.steer.begin(a.def.speed * 0.82)
+            .arrive(_slot.x, _slot.z, 1.6, 1.15)
+            .orbit(p.aimX, p.aimZ, STANDOFF, a.orbitDir, 0.45, 0.85)
             .separation(a.mgr.list, 2.1)
             .avoidWalls(ctx);
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { faceX: p.dirX, faceZ: p.dirZ, turn: 8 });
           a.setRunSpeed(0.86);
           if (p.dist > STANDOFF * 1.9) return 'approach';
-          if (a.attackCd <= 0 && a.wantToken(TOKEN, -p.dist)) return 'commit';
+          if (a.attackCd <= 0 && a.wantToken(TOKEN, -p.dist)) {
+            const alt = o.pickAttack ? o.pickAttack(a, ctx) : null;
+            return alt || 'commit';
+          }
         },
       },
 
       // token in hand: walk into range with intent. Still interruptible.
       commit: {
-        enter(a) { a.play('run', { fade: 0.1, speed: 1.22 }); a.mem.commitT = 0; },
+        enter(a) { a.play('run', { fade: 0.1, speed: 1.22 }); a.mem.commitT = 0; a.mem.comboN = 0; },
         update(a, dt, ctx) {
           const p = a.perc;
           a.mem.commitT += dt;
@@ -159,14 +178,47 @@ export function makeMeleeBrain(o = {}) {
           a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false, accel: 60 });
           if (!a.mem.struck && a.brain.t >= STRIKE) {
             a.mem.struck = true;
+            const follow = (a.mem.comboN || 0) > 0;
             a.strikeCone(ctx, {
-              range: RANGE, arc: ARC, damage: o.damage ?? 11, knock: o.knock ?? 5.5,
+              range: RANGE, arc: ARC, damage: (o.damage ?? 11) * (follow ? (COMBO?.damageMul ?? 0.85) : 1), knock: o.knock ?? 5.5,
               color: a.tellColor, width: o.slashWidth ?? 0.32, shake: o.shake ?? 0.035,
               type: o.damageType || 'physical',
             });
             if (o.onStrike) o.onStrike(a, ctx);
           }
-          if (a.brain.t >= STRIKE + 0.06) return 'recover';
+          if (a.brain.t >= STRIKE + 0.06) {
+            // THE FOLLOW-UP. A deterministic roll decides whether this swing
+            // was the first of two. The second has a shorter tell — the
+            // first already announced the fight — and the player who dashed
+            // straight back in learns to wait one beat.
+            if (COMBO && (a.mem.comboN || 0) < (COMBO.max ?? 1) && a.perc.dist < RANGE + 1.4 && a.mgr.rng.f() < (typeof COMBO.chance === 'function' ? COMBO.chance(a) : COMBO.chance ?? 0.4)) {
+              a.mem.comboN = (a.mem.comboN || 0) + 1;
+              return 'windupFollow';
+            }
+            return 'recover';
+          }
+        },
+      },
+
+      // the second swing of a combo: quicker tell, same arc, drawn again
+      windupFollow: {
+        enter(a, ctx) {
+          a.committed = true;
+          const w = COMBO?.windup ?? TELEGRAPH.comboFollow;
+          a.play(o.windupClip || 'attack2', { fade: 0.05, restart: true, speed: (a.visual.duration(o.windupClip || 'attack2') || 0.46) / (w + STRIKE + 0.12) });
+          const p = a.perc;
+          a.faceTowards(p.dirX, p.dirZ, 1, 40);
+          a.telegraph((o.tellKind || 'melee') + '-follow', w, {
+            shape: o.tellShape || 'arc', radius: RANGE * 1.05, arc: ARC,
+            dirX: a.facing.x, dirZ: a.facing.z, follow: true, color: a.tellColor, pitch: 1.18,
+          });
+        },
+        update(a, dt, ctx) {
+          const p = a.perc;
+          a.steer.begin(a.def.speed * (o.windupDrift ?? 0.22) * 1.3).seek(p.aimX, p.aimZ, 1).separation(a.mgr.list, 1.0);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          a.faceTowards(p.dirX, p.dirZ, dt, (o.windupTurn ?? 3.2) * 1.4);
+          if (a.tell.k >= 1) return 'strike';
         },
       },
 
@@ -193,6 +245,7 @@ export function makeMeleeBrain(o = {}) {
           if (a.stagger <= 0) return a.perc.dist < STANDOFF * 1.5 ? 'circle' : 'approach';
         },
       },
+      ...(o.extraStates || {}),
     },
   };
 }
@@ -234,7 +287,10 @@ export const SHADE = {
   brain: makeMeleeBrain({
     standoff: 3.3, range: 2.35, arc: 104, windup: TELEGRAPH.lightMelee,
     strike: 0.09, recover: 0.44, cooldown: 0.8, damage: 11, knock: 5.5,
-    token: 'melee', runSpeed: 1.12,
+    token: 'melee', runSpeed: 1.12, surround: 3.3,
+    // from the second depth a shade can swing twice: a quick follow-up with
+    // a 0.30s tell, so "dash in the instant it swings" is no longer free
+    combo: { chance: (a) => (a.depth >= 2 ? 0.45 : 0.18), max: 1, windup: TELEGRAPH.comboFollow, damageMul: 0.85 },
   }),
 };
 
@@ -442,6 +498,7 @@ export const BRUTE = {
     },
     glowIntensity: 0.55,
   },
+  guardBreakTime: 3.4,
   onSpawn(a, ctx) {
     if (!a.mem.shieldBuilt) {
       const rig = a.visual.rig;
@@ -456,6 +513,24 @@ export const BRUTE = {
       a.mem.shieldBuilt = true;
     }
     a.shielded = true;
+    // THE GUARD METER: how much frontal punishment the shield eats before it
+    // drops. Scales with depth so deep brutes still ask to be flanked.
+    a.mem.guardMax = 70 + 10 * (a.depth || 0);
+    a.mem.guard = a.mem.guardMax;
+    a.mem.guardBroken = 0;
+  },
+  tick(a, dt, ctx) {
+    if (a.mem.guardBroken > 0) {
+      a.mem.guardBroken -= dt;
+      if (a.mem.shield) a.mem.shield.rotation.z = -0.9 + Math.sin(ctx.time.t * 3) * 0.05;   // shield hangs, dropped
+      if (a.mem.guardBroken <= 0) {
+        a.shielded = true;
+        a.mem.guard = a.mem.guardMax;
+        if (a.mem.shield) a.mem.shield.rotation.z = -0.06;
+        ctx.vfx?.shockwave?.(a.position.clone().setY(0.05), { radius: 1.8, color: '#f2c14e', life: 0.3 });
+        ctx.events.emit('enemy.guardRestored', { entity: a });
+      }
+    }
   },
   /**
    * THE MECHANIC. Damage arriving inside the shield's frontal arc is reduced to
@@ -479,7 +554,57 @@ export const BRUTE = {
     strike: 0.14, recover: 0.86, cooldown: 1.15, damage: 24, knock: 11,
     token: 'heavy', runSpeed: 0.82, windupClip: 'attack3', windupDrift: 0.4,
     windupTurn: 1.8, lunge: 1.6, slashWidth: 0.5, shake: 0.11, tellKind: 'heavy',
-    commitRange: 3.4,
+    commitRange: 3.4, surround: 4.2,
+    // THE SHIELD CHARGE. From mid-range, half the time, the brute lowers the
+    // shield and charges a drawn lane instead of walking in: a second pattern
+    // the player has to read from the SHAPE of the tell (line, not wedge).
+    pickAttack(a, ctx) {
+      if (!a.shielded) return null;
+      if (a.perc.dist > 5.0 && a.perc.dist < 12 && a.mgr.rng.f() < 0.5) return 'shieldCharge';
+      return null;
+    },
+    extraStates: {
+      shieldCharge: {
+        enter(a, ctx) {
+          a.committed = true;
+          a.play('dash', { fade: 0.08, restart: true, speed: 0.45 });
+          const p = a.perc;
+          a.snapFace(p.dirX, p.dirZ);
+          a.mem.cx = p.dirX; a.mem.cz = p.dirZ;
+          a.telegraph('shield-charge', TELEGRAPH.shieldCharge, { shape: 'line', radius: 9.0, inner: 0.19, dirX: p.dirX, dirZ: p.dirZ, follow: true, color: '#ffb03c' });
+        },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 0.1).separation(a.mgr.list, 1.2);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          a.faceTowards(a.perc.dirX, a.perc.dirZ, dt, 2.0);
+          a.mem.cx = a.facing.x; a.mem.cz = a.facing.z;
+          if (a.tell.k >= 1) return 'shieldChargeGo';
+        },
+      },
+      shieldChargeGo: {
+        enter(a, ctx) { a.endTell(true); a.mem.hit = false; ctx.audio?.sfx?.('lunge', { pos: a.position, pitch: 0.7 }); ctx.events.emit('camera.shake', { amp: 0.06, dur: 0.4, freq: 22 }); },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 4.2).add(a.mem.cx, a.mem.cz, 1).separation(a.mgr.list, 0.4);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false, accel: 120 });
+          a.mgr.dustAt(ctx, a.position, '#ffb03c');
+          if (!a.mem.hit && ctx.player && inDisc(a.position.x, a.position.z, ctx.player, 1.45)) {
+            a.mem.hit = true;
+            a.strikeCone(ctx, { range: 2.2, arc: 200, damage: 20, knock: 13, color: '#ffb03c', width: 0.5, shake: 0.14 });
+          }
+          if (a.brain.t > 0.55) return 'chargeRecover';
+        },
+      },
+      // the crash: the brute over-runs, plants, and is open from BEHIND for
+      // longer than after a normal bash
+      chargeRecover: {
+        enter(a, ctx) { a.committed = false; a.play('idle', { fade: 0.12 }); ctx.vfx?.shockwave?.(a.position.clone().setY(0.05), { radius: 2.2, color: '#ffb03c', life: 0.35 }); },
+        update(a, dt, ctx) {
+          a.steer.begin(a.def.speed * 0.1).separation(a.mgr.list, 2.0).avoidWalls(ctx);
+          a.move(dt, ctx, a.steer.resolve(a.mgr.out), { face: false });
+          if (a.brain.t >= 1.15) { a.dropToken('heavy'); a.attackCd = 1.4; return 'circle'; }
+        },
+      },
+    },
   }),
 };
 
@@ -489,7 +614,7 @@ export const BRUTE = {
  * pre-damage hook (see enemies/index.js). Returns a multiplier.
  */
 export function brutePreDamage(a, info) {
-  if (!info.dir) return 1;
+  if (!info.dir || a.shielded === false) return 1;
   const facing = (-info.dir.x) * a.facing.x + (-info.dir.z) * a.facing.z;
   return facing > 0.32 ? 0.12 : 1;
 }
