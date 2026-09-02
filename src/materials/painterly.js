@@ -481,6 +481,24 @@ vec3 paintStochNormal( sampler2D t ){
   }
   return acc;
 }
+
+/**
+ * The DETAIL layer through the same three rigid taps. It used to be read
+ * straight off the world uv (pUV * uDetailScale), which meant the one layer
+ * that tiles at 1.6m on the floor — well inside the lag window the tiling
+ * metric scans — was the only layer the de-tiler never touched. Scaling the
+ * rotated uv keeps each tap a rigid transform (R*(uv*s) + off*s), and the
+ * micro-normal in GB is un-rotated per tap exactly as the main normal is.
+ */
+vec4 paintStochDetail( sampler2D t, float s, float off ){
+  vec4 acc = vec4( 0.0 );
+  for ( int k = 0; k < 3; k++ ) {
+    vec4 d = texture2DGradEXT( t, gStU[k] * s + off, gStDX[k] * s, gStDY[k] * s );
+    d.gb = ( d.gb - 0.5 ) * gStR[k] + 0.5;
+    acc += d * gStW[k];
+  }
+  return acc;
+}
 `;
 
 const FRAG_LAYER_PARS = /* glsl */`
@@ -761,6 +779,12 @@ export function painterly(mat, o = {}) {
     }
     if (useDetail) {
       const dcoord = tri ? null : (planar || cyl) ? 'pUV * uDetailScale' : 'vMapUv * uDetailScale';
+      // planar / cylindrical projections read the detail through the
+      // stochastic frame (identity taps when uStoch is 0, so the cylinder is
+      // byte-identical to before); a plain uv material keeps the direct read
+      const dTap = (s, off) => ((planar || cyl)
+        ? `paintStochDetail( tPaintDetail, uDetailScale * ${s}, ${off} )`
+        : `texture2D( tPaintDetail, ${dcoord} * ${s} + ${off} )`);
       // R is the value grain the albedo always used (byte-identical content, so
       // the painted tone is unchanged); GB and A are the micro-normal and the
       // roughness modulation that the same fetch now also carries.
@@ -779,8 +803,8 @@ export function painterly(mat, o = {}) {
           // which is exactly the condition under which a short-lag autocorrelation
           // reads as a lattice
           float dfade = 1.0 - smoothstep( 16.0, 72.0, length( vPaintWPos - cameraPosition ) );
-          vec4 dS = texture2D( tPaintDetail, ${dcoord} );
-          vec4 d2 = texture2D( tPaintDetail, ${dcoord} * 0.41 + 0.27 );
+          vec4 dS = ${dTap('1.0', '0.0')};
+          vec4 d2 = ${dTap('0.41', '0.27')};
           float dv = dS.r * 1.2 + d2.r * 0.8;                 // mean 1.0, as before
           diffuseColor.rgb *= mix( vec3( 1.0 ), vec3( dv ), uDetailStrength * dfade );
           gPaintBump   = ( ( dS.gb - 0.5 ) + ( d2.gb - 0.5 ) * 0.45 ) * 2.0 * uDetailBump * dfade;
