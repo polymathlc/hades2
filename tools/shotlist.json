@@ -189,6 +189,27 @@
       "steps": 2.0,
       "note": "ORNAMENT RELIEF TEST (inspection framing) - the jamb fret, the wall astragal and the cornice at inspection range. A bead must read as a rounded bead and a meander as a cut channel with a lit arris and a dark undercut, not as light-on-dark line-art. Named '..._detail' so tools/analyze.mjs classifies it as an inspection shot: its subject is a wall two metres from camera, so the ground-plane law (which assumes a composition framing) does not apply to it.",
       "state": "play"
+    },
+    {
+      "id": "12_summary",
+      "state": "summary",
+      "pose": "hud",
+      "steps": 2.0,
+      "note": "Run summary plate after death: depth, foes, boons, time, build row, Retry. Must persist (no auto-restart) and have no overlapping labels."
+    },
+    {
+      "id": "13_pact",
+      "state": "pact",
+      "pose": "hud",
+      "steps": 1.0,
+      "note": "The Pact screen from the Crossroads pause menu: every run modifier with heat cost, focus ring, total heat."
+    },
+    {
+      "id": "14_controls",
+      "state": "controls",
+      "pose": "hud",
+      "steps": 1.0,
+      "note": "Controls guide reflecting live bindings; every row label must fit beside its key cap."
     }
   ]
 }
