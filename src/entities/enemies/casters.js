@@ -20,7 +20,6 @@
 // ---------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { clamp, clamp01, TAU } from '../../core/math.js';
 import { TELEGRAPH } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';

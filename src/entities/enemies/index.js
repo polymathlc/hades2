@@ -29,6 +29,7 @@ import * as THREE from 'three';
 import { clamp, clamp01, TAU } from '../../core/math.js';
 import { TokenPool } from '../ai.js';
 import { Enemy, refreshFamilyRims } from './base.js';
+import { setCharacterBiome } from '../../render/shaders/character.js';
 import { Telegraphs } from './telegraph.js';
 import { SHADE, BRUTE, brutePreDamage } from './melee.js';
 import { HEXER, HERALD } from './casters.js';
@@ -81,6 +82,11 @@ export class EnemyManager {
     // per-INSTANCE, so a family can share its real materials and still flash
     // individually. No material cloning, no shader recompiles.
     this.flashMat = new THREE.MeshBasicMaterial({ color: 0xfff0dc, toneMapped: false, fog: false });
+    // ...and it is now a MARKER: the visuals swap to the character shader's
+    // flash twins (render/shaders/character.js) when handed this material,
+    // so the flash is a rim-coloured outline over a brightened body instead
+    // of a white cut-out. preload.js still warms this material directly.
+    this.flashMat.userData.rimFlash = true;
 
     this.spawner = new Spawner();
     this.spawner.init(ctx, this);
@@ -93,7 +99,10 @@ export class EnemyManager {
     // MaterialLibrary.setBiome() republishes the palette rim over every
     // painterly material without consulting userData.paintOverrides, so the
     // per-family rims are trampled on the first chamber change. Re-stamp.
-    ctx.events.on('biome.changed', ({ name } = {}) => refreshFamilyRims(name || ctx.run?.biome));
+    ctx.events.on('biome.changed', ({ name } = {}) => {
+      setCharacterBiome(name || ctx.run?.biome);
+      refreshFamilyRims(name || ctx.run?.biome);
+    });
     return this;
   }
 

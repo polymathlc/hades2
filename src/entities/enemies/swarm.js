@@ -22,6 +22,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { clamp, clamp01, lerp, damp, TAU } from '../../core/math.js';
 import { TELEGRAPH, inDisc, surroundSlot } from '../ai.js';
 import { charMaterial, paintGeo } from './base.js';
+import { flashVariant } from '../../render/shaders/character.js';
 import * as PR from './props.js';
 
 const _slot = { x: 0, z: 0 };
@@ -39,7 +40,12 @@ class PartsVisual {
   play(name) { if (name !== this.clip) { this.clip = name; this.clipT = 0; } }
   duration() { return 0.5; }
   reset() { this.t = 0; this.clip = 'idle'; this.clipT = 0; }
-  setFlash(mat) { for (let i = 0; i < this.parts.length; i++) this.parts[i].material = mat || this.base[i]; }
+  setFlash(mat) {
+    // the manager's flash material is a marker: flash through the character
+    // shader's twins (rim outline + brightened base), not a white cut-out
+    const rim = !!(mat && mat.userData && mat.userData.rimFlash);
+    for (let i = 0; i < this.parts.length; i++) this.parts[i].material = rim ? flashVariant(this.base[i]) : (mat || this.base[i]);
+  }
   update(dt, e) { this.t += dt; this.clipT += dt; this._animate(this, dt, e); }
 }
 

@@ -27,33 +27,17 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { tubeGeo, linRGB } from '../rig.js';
+import { tubeGeo, linRGB, superellipse, DIAMOND, PLATE, fullered, ringSweep } from '../rig.js';
 import { charMaterial } from './base.js';
 import { TAU, clamp01, lerp } from '../../core/math.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 // ── sections ────────────────────────────────────────────────────────────────
-/** superellipse radius multiplier for tubeGeo's `shape` hook (see rig.js) */
-export function superellipse(n) {
-  return (th) => {
-    const c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
-    return 1 / Math.pow(Math.pow(c, n) + Math.pow(s, n), 1 / n);
-  };
-}
-/** a ground blade: two edges on the N axis, a ridge on the B axis */
-export const DIAMOND = superellipse(1.25);
-/** a struck plate: flat faces, tight corners */
-export const PLATE = superellipse(5);
-/** a fullered blade: the diamond with a groove down each flat */
-export function fullered(depth = 0.30) {
-  const D = DIAMOND;
-  return (th) => {
-    const s = Math.abs(Math.sin(th));
-    const g = Math.exp(-Math.pow((1 - s) / 0.16, 2));
-    return D(th) * (1 - depth * g);
-  };
-}
+// ONE definition, in rig.js: the hero's lames, the roster's blades and the
+// arms' collars all sweep the same superellipse sections. Re-exported so the
+// roster keeps importing its vocabulary from here.
+export { superellipse, DIAMOND, PLATE, fullered };
 
 // ── paint ───────────────────────────────────────────────────────────────────
 /**
@@ -127,15 +111,7 @@ export function shaft({ y0, y1, r0, r1 = r0, radial = 9, shape } = {}) {
 }
 
 /** a horizontal chamfered ring (ferrule, collar, circlet) around +y at height y */
-export function ring({ y, R, th = 0.008, hh = 0.02, seg = 20, radial = 8, a0 = 0, a1 = 360, cx = 0, cz = 0, ez = 1 } = {}) {
-  const spine = [];
-  for (let i = 0; i < seg; i++) {
-    const t = seg > 1 ? i / (seg - 1) : 0, a = lerp(a0, a1, t) * Math.PI / 180;
-    spine.push({ p: [cx + R * Math.sin(a), y, cz + R * Math.cos(a) * ez], r: 1, sx: th, sz: hh });
-  }
-  const full = Math.abs(a1 - a0) >= 359.9;
-  return tubeGeo(spine, { radial, up: [0, 1, 0], capStart: full ? 'flat' : 'round', capEnd: full ? 'flat' : 'round', shape: PLATE });
-}
+export function ring(o = {}) { return ringSweep(o); }
 
 /**
  * A BLADE. Diamond (or fullered) section swept along a spine.

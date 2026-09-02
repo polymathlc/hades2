@@ -46,8 +46,9 @@
 
 import * as THREE from 'three';
 import { WEAPONS, WEAPON_IDS } from './weapons.js';
-import { HERO_PALETTE, SLOT_PAINT, linRGB, tubeGeo } from './rig.js';
+import { HERO_PALETTE, SLOT_PAINT, linRGB, tubeGeo, DIAMOND, PLATE, ringSweep } from './rig.js';
 import { painterly, setPaint, paintParams, keyRef } from '../materials/painterly.js';
+import { characterShader } from '../render/shaders/character.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
 const D = (h) => new THREE.Color().setStyle(h, THREE.SRGBColorSpace);
@@ -152,6 +153,9 @@ function slotMaterial(slot, wp, owned, kr) {
     rimPower: (cfg.tune && cfg.tune.rimPower) ?? paint.rimPower,
     rimColor: paint.rimColor, rimDir: paint.rimDir,
   };
+  // §1.2 / §4: the arm is a hero prop — it carries the character rim, ramp,
+  // contour and (on the metal and edge slots) the sharp glint.
+  characterShader(m, { metal: slot === 'metal' || slot === 'edge', glow: false, rimStrength: slot === 'edge' ? 1.1 : undefined });
   m.needsUpdate = true;
   owned.add(m);
   return m;
@@ -443,14 +447,8 @@ function bakeArm(g, slotMat, geometries) {
 // the sweep's index by radial sector into material groups, so a swept blade
 // can carry the edge paint on its two edges and the ridge paint on its spine
 // exactly as bladeSection() does, and bake into the same slots.
-function superellipse(n) {
-  return (th) => {
-    const c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
-    return 1 / Math.pow(Math.pow(c, n) + Math.pow(s, n), 1 / n);
-  };
-}
-const DIAMOND = superellipse(1.25);
-const PLATE = superellipse(5);
+// DIAMOND and PLATE are rig.js's sections — one definition for the body, the
+// roster's props and the arms.
 
 /** regroup a tubeGeo index by radial sector: groupOf(j, radial) -> group id */
 function sectorGroups(geo, radial, groupOf, nGroups = 3) {
@@ -491,15 +489,8 @@ function sweptBlade(spine, o = {}) {
   return sectorGroups(g, radial, bladeSectors);
 }
 
-/** a chamfered ring around +y at height y (a ferrule, a collar, a rim) */
-function bandRing({ y, R, th = 0.008, hh = 0.02, seg = 20, radial = 8, ez = 1 }) {
-  const spine = [];
-  for (let i = 0; i < seg; i++) {
-    const a = (i / (seg - 1)) * Math.PI * 2;
-    spine.push({ p: [R * Math.sin(a), y, R * Math.cos(a) * ez], r: 1, sx: th, sz: hh });
-  }
-  return tubeGeo(spine, { radial, up: [0, 1, 0], capStart: 'flat', capEnd: 'flat', shape: PLATE });
-}
+/** a chamfered ring around +y at height y (a ferrule, a collar, a rim) — rig.js's ring sweep */
+const bandRing = ringSweep;
 
 /** a tapered tube through a list of Vector3s */
 function taper(points, r0, r1, o = {}) {
@@ -1278,6 +1269,36 @@ export function createAvatarWeapons(rig, initialId = 'blade', allowedIds = WEAPO
   };
   visual.equip(initialId);
   return visual;
+}
+
+/**
+ * A STANDALONE arm for display — the Crossroads armory racks. The identical
+ * authored model and slot bake the hand-mounted arm uses, so what hovers over
+ * a plinth is exactly what the heir will be holding. Returns the group plus
+ * its owned materials/geometries for disposal.
+ */
+export function createArmDisplay(id, opts = {}) {
+  if (!WEAPONS[id] || !BUILDERS[id]) return null;
+  const materials = new Set();
+  const geometries = new Set();
+  const wp = WEAPONS[id].palette;
+  const cache = {};
+  const kr = opts.keyRef || keyRef();
+  const slotMat = (slot) => cache[slot] || (cache[slot] = slotMaterial(slot, wp, materials, kr));
+  const authored = new Set();
+  const group = BUILDERS[id](paintsFor(id), authored);
+  bakeArm(group, slotMat, geometries);
+  for (const geometry of authored) geometry.dispose();
+  group.userData.weaponId = id;
+  group.userData.hand = HAND[id];
+  return {
+    group, materials, geometries,
+    dispose() {
+      group.removeFromParent();
+      for (const geometry of geometries) geometry.dispose();
+      for (const material of materials) material.dispose();
+    },
+  };
 }
 
 export default createAvatarWeapons;

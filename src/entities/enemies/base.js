@@ -27,6 +27,7 @@ import { clamp, clamp01, lerp, damp, dampAngle, shortAngle, smoothstep, TAU } fr
 import { buildHumanoid, SLOT_PAINT, linRGB } from '../rig.js';
 import { Animator } from '../anim.js';
 import { setPaint, paintParams } from '../../materials/painterly.js';
+import { characterShader, setCharacterRim, flashVariants } from '../../render/shaders/character.js';
 import { Perception, Steer, Brain, beginTelegraph, endTelegraph, inCone, inDisc, orbitSign } from '../ai.js';
 
 const _v = new THREE.Vector3();
@@ -192,6 +193,10 @@ export function familyRim(mat, kind, slot) {
     ...(mat.userData.paintOverrides || {}),
     rimColor: tgt.rimColor, rimStrength: tgt.rimStrength, contourStrength: tgt.contourStrength,
   };
+  // The character shader draws the rim now (render/shaders/character.js): the
+  // biome complement, with the family's identity hue mixed a third of the
+  // way in so a shade and a brute are still two different edges.
+  setCharacterRim(mat, { familyRim: F.rim, familyMix: 0.35 });
   return mat;
 }
 
@@ -205,6 +210,7 @@ export function refreshFamilyRims(biome = _familyBiome) {
     t.rimColor = F?.rim || t.rimColor;
     setPaint(m, { rimColor: t.rimColor, rimStrength: t.rimStrength, contourStrength: t.contourStrength });
     m.userData.paintOverrides = { ...(m.userData.paintOverrides || {}), rimColor: t.rimColor };
+    setCharacterRim(m, { familyRim: t.rimColor });
   }
 }
 
@@ -264,6 +270,7 @@ export function charMaterial(ctx, slot, tag, opts = {}) {
     m.emissiveIntensity = opts.glow ?? 0.9;
     m.toneMapped = true;
   }
+  characterShader(m, { metal: slot === 'metal', glow: slot === 'glow' });
   familyRim(m, familyOf(tag), slot);
   m.needsUpdate = true;
   return m;
@@ -346,7 +353,18 @@ class HumanoidVisual {
     a.groundY = 0;
     a.update(dt);
   }
-  setFlash(mat) { this.rig.mesh.material = mat || this.baseMat; }
+  /**
+   * The hurt flash. A flat white MeshBasicMaterial erased the helm, the
+   * pauldrons and the relief shield at the exact moment the player looks, so
+   * the manager's flash material is now only a MARKER: the body swaps to the
+   * character shader's flash twins (brightened base + rim-coloured outline),
+   * which keep the silhouette and every interior line. The death dissolve
+   * (an additive per-instance material) still swaps in as itself.
+   */
+  setFlash(mat) {
+    if (mat && mat.userData && mat.userData.rimFlash) mat = flashVariants(this.baseMat);
+    this.rig.mesh.material = mat || this.baseMat;
+  }
   dispose() { }
 }
 
